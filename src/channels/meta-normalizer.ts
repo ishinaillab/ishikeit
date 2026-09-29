@@ -38,10 +38,14 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
         const sender = typeof item.sender === "object" && item.sender !== null
           ? item.sender as Record<string, unknown>
           : {};
+        const recipient = typeof item.recipient === "object" && item.recipient !== null
+          ? item.recipient as Record<string, unknown>
+          : {};
         const message = typeof item.message === "object" && item.message !== null
           ? item.message as Record<string, unknown>
           : undefined;
-        const identityId = typeof sender.id === "string" ? sender.id : undefined;
+        const senderIdentityId = typeof sender.id === "string" ? sender.id : undefined;
+        const recipientIdentityId = typeof recipient.id === "string" ? recipient.id : undefined;
         const occurredAt = isoFromMillis(item.timestamp);
 
         if (message?.is_echo === true) {
@@ -52,7 +56,7 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
             accountId,
             eventType: "message.echo",
             ...(mid === undefined ? {} : { providerMessageId: mid }),
-            ...(identityId === undefined ? {} : { identityId }),
+            ...(recipientIdentityId === undefined ? {} : { identityId: recipientIdentityId }),
             ...(occurredAt === undefined ? {} : { occurredAt }),
             receivedAt,
             payload: { message }
@@ -68,7 +72,7 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
             accountId,
             eventType: "message.received",
             ...(mid === undefined ? {} : { providerMessageId: mid, providerEventId: "message:" + mid }),
-            ...(identityId === undefined ? {} : { identityId }),
+            ...(senderIdentityId === undefined ? {} : { identityId: senderIdentityId }),
             ...(occurredAt === undefined ? {} : { occurredAt }),
             receivedAt,
             payload: { message }
@@ -91,7 +95,7 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
           channel,
           accountId,
           eventType,
-          ...(identityId === undefined ? {} : { identityId }),
+          ...(senderIdentityId === undefined ? {} : { identityId: senderIdentityId }),
           ...(occurredAt === undefined ? {} : { occurredAt }),
           receivedAt,
           payload: item

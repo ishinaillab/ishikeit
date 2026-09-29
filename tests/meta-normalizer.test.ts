@@ -47,6 +47,37 @@ describe("Meta normalizer", () => {
     });
   });
 
+  it("routes message echoes to the customer recipient", () => {
+    const [event] = normalizeMetaEnvelope({
+      object: "instagram",
+      entry: [{
+        id: "ig-1",
+        messaging: [{
+          sender: { id: "ig-1" },
+          recipient: { id: "igsid-1" },
+          timestamp: 1790000000000,
+          message: { mid: "mid-echo-1", text: "reply", is_echo: true }
+        }]
+      }]
+    }, "2026-09-29T00:00:00.000Z");
+
+    expect(event).toMatchObject({
+      channel: "instagram",
+      accountId: "ig-1",
+      eventType: "message.echo",
+      providerMessageId: "mid-echo-1",
+      identityId: "igsid-1"
+    });
+
+    expect(ingressIdentity(event!).partitionKey).toBe(
+      ingressIdentity({
+        ...event!,
+        eventType: "message.received",
+        identityId: "igsid-1"
+      }).partitionKey
+    );
+  });
+
   it("normalizes WhatsApp messages using the receiving phone-number account", () => {
     const [event] = normalizeMetaEnvelope({
       object: "whatsapp_business_account",

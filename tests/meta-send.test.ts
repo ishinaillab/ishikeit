@@ -10,6 +10,11 @@ const base: MetaOutboundPayload = {
   message: { type: "text", text: "hello" }
 };
 
+function bodyAsString(body: BodyInit | null | undefined): string {
+  if (typeof body !== "string") throw new Error("expected a string request body");
+  return body;
+}
+
 describe("MetaSender", () => {
   it("sends Messenger responses through the versioned Page endpoint", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
@@ -32,7 +37,7 @@ describe("MetaSender", () => {
       authorization: "Bearer page-token",
       "content-type": "application/json"
     });
-    expect(JSON.parse(String(init?.body))).toEqual({
+    expect(JSON.parse(bodyAsString(init?.body))).toEqual({
       recipient: { id: "user-1" },
       messaging_type: "RESPONSE",
       message: { text: "hello" }
@@ -60,7 +65,7 @@ describe("MetaSender", () => {
     await expect(sender.send(payload)).resolves.toEqual({ providerMessageId: "ig-message-1" });
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toBe("https://graph.instagram.com/v26.0/ig-1/messages");
-    expect(JSON.parse(String(init?.body))).toEqual({
+    expect(JSON.parse(bodyAsString(init?.body))).toEqual({
       recipient: { id: "user-1" },
       message: { text: "hello" }
     });

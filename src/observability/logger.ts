@@ -7,7 +7,7 @@ export function createLogger(env: Environment) {
     redact: {
       paths: [
         "req.headers.authorization",
-        "req.headers.x-hub-signature-256",
+        "req.headers[\"x-hub-signature-256\"]",
         "DATABASE_URL",
         "META_APP_SECRET",
         "META_WEBHOOK_VERIFY_TOKEN"

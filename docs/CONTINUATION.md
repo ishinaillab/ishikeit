@@ -5,8 +5,8 @@ Updated: 2026-09-29
 ## Canonical project
 
 - Repository: `ishinaillab/ishikeit`
-- Branch: `foundation-v1`
-- Draft PR: #1 — Build Ishikeit Foundation v1
+- Canonical branch: `main`
+- PR #1 — Build Ishikeit Foundation v1 — merged 2026-09-29
 - Do **not** use `ishinaillab/ishi` for this app.
 - Do **not** use the legacy route `/ishi/webhooks/meta`.
 - Canonical webhook route: `/ishikeit/webhooks/meta`.
@@ -89,9 +89,9 @@ Security baseline:
 
 ## Current repository work
 
-A new clean `foundation-v1` branch was created from the initial clean repo.
+Foundation v1 was completed on `foundation-v1`, validated, reviewed, and squash-merged through PR #1 into `main`.
 
-Implemented on that branch:
+Implemented and verified:
 
 - Node.js 24 + TypeScript + Fastify scaffold
 - `/ishikeit/webhooks/meta` GET + POST
@@ -99,38 +99,60 @@ Implemented on that branch:
 - Meta verification challenge
 - PostgreSQL durable-before-ACK ingestion
 - provider-aware Meta normalizer
+- customer-side conversation partitioning for Messenger/Instagram message echoes
 - no permanent raw webhook-body storage
 - liveness/readiness
 - environment validation
-- secret-safe logger redaction
+- secret-safe logger redaction, including the hyphenated signature header
 - migration `migrations/0001_foundation.sql`
-- unit tests for webhook auth and HTTP ingress
+- reproducible `package-lock.json` + `npm ci`
+- current Node 24 / ESLint 10 CI toolchain
+- tests covering webhook authentication, invalid JSON, request-size enforcement, DB-failure non-ACK behavior, provider normalization, idempotency/partition behavior, echo routing, and logger configuration
 - architecture README/docs
 - GitHub Actions CI workflow
 - removed placeholder `delete-this-file.txt`
 
-## Important current state
+Validation result before merge:
 
-Draft PR #1 is open from `foundation-v1` -> `main`.
+- final feature-branch head: `fe356bec2fe4a4fe8ce72e5d9ca54b9bfe555cd6`
+- CI: passed
+- test files: 4 passed
+- tests: 14 passed
+- lint: passed
+- typecheck: passed
+- build: passed
+- npm audit during CI install: 0 vulnerabilities
+- squash merge commit on `main`: `9f8691d288f22787b54d9479e97bafe419c2d6b4`
+- `main` CI after merge: passed
 
-Do **not** merge yet.
+## Deployment state and blocker
 
-The code has not yet been fully validated by CI. The previous session checked for workflow results immediately after creating the branch and saw no workflow run/status yet.
+Production deployment is **not yet verified or complete**.
 
-The next chat should:
+The existing Hostinger application at `apps.ishinaillab.com` was previously deployed from the old repository `ishinaillab/ishi`, branch `main`. Merging Ishikeit PR #1 therefore does not by itself prove that Hostinger deployed `ishinaillab/ishikeit`.
 
-1. inspect PR #1 and current head commit
-2. check GitHub Actions status
-3. if CI fails, inspect logs and fix every lint/typecheck/test/build failure
-4. re-run until CI passes
-5. rigorously review the final diff against this handoff and current Meta docs
-6. only then mark PR ready / merge
-7. after merge, deploy to `apps.ishinaillab.com`
-8. apply PostgreSQL migration
-9. verify `/health/live` and `/health/ready`
-10. verify GET challenge and signed POST persistence
-11. only after backend verification, configure Meta webhook subscriptions
-12. keep outbound Meta delivery and AI execution disabled until those later phases are implemented and tested
+The authorized desktop/Hostinger control path available to ChatGPT was offline during this continuation session, so the Hostinger source repository could not be changed or inspected from here. Do not claim the new backend is deployed until Hostinger shows the Ishikeit repository/commit as the active deployment.
+
+Required Hostinger source/build target:
+
+- repository: `ishinaillab/ishikeit`
+- branch: `main`
+- Node.js: `24.x`
+- build command: `npm run build`
+- start command: `npm start` (runs `node dist/processes/http.js`)
+- preserve the existing production secrets/environment values; do not copy secrets into GitHub
+
+Next execution sequence:
+
+1. change/reconnect the Hostinger Node.js app source to `ishinaillab/ishikeit`, branch `main`, and deploy the current `main`
+2. record/verify the deployed Git revision
+3. verify whether `migrations/0001_foundation.sql` is already present in the intended production PostgreSQL database; apply it only if needed
+4. verify `GET /health/live`
+5. verify `GET /health/ready`
+6. verify the Meta GET challenge at `/ishikeit/webhooks/meta`
+7. send a correctly signed POST and verify durable `inbound_events` + `outbox` persistence
+8. only after those checks pass, configure the minimum required Meta webhook subscriptions
+9. keep outbound Meta delivery and AI execution disabled until their later implementation/test phases
 
 ## Meta configuration cautions
 

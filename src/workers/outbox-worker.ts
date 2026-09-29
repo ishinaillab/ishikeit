@@ -26,7 +26,7 @@ export class OutboxWorker {
   readonly #maxBackoffMs: number;
   readonly #now: () => Date;
   #stopping = false;
-  #loop?: Promise<void>;
+  #loop: Promise<void> | undefined;
 
   constructor(options: OutboxWorkerOptions) {
     this.#store = options.store;

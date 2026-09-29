@@ -146,15 +146,14 @@ export class MetaSender implements MetaMessageSender {
         ? result.error as GraphErrorBody["error"]
         : undefined;
       const isTransient = graphError?.is_transient === true || response.status === 429 || response.status >= 500;
+      const retryAfter = retryAfterMs(response.headers.get("retry-after"));
       throw new MetaSendFailure(graphError?.message ?? `Meta request failed with HTTP ${response.status}`, {
         retryable: isTransient,
         ambiguous: false,
         status: response.status,
         ...(graphError?.code === undefined ? {} : { graphCode: graphError.code }),
         ...(graphError?.error_subcode === undefined ? {} : { graphSubcode: graphError.error_subcode }),
-        ...(retryAfterMs(response.headers.get("retry-after")) === undefined
-          ? {}
-          : { retryAfterMs: retryAfterMs(response.headers.get("retry-after")) })
+        ...(retryAfter === undefined ? {} : { retryAfterMs: retryAfter })
       });
     }
 

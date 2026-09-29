@@ -1,0 +1,31 @@
+{
+  "name": "ishikeit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ishikeit first-party Meta business messaging backend",
+  "type": "module",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "start": "node dist/processes/http.js"
+  },
+  "dependencies": {
+    "fastify": "^5.6.1",
+    "pg": "^8.16.3",
+    "pino": "^9.9.4",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.36.0",
+    "@types/node": "^24.5.2",
+    "@types/pg": "^8.15.5",
+    "eslint": "^9.36.0",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.44.1",
+    "vitest": "^4.1.11"
+  }
+}

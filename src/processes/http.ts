@@ -31,10 +31,14 @@ async function shutdown(signal:string): Promise<void> {
 process.once("SIGINT",()=>{void shutdown("SIGINT");});
 process.once("SIGTERM",()=>{void shutdown("SIGTERM");});
 
-try {
-  await server.listen({host:env.HTTP_HOST,port:env.HTTP_PORT_EFFECTIVE});
-} catch (error) {
-  logger.fatal({err:error},"HTTP process failed");
-  await db.close();
-  process.exitCode = 1;
+async function main(): Promise<void> {
+  try {
+    await server.listen({host:env.HTTP_HOST,port:env.HTTP_PORT_EFFECTIVE});
+  } catch (error) {
+    logger.fatal({err:error},"HTTP process failed");
+    await db.close();
+    process.exitCode = 1;
+  }
 }
+
+void main();

@@ -1,7 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type pg from "pg";
 import type { MetaOutboundPayload } from "../domain/outbound.js";
-import { outboundPartitionKey } from "../domain/outbound.js";
+import { outboundJobId, outboundPartitionKey } from "../domain/outbound.js";
 import type { PostgresDatabase } from "./postgres.js";
 
 export const META_SEND_TOPIC = "meta.message.send";
@@ -13,6 +13,11 @@ export interface OutboxJob {
   payload: unknown;
   attemptCount: number;
   leaseToken: string;
+}
+
+export interface EnqueueResult {
+  id: string;
+  created: boolean;
 }
 
 export interface OutboxDeliveryStore {
@@ -31,16 +36,31 @@ interface OutboxRow extends pg.QueryResultRow {
   lease_token: string;
 }
 
+interface PayloadMatchRow extends pg.QueryResultRow {
+  same_payload: boolean;
+}
+
 export class PostgresOutboxStore implements OutboxDeliveryStore {
   constructor(private readonly db: PostgresDatabase) {}
 
-  async enqueueMetaMessage(payload: MetaOutboundPayload): Promise<string> {
-    const id = randomUUID();
-    await this.db.query(
-      "INSERT INTO outbox (id,topic,partition_key,payload) VALUES ($1,$2,$3,$4::jsonb)",
+  async enqueueMetaMessage(payload: MetaOutboundPayload): Promise<EnqueueResult> {
+    const id = outboundJobId(payload);
+    const inserted = await this.db.query<{ id: string } & pg.QueryResultRow>(
+      "INSERT INTO outbox (id,topic,partition_key,payload) VALUES ($1,$2,$3,$4::jsonb) ON CONFLICT (id) DO NOTHING RETURNING id",
       [id, META_SEND_TOPIC, outboundPartitionKey(payload), JSON.stringify(payload)]
     );
-    return id;
+
+    if (inserted.rowCount === 1) return { id, created: true };
+
+    const existing = await this.db.query<PayloadMatchRow>(
+      "SELECT payload = $2::jsonb AS same_payload FROM outbox WHERE id = $1::uuid",
+      [id, JSON.stringify(payload)]
+    );
+    if (existing.rows[0]?.same_payload !== true) {
+      throw new Error("outbound idempotency key was reused with a different payload");
+    }
+
+    return { id, created: false };
   }
 
   async claimNext(leaseDurationMs: number): Promise<OutboxJob | undefined> {
@@ -124,8 +144,4 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
     );
     return result.rowCount === 1;
   }
-}
-
-export function outboundPayloadFingerprint(payload: MetaOutboundPayload): string {
-  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }

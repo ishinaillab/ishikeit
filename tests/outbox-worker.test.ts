@@ -10,6 +10,7 @@ const job: OutboxJob = {
   partitionKey: "partition-1",
   payload: {
     schemaVersion: 1,
+    idempotencyKey: "reply:event-1",
     channel: "instagram",
     accountId: "ig-1",
     recipientId: "user-1",

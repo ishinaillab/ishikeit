@@ -17,10 +17,5 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
-      - run: npm install --ignore-scripts
-      - name: Emit generated lockfile
-        run: |
-          echo "ISHIKEIT_LOCKFILE_BEGIN"
-          cat package-lock.json
-          echo "ISHIKEIT_LOCKFILE_END"
+      - run: npm ci --ignore-scripts
       - run: npm run check

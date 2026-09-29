@@ -19,7 +19,7 @@ const job: OutboxJob = {
   leaseToken: "22222222-2222-4222-8222-222222222222"
 };
 
-function makeStore(claimed: OutboxJob | undefined = job) {
+function makeStore(claimed: OutboxJob | undefined) {
   const claimNext = vi.fn<OutboxDeliveryStore["claimNext"]>().mockResolvedValue(claimed);
   const complete = vi.fn<OutboxDeliveryStore["complete"]>().mockResolvedValue(true);
   const retry = vi.fn<OutboxDeliveryStore["retry"]>().mockResolvedValue(true);
@@ -48,7 +48,7 @@ describe("OutboxWorker", () => {
   });
 
   it("publishes a valid leased message", async () => {
-    const { store, complete, retry, deadLetter } = makeStore();
+    const { store, complete, retry, deadLetter } = makeStore(job);
     const { sender, send } = makeSender();
     const worker = new OutboxWorker({
       store,
@@ -79,7 +79,7 @@ describe("OutboxWorker", () => {
   });
 
   it("schedules retryable failures with exponential backoff", async () => {
-    const { store, retry, deadLetter } = makeStore();
+    const { store, retry, deadLetter } = makeStore(job);
     const send = vi.fn<MetaMessageSender["send"]>().mockRejectedValue(
       new MetaSendFailure("rate limited", { retryable: true, status: 429 })
     );
@@ -98,7 +98,7 @@ describe("OutboxWorker", () => {
   });
 
   it("dead-letters permanent failures immediately", async () => {
-    const { store, retry, deadLetter } = makeStore();
+    const { store, retry, deadLetter } = makeStore(job);
     const send = vi.fn<MetaMessageSender["send"]>().mockRejectedValue(
       new MetaSendFailure("invalid recipient", { retryable: false, status: 400, graphCode: 100 })
     );

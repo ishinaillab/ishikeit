@@ -23,6 +23,8 @@ AI, WordPress, media download, profile lookup, and outbound Meta calls never run
 
 Outbound Messenger and Instagram replies use explicit `meta.message.send` records in the existing PostgreSQL outbox. The HTTP process can run a lease-based worker when `META_OUTBOUND_ENABLED=true`.
 
+A logical outbound send carries a caller-supplied stable `idempotencyKey`. Ishikeit derives a deterministic UUID-shaped outbox ID from that key plus channel/account/recipient identity. Enqueuing the same logical send again does not create another row. Reusing the same key for a different JSON payload fails rather than silently changing the already-queued send.
+
 The worker:
 
 1. claims one due record with `FOR UPDATE SKIP LOCKED`
@@ -37,11 +39,11 @@ Messenger sends use `/{PAGE_ID}/messages` with `messaging_type=RESPONSE`. Instag
 
 Meta does not provide a general client-supplied idempotency key for these Send API calls. A network failure after Meta accepts a request but before Ishikeit receives the response is therefore delivery-ambiguous; retrying preserves at-least-once behavior but can theoretically duplicate a message. The worker records this condition in logs/dead-letter reason rather than claiming exactly-once delivery.
 
-Inbound `inbound.event.accepted` outbox records are not consumed by the outbound sender. A later AI/automation processor must deliberately create `meta.message.send` records.
+Inbound `inbound.event.accepted` outbox records are not consumed by the outbound sender. A later AI/automation processor must deliberately create `meta.message.send` records and assign a stable logical idempotency key, such as a source event ID plus reply sequence.
 
 ## Reliability
 
-Delivery is treated as at-least-once. Duplicate inbound deliveries are expected. Consequential processing must be idempotent. PostgreSQL remains the durable inbox/outbox boundary.
+Inbound delivery and outbound transport are treated as at-least-once. Duplicate inbound deliveries are expected. Consequential processing and outbound enqueue are idempotent. PostgreSQL remains the durable inbox/outbox boundary.
 
 ## Data minimization
 

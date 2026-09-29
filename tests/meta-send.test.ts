@@ -4,6 +4,7 @@ import type { MetaOutboundPayload } from "../src/domain/outbound.js";
 
 const base: MetaOutboundPayload = {
   schemaVersion: 1,
+  idempotencyKey: "reply:event-1",
   channel: "messenger",
   accountId: "page-1",
   recipientId: "user-1",

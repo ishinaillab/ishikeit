@@ -14,11 +14,13 @@ The production boundary currently includes:
 - provider-aware normalization and deduplication
 - no permanent raw webhook-body archive
 - schema-aware health/readiness endpoints
-- durable outbox leasing, bounded retries, and dead-lettering
+- durable outbox leasing, bounded retries, dead-lettering, and idempotent enqueue
 - Messenger and Instagram text-message send adapters for Graph API `v26.0`
 - outbound delivery disabled by default until access tokens and review readiness are verified
 
 AI execution remains disabled. The outbound worker only consumes explicit `meta.message.send` outbox records; inbound events are not automatically turned into replies.
+
+Each logical outbound send must carry a stable `idempotencyKey`. Ishikeit derives a deterministic outbox UUID from that key plus the provider conversation identity. Re-enqueuing the same logical send is a no-op; reusing the same key with a different payload is rejected.
 
 ## Development
 

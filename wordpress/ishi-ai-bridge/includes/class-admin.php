@@ -93,6 +93,7 @@ final class Admin {
                 <tbody>
                     <tr><td><strong>Turn endpoint</strong></td><td><code><?php echo esc_html( rest_url( Rest::REST_NS . '/turn' ) ); ?></code></td></tr>
                     <tr><td><strong>File endpoint</strong></td><td><code><?php echo esc_html( rest_url( Rest::REST_NS . '/files' ) ); ?></code></td></tr>
+                    <tr><td><strong>Audio transcription endpoint</strong></td><td><code><?php echo esc_html( rest_url( Rest::REST_NS . '/transcribe' ) ); ?></code></td></tr>
                     <tr><td><strong>Health endpoint</strong></td><td><code><?php echo esc_html( rest_url( Rest::REST_NS . '/health' ) ); ?></code></td></tr>
                     <tr><td><strong>Authentication configured</strong></td><td><?php echo Auth::token_hash() ? 'Yes' : 'No'; ?></td></tr>
                     <tr><td><strong>Storage schema</strong></td><td><code><?php echo esc_html( (string) get_option( Storage::SCHEMA_OPTION, 'not installed' ) ); ?></code></td></tr>

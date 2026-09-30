@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Ishi AI Bridge
  * Description: Private, idempotent bridge from Ishikeit's durable processor to the configured AI Engine chatbot.
- * Version: 0.1.0
+ * Version: 0.2.0
  * Author: Ishi Nail Lab
  * Requires at least: 6.9
  * Requires PHP: 8.1
@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-define( 'ISHI_AI_BRIDGE_VERSION', '0.1.0' );
+define( 'ISHI_AI_BRIDGE_VERSION', '0.2.0' );
 define( 'ISHI_AI_BRIDGE_SCHEMA_VERSION', '1.1.1' );
 define( 'ISHI_AI_BRIDGE_FILE', __FILE__ );
 define( 'ISHI_AI_BRIDGE_DIR', __DIR__ );

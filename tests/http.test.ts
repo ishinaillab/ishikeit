@@ -68,12 +68,12 @@ describe("Meta webhook route", () => {
       url: "/health/capabilities"
     });
 
-    const body = res.json() as {
+    const body = res.json<{
       runtime: {
         processorEnabled: boolean;
         actionDispatchEnabled: boolean;
       };
-    };
+    }>();
     expect(body.runtime).toEqual({
       processorEnabled: true,
       actionDispatchEnabled: true

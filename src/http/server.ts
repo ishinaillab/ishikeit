@@ -13,6 +13,10 @@ export interface ServerDeps {
   appSecret: string;
   verifyToken: string;
   webhookBodyLimit?: number;
+  runtimeState?: {
+    processorEnabled: boolean;
+    actionDispatchEnabled: boolean;
+  };
 }
 
 export function buildServer(deps: ServerDeps) {
@@ -22,7 +26,13 @@ export function buildServer(deps: ServerDeps) {
   });
 
   server.get("/health/live", () => ({ status: "ok" }));
-  server.get("/health/capabilities", () => runtimeContract);
+  server.get("/health/capabilities", () => ({
+    ...runtimeContract,
+    runtime: deps.runtimeState ?? {
+      processorEnabled: false,
+      actionDispatchEnabled: false
+    }
+  }));
   server.get("/health/ready", async (_req, reply) =>
     (await deps.ready())
       ? { status: "ready" }

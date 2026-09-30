@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import type pg from "pg";
 import type { ActionEnvelope } from "../domain/actions.js";
 import { canonicalEventSchema, type CanonicalEvent, type IngressIdentity } from "../domain/events.js";
-import { ingressIdentity } from "../channels/meta-normalizer.js";
 import { enqueueAction, INBOUND_ACCEPTED_TOPIC } from "./outbox.js";
 import type { PostgresDatabase } from "./postgres.js";
 
@@ -28,6 +27,7 @@ export interface InboundEventProcessingStore {
 interface EventRow extends pg.QueryResultRow {
   id: string;
   normalized_payload: unknown;
+  partition_key: string;
   status: string;
   processed_at: Date | null;
 }
@@ -41,8 +41,8 @@ export class PostgresInboundStore implements InboundStore {
       const inserted = await tx.query(
         `INSERT INTO inbound_events
          (id,provider,channel,capability,account_id,event_type,provider_event_id,provider_message_id,
-          deduplication_key,payload_hash,normalized_payload,schema_version,status,occurred_at,received_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,'persisted',$13,$14)
+          deduplication_key,partition_key,payload_hash,normalized_payload,schema_version,status,occurred_at,received_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,'persisted',$14,$15)
          ON CONFLICT (deduplication_key) DO NOTHING
          RETURNING id`,
         [
@@ -55,6 +55,7 @@ export class PostgresInboundStore implements InboundStore {
           event.providerEventId ?? null,
           event.providerMessageId ?? null,
           identity.deduplicationKey,
+          identity.partitionKey,
           rawBodyHash,
           JSON.stringify(event),
           event.schemaVersion,
@@ -77,7 +78,7 @@ export class PostgresInboundEventRepository implements InboundEventProcessingSto
 
   async get(id: string): Promise<StoredInboundEvent | undefined> {
     const result = await this.db.query<EventRow>(
-      "SELECT id,normalized_payload,status,processed_at FROM inbound_events WHERE id = $1::uuid",
+      "SELECT id,normalized_payload,partition_key,status,processed_at FROM inbound_events WHERE id = $1::uuid",
       [id]
     );
     const row = result.rows[0];
@@ -89,7 +90,7 @@ export class PostgresInboundEventRepository implements InboundEventProcessingSto
     return {
       id: row.id,
       event: parsed.data,
-      partitionKey: ingressIdentity(parsed.data).partitionKey,
+      partitionKey: row.partition_key,
       status: row.status,
       ...(row.processed_at === null ? {} : { processedAt: row.processed_at })
     };

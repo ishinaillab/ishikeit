@@ -21,6 +21,8 @@ define( 'ISHI_AI_BRIDGE_DIR', __DIR__ );
 
 require_once ISHI_AI_BRIDGE_DIR . '/includes/class-storage.php';
 require_once ISHI_AI_BRIDGE_DIR . '/includes/class-auth.php';
+require_once ISHI_AI_BRIDGE_DIR . '/includes/class-validation.php';
+require_once ISHI_AI_BRIDGE_DIR . '/includes/class-ai.php';
 require_once ISHI_AI_BRIDGE_DIR . '/includes/class-rest.php';
 require_once ISHI_AI_BRIDGE_DIR . '/includes/class-admin.php';
 

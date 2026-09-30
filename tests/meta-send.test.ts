@@ -127,6 +127,27 @@ describe("MetaSender", () => {
     await expect(makeSender(fetchImpl).send(base)).rejects.toBeInstanceOf(MetaSendFailure);
   });
 
+  it("fails permanently when the selected channel credential is not configured", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const noInstagram = new MetaSender({
+      graphApiVersion: "v26.0",
+      messengerAccessToken: "page-token",
+      whatsappAccessToken: "wa-token",
+      instagramGraphHost: "graph.instagram.com",
+      fetchImpl
+    });
+
+    await expect(noInstagram.send({
+      ...base,
+      channel: "instagram",
+      accountId: "ig-1"
+    })).rejects.toMatchObject({
+      retryable: false,
+      message: "No Meta access token is configured for instagram"
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("enforces provider text limits before making a request", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     await expect(makeSender(fetchImpl).send({

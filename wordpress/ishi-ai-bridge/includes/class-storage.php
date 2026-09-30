@@ -53,6 +53,17 @@ final class Storage {
             ) {$charset_collate};"
         );
 
+        $request_hash_ready = maybe_add_column(
+            $turns,
+            'request_hash',
+            "ALTER TABLE {$turns} ADD request_hash char(64) NULL AFTER turn_hash"
+        );
+
+        if ( ! $request_hash_ready ) {
+            error_log( '[Ishi AI Bridge] schema upgrade failed: request_hash column is unavailable.' );
+            return;
+        }
+
         update_option( self::SCHEMA_OPTION, ISHI_AI_BRIDGE_SCHEMA_VERSION, false );
     }
 

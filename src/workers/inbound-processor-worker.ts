@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 import { z } from "zod";
-import type { InboundEventProcessingStore } from "../persistence/inbound.js";
+import type { InboundEventProcessingStore, StoredInboundEvent } from "../persistence/inbound.js";
 import { INBOUND_ACCEPTED_TOPIC, type OutboxDeliveryStore, type OutboxJob } from "../persistence/outbox.js";
 import { ProcessingFailure } from "../processing/failure.js";
 import type { EventHandlerRegistry } from "../processing/registry.js";
@@ -181,7 +181,7 @@ export class InboundProcessorWorker {
     }, "inbound event scheduled for retry");
   }
 
-  #rolloutSkipReason(stored: Awaited<ReturnType<InboundEventProcessingStore["get"]>> & {}): string | undefined {
+  #rolloutSkipReason(stored: StoredInboundEvent): string | undefined {
     if (
       this.#processorCutoverAt !== undefined
       && new Date(stored.event.receivedAt).getTime() < this.#processorCutoverAt.getTime()

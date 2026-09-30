@@ -37,10 +37,10 @@ Hostinger is connected to:
 Verified deployed Git revision:
 
 ```text
-9d0fdd747e222ded771c56f47ade0229dd9a96ca
+fd3e4c048275922c3ebe7f89380caa856b52f933
 ```
 
-That revision completed its GitHub Actions workflow successfully and Hostinger completed the corresponding Git-based Node.js build.
+That revision completed GitHub Actions successfully and Hostinger completed the corresponding Git-based Node.js build. It contains the opt-in provider-neutral video-interpreter architecture while production keeps video interpretation disabled until a verified paid Gemini credential is configured.
 
 Hostinger's official MCP is authenticated on the authorized desktop through OAuth and can inspect builds, runtime logs, Node.js settings, and environment-variable key state without exposing stored values.
 
@@ -63,7 +63,8 @@ Verified `GET /health/capabilities` state:
     "processorEnabled": true,
     "actionDispatchEnabled": true,
     "processorCutoverAt": "2026-09-30T10:31:25.208Z",
-    "processorCanaryPartitionCount": 0
+    "processorCanaryPartitionCount": 0,
+    "videoInterpreterProvider": "none"
   }
 }
 ```
@@ -74,6 +75,8 @@ Also verified:
 - `GET /health/ready` → HTTP 200
 
 The full-rollout cutover is intentionally retained across ordinary restarts. Do not move it forward just because the process restarts; doing so would discard recoverable post-launch backlog.
+
+`videoInterpreterProvider=none` is intentional in the current production environment. The new video interpreter must remain opt-in until a paid Gemini API project/key is available and a real provider-backed video smoke test succeeds.
 
 ## Production environment controls
 
@@ -165,6 +168,7 @@ Reliability model:
 - bounded retry/backoff
 - dead-letter handling
 - ordering per partition
+- lease renewal during long-running handler/media work
 - duplicate provider delivery is expected and safe
 
 Raw webhook bytes are transient and are not permanently stored.
@@ -548,7 +552,17 @@ A later end-to-end production matrix validated the durable processor and dispatc
 - audio: speech-bearing MP3 was resolved, sent to the authenticated `/transcribe` bridge route, transcribed by AI Engine, processed on attempt 1, and generated a published Meta reply with a provider resource ID
 - video: MP4 was received as canonical portable media and processed on attempt 1, but is intentionally not sent into the current chatbot file-input path; the AI turn receives an explicit `unprocessedMediaKinds=[video]` safeguard so it must not claim to have inspected the video
 
-Video content interpretation is therefore not yet implemented. Video transport/receipt is supported, outbound video messaging is supported, and the current inbound behavior is deliberately safe rather than pretending the chatbot can inspect MP4 content.
+A provider-neutral video interpretation capability is now implemented and deployed in revision `fd3e4c048275922c3ebe7f89380caa856b52f933`. The first concrete interpreter is an opt-in Gemini adapter using the Gemini Files API plus the stable Interactions v1 API with `store=false`, static video processing, bounded timeouts, supported-MIME validation, resumable upload URL validation, and best-effort temporary-file deletion.
+
+Production intentionally remains at `VIDEO_INTERPRETER_PROVIDER=none` because no verified paid Gemini credential is configured. Therefore the live behavior is still the safe no-inspection path: video transport/receipt and outbound video messaging work, but the chatbot must not claim to have inspected inbound video until the interpreter is explicitly enabled and validated.
+
+Activation requirements:
+
+- use a paid Gemini API Cloud project/key so customer prompts/files are not used to improve Google's products under the current service terms
+- set `VIDEO_INTERPRETER_PROVIDER=gemini` and `GEMINI_API_KEY` in server-side secret storage
+- keep the key out of Git and documentation
+- run a real provider-backed video smoke test before declaring inbound video understanding live
+- verify `/health/capabilities` reports `videoInterpreterProvider=gemini` only after successful activation
 
 The end-to-end matrix's temporary provider media cleanup was not independently verified after the execution safety layer blocked a new cleanup helper. Do not state that those later matrix objects were deleted.
 
@@ -568,9 +582,12 @@ Latest full repository validation:
 
 - lint: passed
 - typecheck: passed
-- test files: 13 passed
-- tests: 70 passed
+- test files: 14 passed
+- tests: 77 passed
 - build: passed
+- `git diff --check`: passed
+
+GitHub PR #20 CI passed before squash merge. Hostinger then built `fd3e4c048275922c3ebe7f89380caa856b52f933` successfully. Post-deploy `/health/live`, `/health/ready`, and `/health/capabilities` all returned HTTP 200. A one-hour Hostinger runtime-log audit returned 25 lines with zero warnings/errors.
 
 ## Current next work
 
@@ -578,7 +595,7 @@ The durable messaging processor is now a production system, not a scaffold. Oper
 
 Continue building on the adapter/registry boundaries rather than redesigning the core. Recommended sequence:
 
-1. add inbound video interpretation as an explicit media-processing capability/adapter; retain the current no-inspection safeguard whenever no verified video backend is available
+1. activate and perform a real provider-backed video interpretation smoke test only after a paid Gemini API project/key is securely configured; until then retain the verified no-inspection safeguard
 2. add Telegram as the first non-Meta messaging adapter
 3. add Meta lead-management capability as a separate capability/operation family
 4. add Meta Marketing API operations behind their own authorization/policy layer

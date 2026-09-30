@@ -22,15 +22,59 @@ function isAllowedMetaHost(hostname: string): boolean {
     || host.endsWith(".cdninstagram.com");
 }
 
-function safeFilename(value: string | undefined, url: URL): string {
+const mediaExtensionByMimeType: Readonly<Record<string, string>> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "audio/aac": "aac",
+  "audio/amr": "amr",
+  "audio/mpeg": "mp3",
+  "audio/mp4": "m4a",
+  "audio/ogg": "ogg",
+  "audio/opus": "opus",
+  "video/mp4": "mp4",
+  "video/3gpp": "3gp",
+  "application/pdf": "pdf",
+  "text/plain": "txt"
+};
+
+function mediaExtension(mimeType: string | undefined): string | undefined {
+  if (mimeType === undefined) return undefined;
+  const normalized = mimeType.split(";", 1)[0]?.trim().toLowerCase();
+  return normalized === undefined ? undefined : mediaExtensionByMimeType[normalized];
+}
+
+function safeFilename(value: string | undefined, url: URL, mimeType: string | undefined): string {
   if (value !== undefined) {
     const cleaned = value.replace(/[^A-Za-z0-9._ -]/g, "_").slice(0, 180);
-    if (cleaned.length > 0) return cleaned;
+    if (cleaned.length > 0) {
+      const extension = mediaExtension(mimeType);
+      return extension !== undefined && !/\.[A-Za-z0-9]{1,10}$/.test(cleaned)
+        ? cleaned + "." + extension
+        : cleaned;
+    }
   }
-  const basename = decodeURIComponent(url.pathname.split("/").pop() ?? "")
+
+  let basename = url.pathname.split("/").pop() ?? "";
+  try {
+    basename = decodeURIComponent(basename);
+  } catch {
+    // Keep the encoded basename; sanitization below removes unsafe characters.
+  }
+
+  basename = basename
     .replace(/[^A-Za-z0-9._ -]/g, "_")
     .slice(0, 180);
-  return basename.length > 0 ? basename : "attachment.bin";
+  const extension = mediaExtension(mimeType);
+
+  if (basename.length === 0) {
+    return extension === undefined ? "attachment.bin" : "attachment." + extension;
+  }
+
+  return extension !== undefined && !/\.[A-Za-z0-9]{1,10}$/.test(basename)
+    ? basename + "." + extension
+    : basename;
 }
 
 export class MetaMediaResolver implements MediaResolver {
@@ -151,7 +195,7 @@ export class MetaMediaResolver implements MediaResolver {
         ?? "application/octet-stream";
       return {
         bytes,
-        filename: safeFilename(part.filename, url),
+        filename: safeFilename(part.filename, url, mimeType),
         mimeType
       };
     }

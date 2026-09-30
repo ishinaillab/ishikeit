@@ -139,6 +139,12 @@ PROCESSOR_ENABLED=false
 ACTION_DISPATCH_ENABLED=false
 ```
 
-Then enable them independently. Inbound AI processing and provider action dispatch are deliberately separate switches. The legacy `META_OUTBOUND_ENABLED` variable remains a compatibility alias during migration, but new deployments should use `ACTION_DISPATCH_ENABLED`.
+Production processor activation requires an explicit `PROCESSOR_CUTOVER_AT` timestamp. Events received before that launch boundary are acknowledged without invoking AI or creating actions, preventing delayed replies to historical conversations.
+
+For a canary rollout, set `PROCESSOR_CANARY_PARTITION_KEYS` to one or more hashed conversation partition keys. While the list is non-empty, only those partitions may invoke the AI handler; other claimed events are intentionally acknowledged with no action.
+
+Then enable processing and action dispatch independently. The legacy `META_OUTBOUND_ENABLED` variable remains a compatibility alias during migration, but new deployments should use `ACTION_DISPATCH_ENABLED`.
+
+The required staged procedure is documented in [`docs/production-rollout.md`](docs/production-rollout.md).
 
 Access tokens and bridge credentials are secrets. Keep raw values in hosting/runtime secret storage only and never commit them.

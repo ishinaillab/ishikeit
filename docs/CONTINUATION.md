@@ -37,7 +37,7 @@ Hostinger is connected to:
 Verified deployed Git revision:
 
 ```text
-b8562e557ba81739c5d51e7caaacff4e5b070c83
+9d0fdd747e222ded771c56f47ade0229dd9a96ca
 ```
 
 That revision completed its GitHub Actions workflow successfully and Hostinger completed the corresponding Git-based Node.js build.
@@ -56,7 +56,8 @@ Verified `GET /health/capabilities` state:
   "architecture": "event-action-v1",
   "canonicalEventSchema": 2,
   "actionSchema": 1,
-  "wordpressBridgeApiSchema": 2,
+  "operationalMetricsSchema": 2,
+  "wordpressBridgeApiSchema": 3,
   "wordpressBridgeStorageSchema": "1.1.1",
   "runtime": {
     "processorEnabled": true,
@@ -235,10 +236,11 @@ Ishi AI Bridge
 
 Current bridge/runtime contract:
 
-- plugin version: `0.2.0`
-- bridge API schema: `2`
+- plugin version: `0.3.0`
+- bridge API schema: `3`
 - storage schema: `1.1.1`
 - authenticated audio API ready: `true`
+- optional machine-readable handoff reason: supported
 
 Current WordPress REST base:
 
@@ -344,6 +346,9 @@ Important current properties:
 - `provider` and `capability` stored separately
 - `partition_key` persisted on `inbound_events`
 - processing errors tracked on inbound events
+- durable `processing_outcome` values: `handled`, `handoff`, `ignored`, `rollout_skipped`
+- optional machine-readable `handoff_reason` stored only for handoff outcomes
+- historical processed rows were deliberately not backfilled and remain outcome `unknown` in metrics
 - route/partition indexes present
 - historical pending accepted events were sealed before processor rollout
 - readiness fails if required processor schema is absent
@@ -439,6 +444,48 @@ At the post-rollout Hostinger runtime-log audit:
 - warning/error count: 0
 - processor and outbound publish messages present
 
+## Handoff and processing-outcome observability
+
+The handoff observability rollout completed on 2026-09-30.
+
+Deployed application revision:
+
+```text
+9d0fdd747e222ded771c56f47ade0229dd9a96ca
+```
+
+Deployed WordPress bridge:
+
+```text
+Ishi AI Bridge 0.3.0
+```
+
+Current contracts:
+
+- operational metrics schema: `2`
+- WordPress bridge API schema: `3`
+- WordPress bridge storage schema: `1.1.1`
+
+The processor now persists one durable outcome for newly completed inbound events: `handled`, `handoff`, `ignored`, or `rollout_skipped`.
+
+Handoff reasons are constrained low-cardinality machine codes. Free-form customer text must not be stored as a handoff reason or emitted into operational metrics. Missing or invalid reasons normalize to `unspecified`.
+
+The protected `/ops/metrics` endpoint reports inbound outcome counts, historical processed rows with no recorded outcome as `unknown`, handoff totals and reason groups, queue state, and publish/retry/dead-letter attempts. No historical outcome was guessed or backfilled.
+
+Production verification:
+
+- bridge 0.3.0 authenticated health returned HTTP 200
+- AI, file, and audio bridge APIs all reported ready
+- Node `/health/live` and `/health/ready` returned HTTP 200
+- `/health/capabilities` reports metrics schema 2 and bridge API schema 3
+- one correctly signed controlled Messenger smoke event was accepted and processed on attempt 1
+- that event persisted `processing_outcome=handled`
+- one outbound action published, with zero dead letters
+- post-smoke protected metrics showed one new handled outcome while older rows remained unknown
+- Hostinger one-hour runtime-log audit returned 96 lines with zero WARN/ERROR and contained processor/outbound activity
+
+A live human-handoff event was intentionally not forced in production. The handoff persistence/reason path is covered by repository tests, and the WordPress bridge handoff contract remains opt-in through the existing filters.
+
 ## Security posture
 
 Current important controls:
@@ -521,20 +568,20 @@ Latest full repository validation:
 
 - lint: passed
 - typecheck: passed
-- test files: 12 passed
-- tests: 65 passed
+- test files: 13 passed
+- tests: 70 passed
 - build: passed
+
 ## Current next work
 
-The durable messaging processor is now a production system, not a scaffold. Operational metrics and audio transcription adaptation are already live; do not redo those phases.
+The durable messaging processor is now a production system, not a scaffold. Operational metrics, audio transcription adaptation, and durable handoff/outcome observability are live; do not redo those phases.
 
 Continue building on the adapter/registry boundaries rather than redesigning the core. Recommended sequence:
 
-1. refine AI handoff/escalation behavior and make handoff states operationally observable
-2. if inbound video interpretation is required, add it as an explicit media-processing capability/adapter and keep the current no-inspection safeguard until a verified backend is available
-3. add Telegram as the first non-Meta messaging adapter
-4. add Meta lead-management capability as a separate capability/operation family
-5. add Meta Marketing API operations behind their own authorization/policy layer
-6. version and test each future provider adapter and media-capability contract independently
+1. add inbound video interpretation as an explicit media-processing capability/adapter; retain the current no-inspection safeguard whenever no verified video backend is available
+2. add Telegram as the first non-Meta messaging adapter
+3. add Meta lead-management capability as a separate capability/operation family
+4. add Meta Marketing API operations behind their own authorization/policy layer
+5. version and test each future provider adapter and media-capability contract independently
 
 Marketing API, lead management, and future providers must not be routed through the conversational message handler merely because they originate from Meta.

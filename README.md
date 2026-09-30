@@ -136,9 +136,9 @@ Keep both execution gates disabled until migrations, bridge deployment, credenti
 
 ```text
 PROCESSOR_ENABLED=false
-META_OUTBOUND_ENABLED=false
+ACTION_DISPATCH_ENABLED=false
 ```
 
-Then enable them independently. Inbound AI processing and provider action dispatch are deliberately separate switches.
+Then enable them independently. Inbound AI processing and provider action dispatch are deliberately separate switches. The legacy `META_OUTBOUND_ENABLED` variable remains a compatibility alias during migration, but new deployments should use `ACTION_DISPATCH_ENABLED`.
 
 Access tokens and bridge credentials are secrets. Keep raw values in hosting/runtime secret storage only and never commit them.

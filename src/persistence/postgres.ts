@@ -16,6 +16,7 @@ interface ReadinessRow extends pg.QueryResultRow {
   provider: boolean;
   capability: boolean;
   last_error: boolean;
+  partition_key: boolean;
 }
 
 export class PostgresDatabase {
@@ -56,7 +57,14 @@ export class PostgresDatabase {
              WHERE table_schema='public'
                AND table_name='inbound_events'
                AND column_name='last_error'
-           ) AS last_error`
+           ) AS last_error,
+           EXISTS (
+             SELECT 1
+             FROM information_schema.columns
+             WHERE table_schema='public'
+               AND table_name='inbound_events'
+               AND column_name='partition_key'
+           ) AS partition_key`
       );
 
       const row = result.rows[0];
@@ -64,7 +72,8 @@ export class PostgresDatabase {
         && row.outbox === true
         && row.provider === true
         && row.capability === true
-        && row.last_error === true;
+        && row.last_error === true
+        && row.partition_key === true;
     } catch {
       return false;
     }

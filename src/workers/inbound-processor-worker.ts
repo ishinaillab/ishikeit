@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 import { z } from "zod";
-import type { PostgresInboundEventRepository } from "../persistence/inbound.js";
+import type { InboundEventProcessingStore } from "../persistence/inbound.js";
 import { INBOUND_ACCEPTED_TOPIC, type OutboxDeliveryStore, type OutboxJob } from "../persistence/outbox.js";
 import { ProcessingFailure } from "../processing/failure.js";
 import type { EventHandlerRegistry } from "../processing/registry.js";
@@ -12,7 +12,7 @@ const acceptedPayloadSchema = z.object({
 
 export interface InboundProcessorWorkerOptions {
   queue: OutboxDeliveryStore;
-  events: PostgresInboundEventRepository;
+  events: InboundEventProcessingStore;
   handlers: EventHandlerRegistry;
   logger: Logger;
   pollIntervalMs?: number;
@@ -25,7 +25,7 @@ export interface InboundProcessorWorkerOptions {
 
 export class InboundProcessorWorker {
   readonly #queue: OutboxDeliveryStore;
-  readonly #events: PostgresInboundEventRepository;
+  readonly #events: InboundEventProcessingStore;
   readonly #handlers: EventHandlerRegistry;
   readonly #logger: Logger;
   readonly #pollIntervalMs: number;

@@ -21,7 +21,7 @@ AI, WordPress, media download, profile lookup, and outbound Meta calls never run
 
 ## Outbound delivery
 
-Outbound Messenger and Instagram replies use explicit `meta.message.send` records in the existing PostgreSQL outbox. The HTTP process can run a lease-based worker when `META_OUTBOUND_ENABLED=true`.
+Outbound Messenger, Instagram, and WhatsApp replies use explicit `meta.message.send` records in the existing PostgreSQL outbox. The HTTP process can run a lease-based worker when `META_OUTBOUND_ENABLED=true`.
 
 A logical outbound send carries a caller-supplied stable `idempotencyKey`. Ishikeit derives a deterministic UUID-shaped outbox ID from that key plus channel/account/recipient identity. Enqueuing the same logical send again does not create another row. Reusing the same key for a different JSON payload fails rather than silently changing the already-queued send.
 
@@ -35,7 +35,9 @@ The worker:
 6. dead-letters permanent failures and exhausted retries
 7. clears leases on completion, retry, or dead-letter
 
-Messenger sends use `/{PAGE_ID}/messages` with `messaging_type=RESPONSE`. Instagram sends use `/{IG_ID}/messages`. The Instagram Graph host is explicit because Meta supports both Instagram Login and Facebook Login integration families.
+Messenger sends use `/{PAGE_ID}/messages` with `messaging_type=RESPONSE`. Instagram sends use `/{IG_ID}/messages`. WhatsApp sends use `/{PHONE_NUMBER_ID}/messages` with `messaging_product=whatsapp`, `recipient_type=individual`, and a text body. The Instagram Graph host is explicit because Meta supports both Instagram Login and Facebook Login integration families.
+
+The current WhatsApp adapter sends free-form text replies only. Those are intended for an open customer-service window; starting a WhatsApp conversation outside that window requires an approved template and is intentionally not represented by the current text-only outbound schema.
 
 Meta does not provide a general client-supplied idempotency key for these Send API calls. A network failure after Meta accepts a request but before Ishikeit receives the response is therefore delivery-ambiguous; retrying preserves at-least-once behavior but can theoretically duplicate a message. The worker records this condition in logs/dead-letter reason rather than claiming exactly-once delivery.
 
@@ -54,8 +56,6 @@ Outbound logs avoid message text and redact access tokens. Dead-letter reasons c
 ## Provider boundaries
 
 Messenger, Instagram, and WhatsApp share the ingress security boundary but keep provider-specific semantics. IDs are never assumed to represent the same person across channels.
-
-WhatsApp outbound sending remains outside this worker for now.
 
 ## Versioning
 

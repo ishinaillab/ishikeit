@@ -4,7 +4,7 @@ import { z } from "zod";
 export const metaOutboundPayloadSchema = z.object({
   schemaVersion: z.literal(1),
   idempotencyKey: z.string().min(1).max(256),
-  channel: z.enum(["messenger", "instagram"]),
+  channel: z.enum(["messenger", "instagram", "whatsapp"]),
   accountId: z.string().min(1),
   recipientId: z.string().min(1),
   message: z.object({

@@ -13,6 +13,7 @@ export function createLogger(env: Environment) {
         "META_WEBHOOK_VERIFY_TOKEN",
         "META_MESSENGER_ACCESS_TOKEN",
         "META_INSTAGRAM_ACCESS_TOKEN",
+        "META_WHATSAPP_ACCESS_TOKEN",
         "accessToken",
         "token",
         "*.accessToken",

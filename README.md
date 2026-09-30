@@ -15,8 +15,8 @@ The production boundary currently includes:
 - no permanent raw webhook-body archive
 - schema-aware health/readiness endpoints
 - durable outbox leasing, bounded retries, dead-lettering, and idempotent enqueue
-- Messenger and Instagram text-message send adapters for Graph API `v26.0`
-- outbound delivery disabled by default until access tokens and review readiness are verified
+- Messenger, Instagram, and WhatsApp text-message send adapters for Graph API `v26.0`
+- outbound delivery disabled by default until all provider access tokens are configured and verified
 
 AI execution remains disabled. The outbound worker only consumes explicit `meta.message.send` outbox records; inbound events are not automatically turned into replies.
 
@@ -33,6 +33,8 @@ The canonical database migration history lives in `ishinaillab/ishikeit-db`.
 
 ## Outbound safety gate
 
-Set `META_OUTBOUND_ENABLED=true` only after both Messenger and Instagram access tokens have been configured. Messenger uses a Page access token. Instagram defaults to `graph.instagram.com`; set `META_INSTAGRAM_GRAPH_HOST=graph.facebook.com` only when the account is intentionally using the Facebook Login-based Instagram API flow.
+Set `META_OUTBOUND_ENABLED=true` only after the Messenger Page token, Instagram user token, and WhatsApp system-user/business token have all been configured. Messenger and WhatsApp send through `graph.facebook.com`. Instagram defaults to `graph.instagram.com`; set `META_INSTAGRAM_GRAPH_HOST=graph.facebook.com` only when the account is intentionally using the Facebook Login-based Instagram API flow.
+
+WhatsApp free-form text replies are intended for active customer-service conversations. Initiating a WhatsApp conversation outside the customer-service window requires an approved message template and is outside the current text-only worker.
 
 Access tokens are secrets. Keep them in the hosting environment only and never commit them.

@@ -45,9 +45,27 @@ describe("environment", () => {
     const env = loadEnvironment({
       ...productionBase,
       PROCESSOR_ENABLED: "true",
+      PROCESSOR_CUTOVER_AT: "2026-09-30T09:30:00.000Z",
       WORDPRESS_AI_BRIDGE_URL: "https://example.test/wp-json/ishi-ai/v1",
       ISHI_AI_BRIDGE_TOKEN: "x".repeat(32)
     });
     expect(env.PROCESSOR_ENABLED).toBe(true);
   });
+  it("validates provider-neutral canary partition keys", () => {
+    const first = "a".repeat(64);
+    const second = "B".repeat(64);
+    const env = loadEnvironment({
+      ...productionBase,
+      PROCESSOR_CANARY_PARTITION_KEYS: `${first},${second}`
+    });
+    expect(env.PROCESSOR_CANARY_PARTITION_KEYS_EFFECTIVE).toEqual([
+      first,
+      second.toLowerCase()
+    ]);
+    expect(() => loadEnvironment({
+      ...productionBase,
+      PROCESSOR_CANARY_PARTITION_KEYS: "invalid"
+    })).toThrow();
+  });
+
 });

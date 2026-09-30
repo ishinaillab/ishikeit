@@ -137,4 +137,63 @@ describe("InboundProcessorWorker", () => {
     expect(q.retry).toHaveBeenCalledWith(job, new Date("2026-09-30T00:00:01.000Z"));
     expect(q.deadLetter).not.toHaveBeenCalled();
   });
+
+  it("permanently skips events received before the configured cutover", async () => {
+    const q = makeQueue();
+    const e = makeEvents();
+    const handle = vi.fn().mockResolvedValue([]);
+    const handlers = new EventHandlerRegistry();
+    handlers.register({ canHandle: () => true, handle });
+
+    const worker = new InboundProcessorWorker({
+      queue: q.queue,
+      events: e.events,
+      handlers,
+      logger: pino({ level: "silent" }),
+      processorCutoverAt: new Date("2026-09-30T00:00:01.000Z")
+    });
+
+    await worker.runOnce();
+
+    expect(handle).not.toHaveBeenCalled();
+    expect(e.markProcessing).not.toHaveBeenCalled();
+    expect(e.complete).toHaveBeenCalledWith(eventId, []);
+    expect(q.complete).toHaveBeenCalledWith(job);
+  });
+
+  it("processes only explicitly allowed partitions during a canary rollout", async () => {
+    const q = makeQueue();
+    const e = makeEvents();
+    const handle = vi.fn().mockResolvedValue([]);
+    const handlers = new EventHandlerRegistry();
+    handlers.register({ canHandle: () => true, handle });
+
+    const skippedWorker = new InboundProcessorWorker({
+      queue: q.queue,
+      events: e.events,
+      handlers,
+      logger: pino({ level: "silent" }),
+      canaryPartitionKeys: ["another-partition"]
+    });
+
+    await skippedWorker.runOnce();
+
+    expect(handle).not.toHaveBeenCalled();
+    expect(e.complete).toHaveBeenCalledWith(eventId, []);
+
+    const q2 = makeQueue();
+    const e2 = makeEvents();
+    const allowedWorker = new InboundProcessorWorker({
+      queue: q2.queue,
+      events: e2.events,
+      handlers,
+      logger: pino({ level: "silent" }),
+      canaryPartitionKeys: ["partition-1"]
+    });
+
+    await allowedWorker.runOnce();
+
+    expect(handle).toHaveBeenCalledTimes(1);
+    expect(e2.markProcessing).toHaveBeenCalledWith(eventId);
+  });
 });

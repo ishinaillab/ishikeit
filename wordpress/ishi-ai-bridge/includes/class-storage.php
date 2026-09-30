@@ -27,6 +27,7 @@ final class Storage {
         dbDelta(
             "CREATE TABLE {$turns} (
                 turn_hash char(64) NOT NULL,
+                request_hash char(64) NULL,
                 status varchar(20) NOT NULL,
                 response_json longtext NULL,
                 created_at datetime NOT NULL,
@@ -55,8 +56,8 @@ final class Storage {
         update_option( self::SCHEMA_OPTION, ISHI_AI_BRIDGE_SCHEMA_VERSION, false );
     }
 
-    public static function claim_turn( string $turn_hash ) {
-        return self::claim( self::turns_table(), 'turn_hash', $turn_hash, self::IDEMPOTENCY_TTL );
+    public static function claim_turn( string $turn_hash, string $request_hash ) {
+        return self::claim_turn_request( $turn_hash, $request_hash );
     }
 
     public static function complete_turn( string $turn_hash, array $response ): bool {
@@ -101,6 +102,124 @@ final class Storage {
                 'DELETE FROM ' . self::files_table() . ' WHERE expires_at < %s',
                 $now
             )
+        );
+    }
+
+    private static function claim_turn_request( string $turn_hash, string $request_hash ) {
+        global $wpdb;
+
+        $table = self::turns_table();
+        $now = current_time( 'mysql', true );
+        $expires = gmdate( 'Y-m-d H:i:s', time() + self::IDEMPOTENCY_TTL );
+
+        $inserted = $wpdb->query(
+            $wpdb->prepare(
+                "INSERT IGNORE INTO {$table}
+                 (turn_hash,request_hash,status,response_json,created_at,updated_at,expires_at)
+                 VALUES (%s,%s,'processing',NULL,%s,%s,%s)",
+                $turn_hash,
+                $request_hash,
+                $now,
+                $now,
+                $expires
+            )
+        );
+
+        if ( 1 === $inserted ) {
+            return [ 'claimed' => true ];
+        }
+
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT request_hash,status,response_json,updated_at,expires_at
+                 FROM {$table}
+                 WHERE turn_hash = %s
+                 LIMIT 1",
+                $turn_hash
+            ),
+            ARRAY_A
+        );
+
+        if ( ! is_array( $row ) ) {
+            return new WP_Error(
+                'ishi_ai_bridge_storage_failed',
+                'Idempotency storage failed.',
+                [ 'status' => 503 ]
+            );
+        }
+
+        if ( empty( $row['request_hash'] ) ) {
+            $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE {$table}
+                     SET request_hash=%s
+                     WHERE turn_hash=%s AND request_hash IS NULL",
+                    $request_hash,
+                    $turn_hash
+                )
+            );
+
+            $stored_hash = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT request_hash FROM {$table} WHERE turn_hash=%s LIMIT 1",
+                    $turn_hash
+                )
+            );
+
+            $row['request_hash'] = is_string( $stored_hash ) ? $stored_hash : '';
+        }
+
+        if (
+            empty( $row['request_hash'] )
+            || ! hash_equals( (string) $row['request_hash'], $request_hash )
+        ) {
+            return new WP_Error(
+                'ishi_ai_bridge_idempotency_conflict',
+                'The turn ID was reused with a different request.',
+                [ 'status' => 409 ]
+            );
+        }
+
+        if (
+            'completed' === $row['status']
+            && ! empty( $row['response_json'] )
+            && strtotime( $row['expires_at'] . ' UTC' ) > time()
+        ) {
+            $cached = json_decode( $row['response_json'], true );
+            if ( is_array( $cached ) ) {
+                return [ 'cached_response' => $cached ];
+            }
+        }
+
+        $stale_before = gmdate(
+            'Y-m-d H:i:s',
+            time() - self::PROCESSING_STALE_AFTER
+        );
+
+        $reclaimed = $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$table}
+                 SET status='processing',response_json=NULL,updated_at=%s,expires_at=%s
+                 WHERE turn_hash=%s
+                   AND request_hash=%s
+                   AND (expires_at <= %s OR updated_at < %s)",
+                $now,
+                $expires,
+                $turn_hash,
+                $request_hash,
+                $now,
+                $stale_before
+            )
+        );
+
+        if ( 1 === $reclaimed ) {
+            return [ 'claimed' => true ];
+        }
+
+        return new WP_Error(
+            'ishi_ai_bridge_in_progress',
+            'This request is already processing.',
+            [ 'status' => 409 ]
         );
     }
 

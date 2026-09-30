@@ -16,6 +16,8 @@ export interface ServerDeps {
   runtimeState?: {
     processorEnabled: boolean;
     actionDispatchEnabled: boolean;
+    processorCutoverAt: string | null;
+    processorCanaryPartitionCount: number;
   };
 }
 
@@ -30,7 +32,9 @@ export function buildServer(deps: ServerDeps) {
     ...runtimeContract,
     runtime: deps.runtimeState ?? {
       processorEnabled: false,
-      actionDispatchEnabled: false
+      actionDispatchEnabled: false,
+      processorCutoverAt: null,
+      processorCanaryPartitionCount: 0
     }
   }));
   server.get("/health/ready", async (_req, reply) =>

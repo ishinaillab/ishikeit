@@ -42,7 +42,9 @@ describe("Meta webhook route", () => {
       wordpressBridgeStorageSchema: "1.1.1",
       runtime: {
         processorEnabled: false,
-        actionDispatchEnabled: false
+        actionDispatchEnabled: false,
+        processorCutoverAt: null,
+        processorCanaryPartitionCount: 0
       }
     });
     await server.close();
@@ -59,7 +61,9 @@ describe("Meta webhook route", () => {
       verifyToken: "verify-token-1234",
       runtimeState: {
         processorEnabled: true,
-        actionDispatchEnabled: true
+        actionDispatchEnabled: true,
+        processorCutoverAt: "2026-09-30T09:30:00.000Z",
+        processorCanaryPartitionCount: 1
       }
     });
 
@@ -72,11 +76,15 @@ describe("Meta webhook route", () => {
       runtime: {
         processorEnabled: boolean;
         actionDispatchEnabled: boolean;
+        processorCutoverAt: string | null;
+        processorCanaryPartitionCount: number;
       };
     }>();
     expect(body.runtime).toEqual({
       processorEnabled: true,
-      actionDispatchEnabled: true
+      actionDispatchEnabled: true,
+      processorCutoverAt: "2026-09-30T09:30:00.000Z",
+      processorCanaryPartitionCount: 1
     });
     expect(res.body).not.toContain("secret");
     await server.close();

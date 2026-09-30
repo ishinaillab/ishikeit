@@ -32,7 +32,9 @@ const server = buildServer({
   verifyToken: env.META_WEBHOOK_VERIFY_TOKEN,
   runtimeState: {
     processorEnabled: env.PROCESSOR_ENABLED,
-    actionDispatchEnabled: env.ACTION_DISPATCH_ENABLED_EFFECTIVE
+    actionDispatchEnabled: env.ACTION_DISPATCH_ENABLED_EFFECTIVE,
+    processorCutoverAt: env.PROCESSOR_CUTOVER_AT ?? null,
+    processorCanaryPartitionCount: env.PROCESSOR_CANARY_PARTITION_KEYS_EFFECTIVE.length
   }
 });
 
@@ -83,7 +85,11 @@ if (env.PROCESSOR_ENABLED) {
     queue,
     events: new PostgresInboundEventRepository(db),
     handlers,
-    logger
+    logger,
+    ...(env.PROCESSOR_CUTOVER_AT === undefined
+      ? {}
+      : { processorCutoverAt: new Date(env.PROCESSOR_CUTOVER_AT) }),
+    canaryPartitionKeys: env.PROCESSOR_CANARY_PARTITION_KEYS_EFFECTIVE
   });
 }
 

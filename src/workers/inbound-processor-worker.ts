@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 import { z } from "zod";
-import type { InboundEventProcessingStore } from "../persistence/inbound.js";
+import type { InboundEventProcessingStore, StoredInboundEvent } from "../persistence/inbound.js";
 import { INBOUND_ACCEPTED_TOPIC, type OutboxDeliveryStore, type OutboxJob } from "../persistence/outbox.js";
 import { ProcessingFailure } from "../processing/failure.js";
 import type { EventHandlerRegistry } from "../processing/registry.js";
@@ -20,6 +20,8 @@ export interface InboundProcessorWorkerOptions {
   maxAttempts?: number;
   baseBackoffMs?: number;
   maxBackoffMs?: number;
+  processorCutoverAt?: Date;
+  canaryPartitionKeys?: readonly string[];
   now?: () => Date;
 }
 
@@ -33,6 +35,8 @@ export class InboundProcessorWorker {
   readonly #maxAttempts: number;
   readonly #baseBackoffMs: number;
   readonly #maxBackoffMs: number;
+  readonly #processorCutoverAt: Date | undefined;
+  readonly #canaryPartitionKeys: ReadonlySet<string>;
   readonly #now: () => Date;
   #stopping = false;
   #loop: Promise<void> | undefined;
@@ -47,6 +51,8 @@ export class InboundProcessorWorker {
     this.#maxAttempts = options.maxAttempts ?? 5;
     this.#baseBackoffMs = options.baseBackoffMs ?? 2000;
     this.#maxBackoffMs = options.maxBackoffMs ?? 300_000;
+    this.#processorCutoverAt = options.processorCutoverAt;
+    this.#canaryPartitionKeys = new Set(options.canaryPartitionKeys ?? []);
     this.#now = options.now ?? (() => new Date());
   }
 
@@ -85,6 +91,25 @@ export class InboundProcessorWorker {
 
     if (stored.processedAt !== undefined || stored.status === "processed") {
       await this.#queue.complete(job);
+      return true;
+    }
+
+    const skipReason = this.#rolloutSkipReason(stored);
+    if (skipReason !== undefined) {
+      await this.#events.complete(stored.id, []);
+      const completed = await this.#queue.complete(job);
+      if (!completed) {
+        this.#logger.warn({ outboxId: job.id, eventId: stored.id, skipReason }, "rollout skip lost its queue lease");
+      } else {
+        this.#logger.info({
+          outboxId: job.id,
+          eventId: stored.id,
+          provider: stored.event.provider,
+          channel: stored.event.channel,
+          eventType: stored.event.eventType,
+          skipReason
+        }, "inbound event skipped by rollout guard");
+      }
       return true;
     }
 
@@ -154,6 +179,24 @@ export class InboundProcessorWorker {
       attempt: nextAttemptNumber,
       nextAttemptAt: nextAttemptAt.toISOString()
     }, "inbound event scheduled for retry");
+  }
+
+  #rolloutSkipReason(stored: StoredInboundEvent): string | undefined {
+    if (
+      this.#processorCutoverAt !== undefined
+      && new Date(stored.event.receivedAt).getTime() < this.#processorCutoverAt.getTime()
+    ) {
+      return "before_processor_cutover";
+    }
+
+    if (
+      this.#canaryPartitionKeys.size > 0
+      && !this.#canaryPartitionKeys.has(stored.partitionKey)
+    ) {
+      return "outside_canary_partitions";
+    }
+
+    return undefined;
   }
 
   #backoffMs(attempt: number, retryAfter: number | undefined): number {

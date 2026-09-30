@@ -33,15 +33,7 @@ const server = buildServer({
 });
 
 let outboundWorker: OutboxWorker | undefined;
-if (env.META_OUTBOUND_ENABLED) {
-  if (
-    env.META_MESSENGER_ACCESS_TOKEN === undefined ||
-    env.META_INSTAGRAM_ACCESS_TOKEN === undefined ||
-    env.META_WHATSAPP_ACCESS_TOKEN === undefined
-  ) {
-    throw new Error("Meta outbound access tokens are required when outbound delivery is enabled");
-  }
-
+if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
   const dispatcher = new ActionDispatcher();
   dispatcher.register(new MetaMessagingAdapter(new MetaSender({
     graphApiVersion: env.META_GRAPH_API_VERSION,
@@ -59,8 +51,7 @@ let processorWorker: InboundProcessorWorker | undefined;
 if (env.PROCESSOR_ENABLED) {
   if (
     env.WORDPRESS_AI_BRIDGE_URL === undefined ||
-    env.ISHI_AI_BRIDGE_TOKEN === undefined ||
-    env.META_WHATSAPP_ACCESS_TOKEN === undefined
+    env.ISHI_AI_BRIDGE_TOKEN === undefined
   ) {
     throw new Error("AI bridge configuration is required when inbound processing is enabled");
   }

@@ -68,7 +68,13 @@ describe("Meta webhook route", () => {
       url: "/health/capabilities"
     });
 
-    expect(res.json().runtime).toEqual({
+    const body = res.json() as {
+      runtime: {
+        processorEnabled: boolean;
+        actionDispatchEnabled: boolean;
+      };
+    };
+    expect(body.runtime).toEqual({
       processorEnabled: true,
       actionDispatchEnabled: true
     });

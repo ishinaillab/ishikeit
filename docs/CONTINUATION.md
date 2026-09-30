@@ -1,192 +1,486 @@
 # Ishikeit continuation handoff
 
-Updated: 2026-09-29
+Updated: 2026-09-30
 
 ## Canonical project
 
-- Repository: `ishinaillab/ishikeit`
-- Canonical branch: `main`
-- PR #1 — Build Ishikeit Foundation v1 — merged 2026-09-29
-- Do **not** use `ishinaillab/ishi` for this app.
-- Do **not** use the legacy route `/ishi/webhooks/meta`.
-- Canonical webhook route: `/ishikeit/webhooks/meta`.
+Application repository:
 
-## Meta app
+- `ishinaillab/ishikeit`
+- canonical branch: `main`
+- production domain: `https://apps.ishinaillab.com`
 
-- App name: Ishikeit
-- App ID: `1042452472116584`
-- Current mode: Development
-- Category: Messaging
-- Current Graph API target: `v26.0`
-- Current live app inspection showed:
-  - App Review submission: none
-  - Privileges: none
-  - Compliance: compliant
-  - Open violations: 0
-  - Webhook subscriptions: 0
-  - Require App Secret: off
-  - Require 2FA: off
+Database/schema repository:
 
-## Audited Foundation v1 architecture
+- `ishinaillab/ishikeit-db`
+- canonical branch: `main`
 
-The backend is a first-party Meta business messaging service for Messenger, Instagram, and WhatsApp.
+Canonical Meta webhook route:
 
-Public endpoints:
-
-- `GET /health/live`
-- `GET /health/ready`
 - `GET /ishikeit/webhooks/meta`
 - `POST /ishikeit/webhooks/meta`
 
-Webhook POST order:
+Do not create new platform-specific durable cores. New providers and capabilities must plug into the canonical event/action architecture through adapters.
 
-1. enforce request size
-2. preserve exact raw request bytes
-3. verify `X-Hub-Signature-256` using `META_APP_SECRET`
-4. only then parse/trust JSON
-5. normalize the Meta envelope into provider-aware canonical events
-6. derive provider-aware idempotency + partition identities
-7. transactionally persist normalized event + outbox record in PostgreSQL
-8. return 200 only after durable commit
-9. AI, WordPress, media downloads, profile lookups, and outbound Meta API calls stay outside the ACK path
+## Production deployment
 
-Reliability model:
-
-- at-least-once delivery
-- idempotent processing
-- PostgreSQL durable inbox/outbox
-- duplicate delivery expected
-- future workers need recoverable leases, bounded retry/backoff, dead-letter handling, per-conversation serialization
-- DB failure before persistence must not return 200
-
-Data handling:
-
-- raw webhook bytes are transient only for authentication/parsing
-- do not permanently archive raw webhook bodies
-- persist normalized event + SHA-256 payload fingerprint
-- minimize Platform Data and keep secrets/customer content out of routine logs
-
-Provider boundaries:
-
-- Messenger object: `page`
-- Instagram object: `instagram`
-- WhatsApp object: `whatsapp_business_account`
-- do not merge identities across channels automatically
-- provider-specific policy windows, echoes, attachments, statuses, and outbound semantics remain isolated
-
-Security baseline:
-
-- HTTPS/TLS
-- exact raw-body HMAC verification
-- timing-safe comparison
-- independent high-entropy webhook verify token
-- server-side secrets only
-- no secrets in source control/logs
-- least-privilege permissions/webhook fields
-- appsecret_proof is outbound Graph hardening, not webhook authentication
-- mTLS is optional hardening, not a Foundation v1 dependency
-- IP allowlisting remains unset until real stable outbound egress is known
-
-## Current repository work
-
-Foundation v1 was completed on `foundation-v1`, validated, reviewed, and squash-merged through PR #1 into `main`.
-
-Implemented and verified:
-
-- Node.js 24 + TypeScript + Fastify scaffold
-- `/ishikeit/webhooks/meta` GET + POST
-- exact raw-body signature verification
-- Meta verification challenge
-- PostgreSQL durable-before-ACK ingestion
-- provider-aware Meta normalizer
-- customer-side conversation partitioning for Messenger/Instagram message echoes
-- no permanent raw webhook-body storage
-- liveness/readiness
-- environment validation
-- secret-safe logger redaction, including the hyphenated signature header
-- migration `migrations/0001_foundation.sql`
-- reproducible `package-lock.json` + `npm ci`
-- current Node 24 / ESLint 10 CI toolchain
-- tests covering webhook authentication, invalid JSON, request-size enforcement, DB-failure non-ACK behavior, provider normalization, idempotency/partition behavior, echo routing, and logger configuration
-- architecture README/docs
-- GitHub Actions CI workflow
-- removed placeholder `delete-this-file.txt`
-
-Validation result before merge:
-
-- final feature-branch head: `fe356bec2fe4a4fe8ce72e5d9ca54b9bfe555cd6`
-- CI: passed
-- test files: 4 passed
-- tests: 14 passed
-- lint: passed
-- typecheck: passed
-- build: passed
-- npm audit during CI install: 0 vulnerabilities
-- squash merge commit on `main`: `9f8691d288f22787b54d9479e97bafe419c2d6b4`
-- `main` CI after merge: passed
-
-## Deployment state and blocker
-
-Production deployment is **not yet verified or complete**.
-
-The existing Hostinger application at `apps.ishinaillab.com` was previously deployed from the old repository `ishinaillab/ishi`, branch `main`. Merging Ishikeit PR #1 therefore does not by itself prove that Hostinger deployed `ishinaillab/ishikeit`.
-
-The authorized desktop/Hostinger control path available to ChatGPT was offline during this continuation session, so the Hostinger source repository could not be changed or inspected from here. Do not claim the new backend is deployed until Hostinger shows the Ishikeit repository/commit as the active deployment.
-
-Required Hostinger source/build target:
+Hostinger is connected to:
 
 - repository: `ishinaillab/ishikeit`
 - branch: `main`
-- Node.js: `24.x`
-- build command: `npm run build`
-- start command: `npm start` (runs `node dist/processes/http.js`)
-- preserve the existing production secrets/environment values; do not copy secrets into GitHub
+- Node.js: 24
+- app type: Fastify
+- build script: `build`
+- entry file: `dist/processes/http.js`
+- package manager: npm
 
-Next execution sequence:
+Verified deployed Git revision:
 
-1. change/reconnect the Hostinger Node.js app source to `ishinaillab/ishikeit`, branch `main`, and deploy the current `main`
-2. record/verify the deployed Git revision
-3. verify whether `migrations/0001_foundation.sql` is already present in the intended production PostgreSQL database; apply it only if needed
-4. verify `GET /health/live`
-5. verify `GET /health/ready`
-6. verify the Meta GET challenge at `/ishikeit/webhooks/meta`
-7. send a correctly signed POST and verify durable `inbound_events` + `outbox` persistence
-8. only after those checks pass, configure the minimum required Meta webhook subscriptions
-9. keep outbound Meta delivery and AI execution disabled until their later implementation/test phases
+```text
+b94f814e7904878e3450dc7024d7d283a770a533
+```
 
-## Meta configuration cautions
+That revision completed its GitHub Actions workflow successfully and Hostinger completed the corresponding Git-based Node.js build.
 
-Current Meta documentation contains a real access-level ambiguity between Messenger overview and webhooks guidance regarding own-Page use vs Advanced Access for non-role customers.
+Hostinger's official MCP is authenticated on the authorized desktop through OAuth and can inspect builds, runtime logs, Node.js settings, and environment-variable key state without exposing stored values.
 
-Do not assume production customer messaging works solely because the Page is owned by Ishi.
+## Current production runtime state
 
-Production readiness must be verified by:
+The processor and dispatcher are live.
 
-- actual permissions/features shown in App Dashboard
-- exact access level granted
-- required App Review/Advanced Access if Meta requires it
-- published/live state where required
-- successful end-to-end test with a real non-role customer
+Verified `GET /health/capabilities` state:
 
-Instagram authorization remains a deployment/configuration decision:
+```json
+{
+  "service": "ishikeit",
+  "architecture": "event-action-v1",
+  "canonicalEventSchema": 2,
+  "actionSchema": 1,
+  "wordpressBridgeApiSchema": 1,
+  "wordpressBridgeStorageSchema": "1.1.1",
+  "runtime": {
+    "processorEnabled": true,
+    "actionDispatchEnabled": true,
+    "processorCutoverAt": "2026-09-30T10:31:25.208Z",
+    "processorCanaryPartitionCount": 0
+  }
+}
+```
 
-- Instagram API with Facebook Login
-- or Instagram API with Instagram Login
+Also verified:
 
-Do not mix scopes/token flows between those two paths.
+- `GET /health/live` → HTTP 200
+- `GET /health/ready` → HTTP 200
 
-WhatsApp production should use the WABA-oriented `whatsapp_business_account` webhook model and subscribe only to required fields, initially centered on `messages`.
+The full-rollout cutover is intentionally retained across ordinary restarts. Do not move it forward just because the process restarts; doing so would discard recoverable post-launch backlog.
 
-## Transitional public-site/legal context
+## Production environment controls
 
-Current public/legal pages may temporarily remain on `povnailstudio.com` until the public site is migrated to `www.ishinaillab.com`.
+Production now contains the runtime keys required for:
 
-Do not treat the temporary old-domain legal URLs as an architecture defect solely because the backend is on `apps.ishinaillab.com`.
+- PostgreSQL
+- Meta webhook authentication
+- Messenger access token
+- Instagram access token
+- WhatsApp access token
+- WordPress AI bridge URL and credential
+- AI bridge/file/media timeout controls
+- processor enablement
+- action dispatcher enablement
+- Meta outbound compatibility flag
+- Meta outbound request timeout
 
-## Old repository warning
+Raw values are secret and must stay in Hostinger/runtime secret storage.
 
-Before the repository correction, an isolated branch named `foundation-v1-audited` was created in `ishinaillab/ishi`.
+Current control state:
 
-Its `main` branch was not changed.
+```text
+PROCESSOR_ENABLED=true
+ACTION_DISPATCH_ENABLED=true
+META_OUTBOUND_ENABLED=false
+PROCESSOR_CANARY_PARTITION_KEYS=<unset>
+PROCESSOR_CUTOVER_AT=2026-09-30T10:31:25.208Z
+```
 
-That old repository is not part of Ishikeit and should be ignored unless the user explicitly asks to clean it up later.
+`META_OUTBOUND_ENABLED` remains only a backward-compatible alias. New configuration should use `ACTION_DISPATCH_ENABLED`.
+
+## Meta app
+
+Current app:
+
+- name: Ishikeit
+- app ID: `1042452472116584`
+- category: Messaging
+- status: published/live
+- Graph API target: `v26.0`
+
+Current app-level webhook subscriptions are exactly:
+
+- `page` → `messages`
+- `instagram` → `messages`
+- `whatsapp_business_account` → `messages`
+
+Callback:
+
+```text
+https://apps.ishinaillab.com/ishikeit/webhooks/meta
+```
+
+Instagram professional account:
+
+```text
+17841438662359631
+```
+
+WhatsApp production identifiers:
+
+- Business ID: `1030506726679124`
+- WABA: `4663054720683021`
+- phone-number ID: `1416383858214802`
+
+No App Review submission is currently required for the first-party own/managed messaging setup that has already been proven empirically in production. Reassess access/review requirements before supporting unrelated client businesses.
+
+## Durable ingress
+
+The production Meta ingress path is:
+
+1. enforce request-size limit
+2. preserve exact raw request bytes
+3. verify `X-Hub-Signature-256` using the Meta App Secret
+4. parse only after signature verification
+5. normalize provider events into the canonical event schema
+6. derive provider-local deduplication and partition identities
+7. transactionally persist `inbound_events` plus `inbound.event.accepted`
+8. ACK only after durable commit
+
+AI calls, media downloads, profile lookups, and provider outbound calls never run before the webhook ACK.
+
+Reliability model:
+
+- at-least-once transport
+- deterministic inbound deduplication
+- durable inbox/outbox
+- lease-based workers
+- bounded retry/backoff
+- dead-letter handling
+- ordering per partition
+- duplicate provider delivery is expected and safe
+
+Raw webhook bytes are transient and are not permanently stored.
+
+## Canonical event architecture
+
+Core routing fields are provider-neutral:
+
+- provider
+- channel
+- capability
+- account ID
+- event type
+- provider event/message identity
+- actor/identity
+- timestamps
+- portable content
+
+Portable content supports:
+
+- text
+- image
+- video
+- audio
+- document
+- structured data
+
+Provider-native details remain available in canonical `data` so future adapters do not need to force every provider into Meta-specific shapes.
+
+A future Telegram webhook must emit the same canonical event contract rather than adding Telegram assumptions to the durable processor.
+
+## Durable inbound processor
+
+`InboundProcessorWorker` consumes:
+
+```text
+inbound.event.accepted
+```
+
+The worker:
+
+1. claims with a bounded lease
+2. loads the persisted canonical event
+3. applies production cutover/canary guards
+4. records processing state
+5. routes through `EventHandlerRegistry`
+6. runs the selected handler outside the DB transaction
+7. transactionally persists generated actions and marks the source event processed
+8. completes the accepted-event queue record
+9. retries transient failures
+10. dead-letters permanent/exhausted failures
+
+The first handler intentionally accepts only:
+
+```text
+capability=messaging
+eventType=message.received
+```
+
+Delivery statuses, echoes, ads events, lead events, and future administrative events are not interpreted as customer chat.
+
+## WordPress AI Engine bridge
+
+The active private bridge is the WordPress plugin:
+
+```text
+Ishi AI Bridge
+```
+
+Current WordPress REST base:
+
+```text
+https://povnailstudio.com/wp-json/ishi-ai/v1
+```
+
+The bridge is responsible for:
+
+- dedicated bearer authentication
+- durable AI-turn idempotency
+- request-fingerprint conflict protection
+- durable file-upload idempotency
+- conversation continuity via AI Engine chat ID
+- server-side AI Engine calls
+- typed reply-part validation
+- protected health endpoint
+- no-store/private REST responses
+
+Verified behaviors:
+
+- valid bridge credential → authenticated health succeeds
+- missing credential → HTTP 401
+- wrong credential → HTTP 401
+- REST responses are not cached by LiteSpeed
+- repeating the exact same turn returns the same durable result
+- reusing one turn ID with a different request is rejected
+- controlled file upload succeeded and replayed idempotently
+
+Provider tokens and provider webhook authentication do not live in this WordPress bridge.
+
+## Generic action architecture
+
+Handlers enqueue:
+
+```text
+topic = action.dispatch
+```
+
+with a generic envelope containing:
+
+- schema version
+- stable idempotency key
+- provider
+- capability
+- operation
+- ordering key
+- target
+- body
+
+The worker resolves:
+
+```text
+provider / capability / operation
+```
+
+through `ActionDispatcher`.
+
+Current concrete adapter:
+
+```text
+meta / messaging / message.send
+```
+
+Future examples may include:
+
+```text
+telegram / messaging / message.send
+meta / marketing / campaign.create
+meta / marketing / campaign.update
+meta / leads / lead.read
+meta / leads / lead.update
+```
+
+Provider-specific authentication, API limits, response parsing, retry classification, policy windows, and approval requirements stay inside provider adapters.
+
+## Rich outbound messaging
+
+The Meta messaging adapter currently supports portable outbound parts:
+
+- text
+- image
+- video
+- audio
+- document
+
+Messenger/Instagram map portable media to attachment payloads.
+
+WhatsApp maps portable media to Cloud API media payloads.
+
+Media handling is adapter-based and runs only after durable ingress. Meta media fetching uses HTTPS-only validation, host allowlisting, manual redirect validation, bounded redirects, request timeouts, and byte-size ceilings.
+
+## Database state
+
+The production PostgreSQL schema includes the provider-neutral processor migrations.
+
+Important current properties:
+
+- fixed three-channel DB constraint removed
+- `provider` and `capability` stored separately
+- `partition_key` persisted on `inbound_events`
+- processing errors tracked on inbound events
+- route/partition indexes present
+- historical pending accepted events were sealed before processor rollout
+- readiness fails if required processor schema is absent
+
+The persisted ingress partition key is reused by processing and action ordering. Provider-specific partition logic is not recomputed inside the generic processor.
+
+## Production rollout proof
+
+A staged production rollout was completed on 2026-09-30.
+
+### Stage 1 — code and environment, workers disabled
+
+Verified:
+
+- latest main build deployed
+- production environment expanded with processor/bridge/WhatsApp configuration
+- `PROCESSOR_ENABLED=false`
+- `ACTION_DISPATCH_ENABLED=false`
+- health remained green
+
+### Stage 2 — canary processor only
+
+Canary allowlist contained the three already-controlled Messenger, Instagram, and WhatsApp test conversation partitions.
+
+A fresh cutover was set and:
+
+```text
+PROCESSOR_ENABLED=true
+ACTION_DISPATCH_ENABLED=false
+```
+
+Three correctly signed controlled Meta webhook messages were injected through the real production ingress, one for each channel.
+
+Result for all three:
+
+- webhook returned HTTP 200 accepted
+- event persisted
+- canonical partition matched the expected canary partition
+- source event reached `processed`
+- one durable `action.dispatch` text action was created
+- no action was sent while dispatcher remained disabled
+
+### Stage 3 — canary dispatcher
+
+Dispatcher was enabled while canary protection remained active:
+
+```text
+PROCESSOR_ENABLED=true
+ACTION_DISPATCH_ENABLED=true
+```
+
+All three queued actions were accepted by their provider API and stored a provider resource ID.
+
+Additional provider-side proof included:
+
+- Instagram message echo webhook received
+- WhatsApp `delivery.sent` webhook received
+- WhatsApp `delivery.delivered` webhook received
+- Messenger production conversation continued through the canary partition
+
+No canary action was dead-lettered.
+
+### Stage 4 — full rollout
+
+A new full-rollout cutover was set:
+
+```text
+2026-09-30T10:31:25.208Z
+```
+
+Canary filtering was removed and both workers stayed enabled.
+
+A controlled post-cutover Messenger smoke event then verified:
+
+- ingress accepted
+- event processed once
+- no inbound processing error
+- outbound action published
+- provider resource ID persisted
+- no retry
+- no dead letter
+
+At the post-rollout DB audit:
+
+- pending `action.dispatch`: 0
+- dead-lettered `action.dispatch`: 0
+- pending `inbound.event.accepted`: 0
+- recent inbound events with `last_error`: 0
+
+At the post-rollout Hostinger runtime-log audit:
+
+- 179 runtime entries in the inspected one-hour window
+- warning/error count: 0
+- processor and outbound publish messages present
+
+## Security posture
+
+Current important controls:
+
+- TLS/HTTPS
+- exact raw-body Meta HMAC validation
+- timing-safe signature comparison
+- dedicated high-entropy webhook verify token
+- dedicated private WordPress bridge credential
+- server-side provider credentials only
+- no provider tokens in Git
+- logger secret redaction
+- private/no-store bridge endpoints
+- SSRF-hardened media resolution
+- bounded media sizes/timeouts
+- durable idempotency at ingress, AI turn, file upload, and action enqueue
+- explicit rollout cutover
+- provider-neutral canary partition guard
+- processor and dispatcher independently disableable
+
+Do not add provider access tokens, bridge tokens, app secrets, DB URLs, or raw customer message bodies to committed documentation.
+
+## Current operational rollback controls
+
+Stop new AI processing while continuing durable webhook ingestion:
+
+```text
+PROCESSOR_ENABLED=false
+```
+
+Stop provider-side actions:
+
+```text
+ACTION_DISPATCH_ENABLED=false
+```
+
+If only dispatch is disabled, generated actions remain durable. Inspect pending actions before re-enabling if a rollback lasted long enough that replies may have become stale.
+
+Do not move the full-rollout cutover forward during an ordinary outage unless intentionally discarding the backlog.
+
+## Current next work
+
+The durable messaging processor is now a production system, not a scaffold.
+
+The next work should build on the adapter/registry boundaries rather than redesigning the core. Recommended sequence:
+
+1. perform controlled real media ingress tests for image, video, audio, and document paths
+2. add observability/operational metrics around processing latency, retry counts, dead letters, and provider error classes
+3. refine AI handoff/escalation behavior
+4. add Telegram as the first non-Meta messaging adapter
+5. add Meta lead-management capability as a separate capability/operation family
+6. add Meta Marketing API operations behind their own authorization/policy layer
+7. version and test each future provider adapter independently
+
+Marketing API, lead management, and future providers must not be routed through the conversational message handler merely because they originate from Meta.

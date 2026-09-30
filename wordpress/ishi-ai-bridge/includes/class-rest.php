@@ -13,9 +13,55 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class Rest {
     public const REST_NS = 'ishi-ai/v1';
 
+    private const CACHE_POLICY_VERSION = '2';
+
     public static function boot(): void {
+        add_action( 'init', [ __CLASS__, 'protect_current_request_from_cache' ], 0 );
+        add_action( 'init', [ __CLASS__, 'ensure_cache_policy' ], 1 );
         add_action( 'rest_api_init', [ __CLASS__, 'register_routes' ] );
         add_filter( 'rest_post_dispatch', [ __CLASS__, 'add_no_store_headers' ], 10, 3 );
+    }
+
+    public static function protect_current_request_from_cache(): void {
+        $uri = isset( $_SERVER['REQUEST_URI'] )
+            ? (string) $_SERVER['REQUEST_URI']
+            : '';
+
+        $is_bridge_request = false !== strpos( $uri, '/wp-json/' . self::REST_NS . '/' )
+            || false !== strpos( $uri, 'rest_route=%2F' . rawurlencode( self::REST_NS ) )
+            || false !== strpos( $uri, 'rest_route=/' . self::REST_NS . '/' );
+
+        if ( ! $is_bridge_request ) {
+            return;
+        }
+
+        if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+            define( 'DONOTCACHEPAGE', true );
+        }
+
+        do_action(
+            'litespeed_control_set_nocache',
+            'Ishi AI Bridge private REST endpoint'
+        );
+    }
+
+    public static function ensure_cache_policy(): void {
+        if ( self::CACHE_POLICY_VERSION === (string) get_option( 'ishi_ai_bridge_cache_policy_version', '' ) ) {
+            return;
+        }
+
+        foreach ( [ '/health', '/turn', '/files' ] as $route ) {
+            do_action(
+                'litespeed_purge_url',
+                rest_url( self::REST_NS . $route )
+            );
+        }
+
+        update_option(
+            'ishi_ai_bridge_cache_policy_version',
+            self::CACHE_POLICY_VERSION,
+            false
+        );
     }
 
     public static function register_routes(): void {
@@ -308,6 +354,7 @@ final class Rest {
             );
 
             $response->header( 'Pragma', 'no-cache' );
+            $response->header( 'X-Robots-Tag', 'noindex, nofollow, noarchive' );
 
             if ( 409 === $response->get_status() ) {
                 $response->header( 'Retry-After', '2' );

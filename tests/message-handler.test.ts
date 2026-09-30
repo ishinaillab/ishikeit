@@ -27,7 +27,7 @@ const stored: StoredInboundEvent = {
 };
 
 describe("MessageReceivedHandler", () => {
-  it("creates provider-neutral ordered actions for every rich reply part", async () => {
+  it("creates provider-neutral ordered actions and records a handled outcome", async () => {
     const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({
       handoff: false,
       parts: [
@@ -37,13 +37,14 @@ describe("MessageReceivedHandler", () => {
     });
     const handler = new MessageReceivedHandler({ respond });
 
-    const actions = await handler.handle(stored);
+    const result = await handler.handle(stored);
     expect(respond).toHaveBeenCalledWith(expect.objectContaining({
       turnId: stored.id,
       conversationId: "partition-1"
     }));
-    expect(actions).toHaveLength(2);
-    expect(actions[0]).toMatchObject({
+    expect(result.outcome).toBe("handled");
+    expect(result.actions).toHaveLength(2);
+    expect(result.actions[0]).toMatchObject({
       provider: "telegram",
       capability: "messaging",
       operation: "message.send",
@@ -51,13 +52,51 @@ describe("MessageReceivedHandler", () => {
       target: { channel: "bot", accountId: "bot-1", recipientId: "chat-1" },
       body: { part: { kind: "text", text: "Hi" } }
     });
-    expect(actions[1]?.idempotencyKey).toBe(stored.id + ":reply:1");
+    expect(result.actions[1]?.idempotencyKey).toBe(stored.id + ":reply:1");
   });
 
-  it("returns no outbound action on human handoff", async () => {
-    const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({ handoff: true, parts: [] });
+  it("records a human handoff with a durable reason and no outbound action", async () => {
+    const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({
+      handoff: true,
+      handoffReason: "customer_requested_human",
+      parts: []
+    });
     const handler = new MessageReceivedHandler({ respond });
-    await expect(handler.handle(stored)).resolves.toEqual([]);
+
+    await expect(handler.handle(stored)).resolves.toEqual({
+      actions: [],
+      outcome: "handoff",
+      handoffReason: "customer_requested_human"
+    });
+  });
+
+  it("uses an explicit fallback reason when a handoff has no reason", async () => {
+    const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({
+      handoff: true,
+      parts: []
+    });
+    const handler = new MessageReceivedHandler({ respond });
+
+    await expect(handler.handle(stored)).resolves.toEqual({
+      actions: [],
+      outcome: "handoff",
+      handoffReason: "unspecified"
+    });
+  });
+
+  it("does not persist free-form handoff text as an operational reason", async () => {
+    const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({
+      handoff: true,
+      handoffReason: "Needs a human right now",
+      parts: []
+    });
+    const handler = new MessageReceivedHandler({ respond });
+
+    await expect(handler.handle(stored)).resolves.toEqual({
+      actions: [],
+      outcome: "handoff",
+      handoffReason: "unspecified"
+    });
   });
 
   it("does not claim unrelated future capabilities", () => {

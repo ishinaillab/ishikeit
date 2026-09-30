@@ -17,7 +17,8 @@ const turnResponseSchema = z.object({
   ok: z.literal(true),
   turnId: z.string(),
   parts: z.array(contentPartSchema).max(32),
-  handoff: z.boolean()
+  handoff: z.boolean(),
+  handoffReason: z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,127}$/).optional()
 }).passthrough();
 
 const fileResponseSchema = z.object({
@@ -146,7 +147,13 @@ export class WordPressBrainClient implements BrainClient {
       });
     }
 
-    return { parts: parsed.data.parts, handoff: parsed.data.handoff };
+    return {
+      parts: parsed.data.parts,
+      handoff: parsed.data.handoff,
+      ...(parsed.data.handoffReason === undefined
+        ? {}
+        : { handoffReason: parsed.data.handoffReason })
+    };
   }
 
   async #transcribe(bytes: Uint8Array, filename: string, mimeType: string): Promise<string> {

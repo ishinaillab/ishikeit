@@ -38,8 +38,8 @@ describe("Meta webhook route", () => {
       architecture: "event-action-v1",
       canonicalEventSchema: 2,
       actionSchema: 1,
-      operationalMetricsSchema: 1,
-      wordpressBridgeApiSchema: 2,
+      operationalMetricsSchema: 2,
+      wordpressBridgeApiSchema: 3,
       wordpressBridgeStorageSchema: "1.1.1",
       runtime: {
         processorEnabled: false,
@@ -100,8 +100,16 @@ describe("Meta webhook route", () => {
         received: 1,
         processed: 1,
         failedCurrent: 0,
+        outcomes: {
+          handled: 1,
+          handoff: 0,
+          ignored: 0,
+          rolloutSkipped: 0,
+          unknown: 0
+        },
         processingLatencyMs: { p50: 100, p95: 100, max: 100 }
       },
+      handoffs: { total: 0, byReason: [] },
       queue: [],
       attempts: { published: 1, retries: 0, deadLetters: 0, byRoute: [] }
     });

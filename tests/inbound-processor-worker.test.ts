@@ -68,16 +68,19 @@ describe("InboundProcessorWorker", () => {
     const handlers = new EventHandlerRegistry();
     handlers.register({
       canHandle: () => true,
-      handle: vi.fn().mockResolvedValue([{
-        schemaVersion: 1,
-        idempotencyKey: eventId + ":reply:0",
-        provider: "telegram",
-        capability: "messaging",
-        operation: "message.send",
-        orderingKey: "partition-1",
-        target: { recipientId: "chat-1" },
-        body: { part: { kind: "text", text: "Hi" } }
-      }])
+      handle: vi.fn().mockResolvedValue({
+        outcome: "handled",
+        actions: [{
+          schemaVersion: 1,
+          idempotencyKey: eventId + ":reply:0",
+          provider: "telegram",
+          capability: "messaging",
+          operation: "message.send",
+          orderingKey: "partition-1",
+          target: { recipientId: "chat-1" },
+          body: { part: { kind: "text", text: "Hi" } }
+        }]
+      })
     });
     const worker = new InboundProcessorWorker({
       queue: q.queue,
@@ -89,9 +92,13 @@ describe("InboundProcessorWorker", () => {
     await expect(worker.runOnce()).resolves.toBe(true);
     expect(q.claimNext).toHaveBeenCalledWith(INBOUND_ACCEPTED_TOPIC, 120000);
     expect(e.markProcessing).toHaveBeenCalledWith(eventId);
-    expect(e.complete).toHaveBeenCalledWith(eventId, expect.arrayContaining([
-      expect.objectContaining({ provider: "telegram", operation: "message.send" })
-    ]));
+    expect(e.complete).toHaveBeenCalledWith(
+      eventId,
+      expect.arrayContaining([
+        expect.objectContaining({ provider: "telegram", operation: "message.send" })
+      ]),
+      { outcome: "handled" }
+    );
     expect(q.complete).toHaveBeenCalledWith(job, undefined, expect.objectContaining({
       provider: "telegram",
       capability: "messaging",
@@ -116,12 +123,40 @@ describe("InboundProcessorWorker", () => {
     });
 
     await worker.runOnce();
-    expect(e.complete).toHaveBeenCalledWith(eventId, []);
+    expect(e.complete).toHaveBeenCalledWith(eventId, [], { outcome: "ignored" });
     expect(q.complete).toHaveBeenCalledWith(job, undefined, expect.objectContaining({
       provider: "telegram",
       capability: "messaging",
       operation: "delivery.read"
     }));
+  });
+
+  it("persists a human handoff disposition without dispatching an action", async () => {
+    const q = makeQueue();
+    const e = makeEvents();
+    const handlers = new EventHandlerRegistry();
+    handlers.register({
+      canHandle: () => true,
+      handle: vi.fn().mockResolvedValue({
+        actions: [],
+        outcome: "handoff",
+        handoffReason: "customer_requested_human"
+      })
+    });
+    const worker = new InboundProcessorWorker({
+      queue: q.queue,
+      events: e.events,
+      handlers,
+      logger: pino({ level: "silent" })
+    });
+
+    await worker.runOnce();
+
+    expect(e.complete).toHaveBeenCalledWith(eventId, [], {
+      outcome: "handoff",
+      handoffReason: "customer_requested_human"
+    });
+    expect(q.complete).toHaveBeenCalled();
   });
 
   it("retries transient processing failures without losing the source event", async () => {
@@ -160,7 +195,7 @@ describe("InboundProcessorWorker", () => {
   it("permanently skips events received before the configured cutover", async () => {
     const q = makeQueue();
     const e = makeEvents();
-    const handle = vi.fn().mockResolvedValue([]);
+    const handle = vi.fn().mockResolvedValue({ actions: [], outcome: "handled" });
     const handlers = new EventHandlerRegistry();
     handlers.register({ canHandle: () => true, handle });
 
@@ -176,7 +211,7 @@ describe("InboundProcessorWorker", () => {
 
     expect(handle).not.toHaveBeenCalled();
     expect(e.markProcessing).not.toHaveBeenCalled();
-    expect(e.complete).toHaveBeenCalledWith(eventId, []);
+    expect(e.complete).toHaveBeenCalledWith(eventId, [], { outcome: "rollout_skipped" });
     expect(q.complete).toHaveBeenCalledWith(job, undefined, expect.objectContaining({
       provider: "telegram",
       capability: "messaging",
@@ -187,7 +222,7 @@ describe("InboundProcessorWorker", () => {
   it("processes only explicitly allowed partitions during a canary rollout", async () => {
     const q = makeQueue();
     const e = makeEvents();
-    const handle = vi.fn().mockResolvedValue([]);
+    const handle = vi.fn().mockResolvedValue({ actions: [], outcome: "handled" });
     const handlers = new EventHandlerRegistry();
     handlers.register({ canHandle: () => true, handle });
 
@@ -202,7 +237,7 @@ describe("InboundProcessorWorker", () => {
     await skippedWorker.runOnce();
 
     expect(handle).not.toHaveBeenCalled();
-    expect(e.complete).toHaveBeenCalledWith(eventId, []);
+    expect(e.complete).toHaveBeenCalledWith(eventId, [], { outcome: "rollout_skipped" });
 
     const q2 = makeQueue();
     const e2 = makeEvents();

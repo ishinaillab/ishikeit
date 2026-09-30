@@ -1,4 +1,5 @@
 import type { ActionEnvelope } from "../domain/actions.js";
+import { normalizeHandoffReason, type EventHandlingResult } from "../domain/processing.js";
 import type { BrainClient } from "../brain/types.js";
 import type { StoredInboundEvent } from "../persistence/inbound.js";
 import { ProcessingFailure } from "./failure.js";
@@ -11,7 +12,7 @@ export class MessageReceivedHandler implements EventHandler {
     return stored.event.capability === "messaging" && stored.event.eventType === "message.received";
   }
 
-  async handle(stored: StoredInboundEvent): Promise<ActionEnvelope[]> {
+  async handle(stored: StoredInboundEvent): Promise<EventHandlingResult> {
     const event = stored.event;
     if (event.identityId === undefined) {
       throw new ProcessingFailure("Inbound message has no reply identity", { retryable: false });
@@ -24,9 +25,15 @@ export class MessageReceivedHandler implements EventHandler {
       input: event.content
     });
 
-    if (reply.handoff) return [];
+    if (reply.handoff) {
+      return {
+        actions: [],
+        outcome: "handoff",
+        handoffReason: normalizeHandoffReason(reply.handoffReason)
+      };
+    }
 
-    return reply.parts.map((part, index) => ({
+    const actions: ActionEnvelope[] = reply.parts.map((part, index) => ({
       schemaVersion: 1,
       idempotencyKey: `${stored.id}:reply:${index}`,
       provider: event.provider,
@@ -40,5 +47,7 @@ export class MessageReceivedHandler implements EventHandler {
       },
       body: { part }
     }));
+
+    return { actions, outcome: "handled" };
   }
 }

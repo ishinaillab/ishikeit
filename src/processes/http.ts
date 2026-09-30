@@ -29,7 +29,11 @@ const server = buildServer({
   ready: () => db.ready(),
   inbound: new PostgresInboundStore(db),
   appSecret: env.META_APP_SECRET,
-  verifyToken: env.META_WEBHOOK_VERIFY_TOKEN
+  verifyToken: env.META_WEBHOOK_VERIFY_TOKEN,
+  runtimeState: {
+    processorEnabled: env.PROCESSOR_ENABLED,
+    actionDispatchEnabled: env.ACTION_DISPATCH_ENABLED_EFFECTIVE
+  }
 });
 
 let outboundWorker: OutboxWorker | undefined;

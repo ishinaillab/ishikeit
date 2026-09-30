@@ -75,8 +75,9 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
 }
 
 function whatsappMessageId(result: Record<string, unknown>): string | undefined {
-  if (!Array.isArray(result.messages)) return undefined;
-  const first = result.messages[0];
+  const messages: unknown = result.messages;
+  if (!Array.isArray(messages)) return undefined;
+  const first: unknown = messages[0];
   if (typeof first !== "object" || first === null) return undefined;
   const id = (first as Record<string, unknown>).id;
   return typeof id === "string" ? id : undefined;

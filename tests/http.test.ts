@@ -39,11 +39,42 @@ describe("Meta webhook route", () => {
       canonicalEventSchema: 2,
       actionSchema: 1,
       wordpressBridgeApiSchema: 1,
-      wordpressBridgeStorageSchema: "1.1.1"
+      wordpressBridgeStorageSchema: "1.1.1",
+      runtime: {
+        processorEnabled: false,
+        actionDispatchEnabled: false
+      }
     });
     await server.close();
   });
 
+
+  it("exposes configured runtime gates without secrets", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      runtimeState: {
+        processorEnabled: true,
+        actionDispatchEnabled: true
+      }
+    });
+
+    const res = await server.inject({
+      method: "GET",
+      url: "/health/capabilities"
+    });
+
+    expect(res.json().runtime).toEqual({
+      processorEnabled: true,
+      actionDispatchEnabled: true
+    });
+    expect(res.body).not.toContain("secret");
+    await server.close();
+  });
 
   it("answers the GET challenge", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();

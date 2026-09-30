@@ -30,3 +30,50 @@ jobs:
           coverage: none
       - name: Lint WordPress bridge
         run: find wordpress/ishi-ai-bridge -name '*.php' -print0 | xargs -0 -n1 php -l
+
+  context-continuity:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Verify durable context is updated
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CONTEXT_SKIP: ${{ contains(github.event.pull_request.labels.*.name, 'context-not-required') }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$CONTEXT_SKIP" == "true" ]]; then
+            echo "context-not-required label present; continuity guard bypassed."
+            exit 0
+          fi
+
+          mapfile -t changed < <(git diff --name-only "$BASE_SHA"...HEAD)
+          printf 'Changed files:\n%s\n' "${changed[*]}"
+
+          for path in "${changed[@]}"; do
+            if [[ "$path" == "docs/CONTINUATION.md" ]]; then
+              echo "Durable continuation context updated in this pull request."
+              exit 0
+            fi
+          done
+
+          material=false
+          for path in "${changed[@]}"; do
+            case "$path" in
+              src/*|migrations/*|wordpress/*|.env.example|package.json|package-lock.json|tsconfig.json|tsconfig.build.json|eslint.config.js|.github/workflows/*)
+                material=true
+                break
+                ;;
+            esac
+          done
+
+          if [[ "$material" == "true" ]]; then
+            echo "::error::This pull request changes a context-sensitive project boundary but does not update docs/CONTINUATION.md. Update the durable context, or apply the maintainer-only context-not-required label when the change has no durable project-context impact."
+            exit 1
+          fi
+
+          echo "No context-sensitive project boundary changed."

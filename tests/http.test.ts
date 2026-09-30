@@ -23,6 +23,28 @@ function signedHeaders(raw: string) {
 }
 
 describe("Meta webhook route", () => {
+
+  it("exposes the runtime contract without secrets", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const store = { ingest } satisfies InboundStore;
+    const server = makeServer(store);
+
+    const res = await server.inject({
+      method: "GET",
+      url: "/health/capabilities"
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      service: "ishikeit",
+      architecture: "event-action-v1",
+      canonicalEventSchema: 2,
+      actionSchema: 1,
+      wordpressBridgeSchema: 1
+    });
+    await server.close();
+  });
+
   it("answers the GET challenge", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
     const store = { ingest } satisfies InboundStore;

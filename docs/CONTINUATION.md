@@ -142,7 +142,11 @@ WhatsApp production identifiers:
 - WABA: `4663054720683021`
 - phone-number ID: `1416383858214802`
 
-App Review status is currently `NO_SUBMISSION`, with no Advanced Access privileges granted. Meta's general Instagram Login documentation says Standard Access can be sufficient for an app serving only an Instagram professional account it owns or manages, but Meta's messaging documentation also states that Standard Access testing can be limited to people with an app role and that some features may not work properly without Advanced Access. Therefore arbitrary public-user Instagram messaging must be treated as unproven until a non-role account test succeeds or the required messaging permission is granted Advanced Access. Reassess access/review requirements before supporting unrelated client businesses.
+App Review status is currently `NO_SUBMISSION`, with no Advanced Access privileges granted. Meta currently reports `can_submit=true`, Business Verification passes, the privacy-policy requirement passes, and compliance has no open required actions or violations.
+
+The current Instagram Messaging webhook documentation establishes the decisive public-user boundary: to receive webhook notifications that include data owned or managed by people who do not have a role on the app, the app must be approved through App Review. Without that approval, messaging webhook delivery is role-limited. This matches the production evidence: the controlled/role account path works, while the fresh ordinary non-role account message produced no outbound API activity because no normal customer message reached Ishikeit's send path.
+
+For the Instagram API with Instagram Login architecture, the App Review package should request `instagram_business_basic` together with its dependent messaging permission `instagram_business_manage_messages`. Do not redesign the processor or outbound adapter to work around this access boundary.
 
 ## Durable ingress
 
@@ -528,6 +532,22 @@ External-account diagnosis:
 
 Do not add Conversation Routing write/control APIs merely because routing webhooks are observable. Meta's current Conversation Routing documentation is tied to the Messenger/Page-linked architecture and requires a linked Facebook Page with Pages Messaging. Ishikeit's Instagram outbound path currently uses the newer Instagram Login host `graph.instagram.com`. Keep routing control read-only/observational until the correct authorization model for this app is proven.
 
+## Context engineering and durable continuity
+
+Durable project context is change-coupled rather than primarily timer-coupled.
+
+Primary rule:
+
+- every pull request that changes a context-sensitive execution boundary must update `docs/CONTINUATION.md` in the same pull request
+- context-sensitive boundaries currently include application source, migrations, WordPress bridge code, environment-contract examples, package manifests/lockfile, TypeScript/ESLint configuration, and GitHub workflows
+- CI enforces this rule on pull requests through the `context-continuity` job
+- a deliberate `context-not-required` pull-request label may bypass the guard only when a maintainer has determined that the change has no durable project-context impact
+- secrets, raw customer payloads, access tokens, database URLs, and other sensitive values must never be copied into the continuation document
+
+This makes repository changes themselves the primary context-capture event. Runtime/configuration work performed outside Git still needs an immediate continuation update in the same operational task whenever it materially changes the verified project state.
+
+A daily Ishikeit context integrity sweep exists only as a safety net for missed or externally applied changes. It is not the source of truth and should not be used as a substitute for change-coupled documentation. If a native event-trigger surface becomes available for GitHub/configuration changes, prefer it over increasing polling frequency.
+
 ## Security posture
 
 Current important controls:
@@ -633,13 +653,14 @@ The durable messaging processor is now a production system, not a scaffold. Oper
 
 Continue building on the adapter/registry boundaries rather than redesigning the core. Recommended sequence:
 
-1. resolve Instagram public-user access before declaring the channel production-complete: send a fresh plain-text DM from a non-role account such as `povnailstudio.com.ph`, inspect whether it arrives as `messages` or `standby`, and use the result to decide whether Advanced Access for `instagram_business_manage_messages` is required
-2. if Advanced Access is required, submit App Review; the app currently passes the basic submission prerequisites and `can_submit=true`
-3. do not add Conversation Routing write/control APIs to the current `graph.instagram.com` path until Meta's supported authorization model for this specific app setup is proven
-4. activate and perform a real provider-backed video interpretation smoke test only after a paid Gemini API project/key is securely configured; until then retain the verified no-inspection safeguard
-5. add Telegram as the first non-Meta messaging adapter
-6. add Meta lead-management capability as a separate capability/operation family
-7. add Meta Marketing API operations behind their own authorization/policy layer
-8. version and test each future provider adapter and media-capability contract independently
+1. complete and submit Meta App Review for the Instagram Login permissions `instagram_business_basic` and `instagram_business_manage_messages`; the app currently passes the basic submission prerequisites and Meta reports `can_submit=true`
+2. prepare the required real screencast/reviewer evidence showing Instagram authorization, an external-user DM, Ishikeit handling, API send, and receipt in Instagram; do not fabricate review evidence
+3. after approval, repeat the fresh ordinary non-role account DM test and verify normal `message.received` ingestion plus successful reply before declaring Instagram public-user messaging production-complete
+4. do not add Conversation Routing write/control APIs to the current `graph.instagram.com` path until Meta's supported authorization model for this specific app setup is proven
+5. activate and perform a real provider-backed video interpretation smoke test only after a paid Gemini API project/key is securely configured; until then retain the verified no-inspection safeguard
+6. add Telegram as the first non-Meta messaging adapter
+7. add Meta lead-management capability as a separate capability/operation family
+8. add Meta Marketing API operations behind their own authorization/policy layer
+9. version and test each future provider adapter and media-capability contract independently
 
 Marketing API, lead management, and future providers must not be routed through the conversational message handler merely because they originate from Meta.

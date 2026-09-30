@@ -469,18 +469,40 @@ If only dispatch is disabled, generated actions remain durable. Inspect pending 
 
 Do not move the full-rollout cutover forward during an ordinary outage unless intentionally discarding the backlog.
 
+## Real media validation
+
+Controlled provider-backed media validation completed on 2026-09-30.
+
+The validation used temporary WhatsApp Cloud API media objects and the production Ishikeit media resolver without sending customer-facing messages. Each temporary object was deleted after verification.
+
+Verified byte-for-byte resolution paths:
+
+- image: PNG
+- document: plain text
+- audio: MP3
+- video: MP4
+
+The dedicated resolver test suite also verifies Meta-host allowlisting, redirect revalidation, declared and actual byte ceilings, WhatsApp metadata lookup, authenticated download, and retry classification.
+
+Full repository validation after adding the resolver coverage:
+
+- lint: passed
+- typecheck: passed
+- test files: 12 passed
+- tests: 58 passed
+- build: passed
+
 ## Current next work
 
 The durable messaging processor is now a production system, not a scaffold.
 
 The next work should build on the adapter/registry boundaries rather than redesigning the core. Recommended sequence:
 
-1. perform controlled real media ingress tests for image, video, audio, and document paths
-2. add observability/operational metrics around processing latency, retry counts, dead letters, and provider error classes
-3. refine AI handoff/escalation behavior
-4. add Telegram as the first non-Meta messaging adapter
-5. add Meta lead-management capability as a separate capability/operation family
-6. add Meta Marketing API operations behind their own authorization/policy layer
-7. version and test each future provider adapter independently
+1. add observability/operational metrics around processing latency, retry counts, dead letters, and provider error classes
+2. refine AI handoff/escalation behavior
+3. add Telegram as the first non-Meta messaging adapter
+4. add Meta lead-management capability as a separate capability/operation family
+5. add Meta Marketing API operations behind their own authorization/policy layer
+6. version and test each future provider adapter independently
 
 Marketing API, lead management, and future providers must not be routed through the conversational message handler merely because they originate from Meta.

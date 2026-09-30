@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
-import type { MetaOutboundPayload } from "../domain/outbound.js";
-import { outboundJobId, outboundPartitionKey } from "../domain/outbound.js";
-import type { PostgresDatabase } from "./postgres.js";
+import type { ActionEnvelope } from "../domain/actions.js";
+import { actionJobId } from "../domain/actions.js";
+import type { PostgresDatabase, SqlExecutor } from "./postgres.js";
 
-export const META_SEND_TOPIC = "meta.message.send";
+export const ACTION_DISPATCH_TOPIC = "action.dispatch";
+export const INBOUND_ACCEPTED_TOPIC = "inbound.event.accepted";
 
 export interface OutboxJob {
   id: string;
@@ -21,8 +22,8 @@ export interface EnqueueResult {
 }
 
 export interface OutboxDeliveryStore {
-  claimNext(leaseDurationMs: number): Promise<OutboxJob | undefined>;
-  complete(job: OutboxJob, providerMessageId?: string): Promise<boolean>;
+  claimNext(topic: string, leaseDurationMs: number): Promise<OutboxJob | undefined>;
+  complete(job: OutboxJob, providerResourceId?: string): Promise<boolean>;
   retry(job: OutboxJob, nextAttemptAt: Date): Promise<boolean>;
   deadLetter(job: OutboxJob, reason: string): Promise<boolean>;
 }
@@ -40,42 +41,67 @@ interface PayloadMatchRow extends pg.QueryResultRow {
   same_payload: boolean;
 }
 
+export async function enqueueAction(
+  executor: SqlExecutor,
+  action: ActionEnvelope
+): Promise<EnqueueResult> {
+  const id = actionJobId(action);
+  const inserted = await executor.query<{ id: string } & pg.QueryResultRow>(
+    "INSERT INTO outbox (id,topic,partition_key,payload) VALUES ($1,$2,$3,$4::jsonb) ON CONFLICT (id) DO NOTHING RETURNING id",
+    [id, ACTION_DISPATCH_TOPIC, action.orderingKey, JSON.stringify(action)]
+  );
+
+  if (inserted.rowCount === 1) return { id, created: true };
+
+  const existing = await executor.query<PayloadMatchRow>(
+    "SELECT payload = $2::jsonb AS same_payload FROM outbox WHERE id = $1::uuid",
+    [id, JSON.stringify(action)]
+  );
+  if (existing.rows[0]?.same_payload !== true) {
+    throw new Error("action idempotency key was reused with a different payload");
+  }
+  return { id, created: false };
+}
+
 export class PostgresOutboxStore implements OutboxDeliveryStore {
   constructor(private readonly db: PostgresDatabase) {}
 
-  async enqueueMetaMessage(payload: MetaOutboundPayload): Promise<EnqueueResult> {
-    const id = outboundJobId(payload);
-    const inserted = await this.db.query<{ id: string } & pg.QueryResultRow>(
-      "INSERT INTO outbox (id,topic,partition_key,payload) VALUES ($1,$2,$3,$4::jsonb) ON CONFLICT (id) DO NOTHING RETURNING id",
-      [id, META_SEND_TOPIC, outboundPartitionKey(payload), JSON.stringify(payload)]
-    );
-
-    if (inserted.rowCount === 1) return { id, created: true };
-
-    const existing = await this.db.query<PayloadMatchRow>(
-      "SELECT payload = $2::jsonb AS same_payload FROM outbox WHERE id = $1::uuid",
-      [id, JSON.stringify(payload)]
-    );
-    if (existing.rows[0]?.same_payload !== true) {
-      throw new Error("outbound idempotency key was reused with a different payload");
-    }
-
-    return { id, created: false };
+  enqueueAction(action: ActionEnvelope): Promise<EnqueueResult> {
+    return enqueueAction(this.db, action);
   }
 
-  async claimNext(leaseDurationMs: number): Promise<OutboxJob | undefined> {
+  async claimNext(topic: string, leaseDurationMs: number): Promise<OutboxJob | undefined> {
     const leaseToken = randomUUID();
     const result = await this.db.query<OutboxRow>(
       `WITH candidate AS (
-         SELECT id
-         FROM outbox
-         WHERE topic = $1
-           AND published_at IS NULL
-           AND dead_lettered_at IS NULL
-           AND COALESCE(next_attempt_at, created_at) <= now()
-           AND (lease_expires_at IS NULL OR lease_expires_at <= now())
-         ORDER BY COALESCE(next_attempt_at, created_at), created_at, id
-         FOR UPDATE SKIP LOCKED
+         SELECT o.id
+         FROM outbox AS o
+         WHERE o.topic = $1
+           AND o.published_at IS NULL
+           AND o.dead_lettered_at IS NULL
+           AND COALESCE(o.next_attempt_at, o.created_at) <= now()
+           AND (o.lease_expires_at IS NULL OR o.lease_expires_at <= now())
+           AND NOT EXISTS (
+             SELECT 1
+             FROM outbox AS earlier
+             WHERE earlier.topic = o.topic
+               AND earlier.partition_key = o.partition_key
+               AND earlier.published_at IS NULL
+               AND earlier.dead_lettered_at IS NULL
+               AND (earlier.created_at, earlier.id) < (o.created_at, o.id)
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM outbox AS leased
+             WHERE leased.topic = o.topic
+               AND leased.partition_key = o.partition_key
+               AND leased.id <> o.id
+               AND leased.published_at IS NULL
+               AND leased.dead_lettered_at IS NULL
+               AND leased.lease_expires_at > now()
+           )
+         ORDER BY COALESCE(o.next_attempt_at, o.created_at), o.created_at, o.id
+         FOR UPDATE OF o SKIP LOCKED
          LIMIT 1
        )
        UPDATE outbox AS o
@@ -84,7 +110,7 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
        FROM candidate
        WHERE o.id = candidate.id
        RETURNING o.id,o.topic,o.partition_key,o.payload,o.attempt_count,o.lease_token`,
-      [META_SEND_TOPIC, leaseToken, leaseDurationMs / 1000]
+      [topic, leaseToken, leaseDurationMs / 1000]
     );
 
     const row = result.rows[0];
@@ -99,7 +125,7 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
     };
   }
 
-  async complete(job: OutboxJob, providerMessageId?: string): Promise<boolean> {
+  async complete(job: OutboxJob, providerResourceId?: string): Promise<boolean> {
     const result = await this.db.query(
       `UPDATE outbox
        SET published_at = now(),
@@ -109,11 +135,11 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
              WHEN $3::text IS NULL THEN payload
              ELSE payload || jsonb_build_object(
                'delivery',
-               jsonb_build_object('providerMessageId',$3::text,'sentAt',now())
+               jsonb_build_object('providerResourceId',$3::text,'sentAt',now())
              )
            END
        WHERE id = $1::uuid AND lease_token = $2::uuid`,
-      [job.id, job.leaseToken, providerMessageId ?? null]
+      [job.id, job.leaseToken, providerResourceId ?? null]
     );
     return result.rowCount === 1;
   }

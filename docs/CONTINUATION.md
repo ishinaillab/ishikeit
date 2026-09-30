@@ -1,6 +1,6 @@
 # Ishikeit continuation handoff
 
-Updated: 2026-09-30
+Updated: 2026-10-01
 
 ## Canonical project
 
@@ -37,10 +37,10 @@ Hostinger is connected to:
 Verified deployed Git revision:
 
 ```text
-fd3e4c048275922c3ebe7f89380caa856b52f933
+14e1bd30bbe699992bf2c8479f3cf6e6571ceaa5
 ```
 
-That revision completed GitHub Actions successfully and Hostinger completed the corresponding Git-based Node.js build. It contains the opt-in provider-neutral video-interpreter architecture while production keeps video interpretation disabled until a verified paid Gemini credential is configured.
+That revision completed GitHub Actions successfully and Hostinger completed the corresponding Git-based Node.js build. It contains the previously deployed opt-in provider-neutral video-interpreter architecture plus safe Instagram routing observability for standby and conversation-handover events. Production keeps video interpretation disabled until a verified paid Gemini credential is configured.
 
 Hostinger's official MCP is authenticated on the authorized desktop through OAuth and can inspect builds, runtime logs, Node.js settings, and environment-variable key state without exposing stored values.
 
@@ -121,7 +121,7 @@ Current app:
 Current app-level webhook subscriptions are exactly:
 
 - `page` → `messages`
-- `instagram` → `messages`
+- `instagram` → `messages`, `standby`, `messaging_handover`
 - `whatsapp_business_account` → `messages`
 
 Callback:
@@ -142,7 +142,7 @@ WhatsApp production identifiers:
 - WABA: `4663054720683021`
 - phone-number ID: `1416383858214802`
 
-No App Review submission is currently required for the first-party own/managed messaging setup that has already been proven empirically in production. Reassess access/review requirements before supporting unrelated client businesses.
+App Review status is currently `NO_SUBMISSION`, with no Advanced Access privileges granted. Meta's general Instagram Login documentation says Standard Access can be sufficient for an app serving only an Instagram professional account it owns or manages, but Meta's messaging documentation also states that Standard Access testing can be limited to people with an app role and that some features may not work properly without Advanced Access. Therefore arbitrary public-user Instagram messaging must be treated as unproven until a non-role account test succeeds or the required messaging permission is granted Advanced Access. Reassess access/review requirements before supporting unrelated client businesses.
 
 ## Durable ingress
 
@@ -490,6 +490,44 @@ Production verification:
 
 A live human-handoff event was intentionally not forced in production. The handoff persistence/reason path is covered by repository tests, and the WordPress bridge handoff contract remains opt-in through the existing filters.
 
+## Instagram routing/access diagnostics
+
+Instagram routing observability rolled out on 2026-10-01 in deployed revision:
+
+```text
+14e1bd30bbe699992bf2c8479f3cf6e6571ceaa5
+```
+
+The Meta normalizer now treats conversation-routing signals as a separate canonical capability:
+
+- `capability=routing`
+- standby message/read/delivery/postback events normalize as `standby.*`
+- conversation-control notifications normalize as `handover.pass`, `handover.take`, or `handover.request`
+- routing events contain no portable AI content
+- `MessageReceivedHandler` explicitly does not claim routing events
+- unhandled routing events are durably completed with `processing_outcome=ignored`
+
+Production verification:
+
+- GitHub PR #21 CI passed
+- local validation passed with 14 test files and 80 tests
+- Hostinger built revision `14e1bd30...` successfully
+- `/health/live`, `/health/ready`, and `/health/capabilities` returned HTTP 200 after deployment
+- Meta's `messaging_handover` synthetic webhook produced a durable `routing / handover.pass` event and was processed as `ignored`
+- a controlled correctly signed documented standby payload produced a durable `routing / standby.message` event and was processed as `ignored`
+- no AI reply or outbound action was generated for either routing probe
+
+The current Instagram subscription includes `messages`, `standby`, and `messaging_handover`. Do not remove these routing fields without first deciding how routing diagnostics will be preserved.
+
+External-account diagnosis:
+
+- `povnailstudio.ph` has durable inbound Instagram events and successfully published reply actions
+- `povnailstudio.com.ph` has no durable inbound Instagram event in the inspected production history, so its failure occurs before AI processing or outbound dispatch
+- following status was not the differentiator for the working account
+- Meta app compliance is clean, Business Verification passes, App Review can be submitted, but current status is `NO_SUBMISSION` with no Advanced Access privileges
+
+Do not add Conversation Routing write/control APIs merely because routing webhooks are observable. Meta's current Conversation Routing documentation is tied to the Messenger/Page-linked architecture and requires a linked Facebook Page with Pages Messaging. Ishikeit's Instagram outbound path currently uses the newer Instagram Login host `graph.instagram.com`. Keep routing control read-only/observational until the correct authorization model for this app is proven.
+
 ## Security posture
 
 Current important controls:
@@ -583,11 +621,11 @@ Latest full repository validation:
 - lint: passed
 - typecheck: passed
 - test files: 14 passed
-- tests: 77 passed
+- tests: 80 passed
 - build: passed
 - `git diff --check`: passed
 
-GitHub PR #20 CI passed before squash merge. Hostinger then built `fd3e4c048275922c3ebe7f89380caa856b52f933` successfully. Post-deploy `/health/live`, `/health/ready`, and `/health/capabilities` all returned HTTP 200. A one-hour Hostinger runtime-log audit returned 25 lines with zero warnings/errors.
+GitHub PR #21 CI passed before squash merge. Hostinger then built `14e1bd30bbe699992bf2c8479f3cf6e6571ceaa5` successfully. Post-deploy `/health/live`, `/health/ready`, and `/health/capabilities` all returned HTTP 200. Routing probes confirmed handover and standby events are stored durably and ignored by the AI handler.
 
 ## Current next work
 
@@ -595,10 +633,13 @@ The durable messaging processor is now a production system, not a scaffold. Oper
 
 Continue building on the adapter/registry boundaries rather than redesigning the core. Recommended sequence:
 
-1. activate and perform a real provider-backed video interpretation smoke test only after a paid Gemini API project/key is securely configured; until then retain the verified no-inspection safeguard
-2. add Telegram as the first non-Meta messaging adapter
-3. add Meta lead-management capability as a separate capability/operation family
-4. add Meta Marketing API operations behind their own authorization/policy layer
-5. version and test each future provider adapter and media-capability contract independently
+1. resolve Instagram public-user access before declaring the channel production-complete: send a fresh plain-text DM from a non-role account such as `povnailstudio.com.ph`, inspect whether it arrives as `messages` or `standby`, and use the result to decide whether Advanced Access for `instagram_business_manage_messages` is required
+2. if Advanced Access is required, submit App Review; the app currently passes the basic submission prerequisites and `can_submit=true`
+3. do not add Conversation Routing write/control APIs to the current `graph.instagram.com` path until Meta's supported authorization model for this specific app setup is proven
+4. activate and perform a real provider-backed video interpretation smoke test only after a paid Gemini API project/key is securely configured; until then retain the verified no-inspection safeguard
+5. add Telegram as the first non-Meta messaging adapter
+6. add Meta lead-management capability as a separate capability/operation family
+7. add Meta Marketing API operations behind their own authorization/policy layer
+8. version and test each future provider adapter and media-capability contract independently
 
 Marketing API, lead management, and future providers must not be routed through the conversational message handler merely because they originate from Meta.

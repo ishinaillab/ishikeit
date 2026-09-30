@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CanonicalEvent, IngressIdentity } from "../domain/events.js";
+import type { ContentPart } from "../domain/content.js";
 
 function isoFromMillis(value: unknown): string | undefined {
   return typeof value === "number" && Number.isFinite(value) ? new Date(value).toISOString() : undefined;
@@ -14,6 +15,140 @@ function hash(parts: unknown[]): string {
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 }
 
+function mediaPart(
+  kind: "image" | "video" | "audio" | "document",
+  value: unknown
+): ContentPart | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const media = value as Record<string, unknown>;
+  const providerId = typeof media.id === "string" ? media.id : undefined;
+  const url = typeof media.url === "string" ? media.url : undefined;
+  if (providerId === undefined && url === undefined) return undefined;
+
+  return {
+    kind,
+    source: providerId !== undefined
+      ? { kind: "provider", value: providerId }
+      : { kind: "url", value: url! },
+    ...(typeof media.mime_type === "string" ? { mimeType: media.mime_type } : {}),
+    ...(typeof media.filename === "string" ? { filename: media.filename } : {}),
+    ...(typeof media.caption === "string" ? { caption: media.caption } : {})
+  };
+}
+
+function messengerContent(message: Record<string, unknown>): ContentPart[] {
+  const content: ContentPart[] = [];
+  if (typeof message.text === "string" && message.text.length > 0) {
+    content.push({ kind: "text", text: message.text });
+  }
+
+  const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+  for (const raw of attachments) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const attachment = raw as Record<string, unknown>;
+    const providerType = typeof attachment.type === "string" ? attachment.type : "unknown";
+    const payload = typeof attachment.payload === "object" && attachment.payload !== null
+      ? attachment.payload as Record<string, unknown>
+      : {};
+    const ref = typeof payload.url === "string"
+      ? { kind: "url", value: payload.url }
+      : typeof payload.attachment_id === "string"
+        ? { kind: "provider", value: payload.attachment_id }
+        : undefined;
+
+    const mappedKind = providerType === "image" || providerType === "video" || providerType === "audio"
+      ? providerType
+      : providerType === "file"
+        ? "document"
+        : undefined;
+
+    if (mappedKind !== undefined && ref !== undefined) {
+      content.push({
+        kind: mappedKind,
+        source: ref,
+        ...(typeof payload.mime_type === "string" ? { mimeType: payload.mime_type } : {}),
+        ...(typeof payload.name === "string" ? { filename: payload.name } : {})
+      });
+    } else {
+      content.push({ kind: "structured", format: "meta.attachment", data: attachment });
+    }
+  }
+
+  if (message.quick_reply !== undefined) {
+    content.push({ kind: "structured", format: "meta.quick_reply", data: message.quick_reply });
+  }
+  return content;
+}
+
+function whatsappContent(message: Record<string, unknown>): ContentPart[] {
+  const content: ContentPart[] = [];
+  if (typeof message.text === "object" && message.text !== null) {
+    const body = (message.text as Record<string, unknown>).body;
+    if (typeof body === "string" && body.length > 0) content.push({ kind: "text", text: body });
+  }
+
+  const kind = typeof message.type === "string" ? message.type : undefined;
+  if (kind === "image" || kind === "video" || kind === "audio") {
+    const part = mediaPart(kind, message[kind]);
+    if (part !== undefined) content.push(part);
+  } else if (kind === "document") {
+    const part = mediaPart("document", message.document);
+    if (part !== undefined) content.push(part);
+  } else if (kind !== undefined && kind !== "text") {
+    const value = message[kind];
+    if (value !== undefined) content.push({ kind: "structured", format: `meta.whatsapp.${kind}`, data: value });
+  }
+
+  return content;
+}
+
+function makeEvent(input: {
+  provider: string;
+  channel: string;
+  capability: string;
+  accountId: string;
+  eventType: string;
+  providerEventId?: string;
+  providerMessageId?: string;
+  identityId?: string;
+  occurredAt?: string;
+  receivedAt: string;
+  content: ContentPart[];
+  data: unknown;
+}): CanonicalEvent {
+  const source = `urn:ishikeit:source:${encodeURIComponent(input.provider)}:${encodeURIComponent(input.channel)}:${encodeURIComponent(input.accountId)}`;
+  const eventId = input.providerEventId ?? "sha256:" + hash([
+    input.provider,
+    input.channel,
+    input.accountId,
+    input.eventType,
+    input.providerMessageId ?? null,
+    input.identityId ?? null,
+    input.occurredAt ?? null,
+    input.data
+  ]);
+
+  return {
+    schemaVersion: 2,
+    specversion: "1.0",
+    id: eventId,
+    source,
+    type: `com.ishikeit.${input.capability}.${input.eventType}`,
+    provider: input.provider,
+    channel: input.channel,
+    capability: input.capability,
+    accountId: input.accountId,
+    eventType: input.eventType,
+    ...(input.providerEventId === undefined ? {} : { providerEventId: input.providerEventId }),
+    ...(input.providerMessageId === undefined ? {} : { providerMessageId: input.providerMessageId }),
+    ...(input.identityId === undefined ? {} : { identityId: input.identityId }),
+    ...(input.occurredAt === undefined ? {} : { occurredAt: input.occurredAt }),
+    receivedAt: input.receivedAt,
+    content: input.content,
+    data: input.data
+  };
+}
+
 export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().toISOString()): CanonicalEvent[] {
   if (typeof value !== "object" || value === null) throw new Error("invalid envelope");
   const body = value as Record<string, unknown>;
@@ -25,84 +160,71 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
 
   if (object === "page" || object === "instagram") {
     const channel = object === "page" ? "messenger" : "instagram";
-
     for (const rawEntry of entry) {
       if (typeof rawEntry !== "object" || rawEntry === null) continue;
       const e = rawEntry as Record<string, unknown>;
       const accountId = typeof e.id === "string" ? e.id : "";
+      if (accountId === "") continue;
       const messaging = Array.isArray(e.messaging) ? e.messaging : [];
 
       for (const rawItem of messaging) {
         if (typeof rawItem !== "object" || rawItem === null) continue;
         const item = rawItem as Record<string, unknown>;
         const sender = typeof item.sender === "object" && item.sender !== null
-          ? item.sender as Record<string, unknown>
-          : {};
+          ? item.sender as Record<string, unknown> : {};
         const recipient = typeof item.recipient === "object" && item.recipient !== null
-          ? item.recipient as Record<string, unknown>
-          : {};
+          ? item.recipient as Record<string, unknown> : {};
         const message = typeof item.message === "object" && item.message !== null
-          ? item.message as Record<string, unknown>
-          : undefined;
-        const senderIdentityId = typeof sender.id === "string" ? sender.id : undefined;
-        const recipientIdentityId = typeof recipient.id === "string" ? recipient.id : undefined;
+          ? item.message as Record<string, unknown> : undefined;
+        const senderId = typeof sender.id === "string" ? sender.id : undefined;
+        const recipientId = typeof recipient.id === "string" ? recipient.id : undefined;
         const occurredAt = isoFromMillis(item.timestamp);
-
-        if (message?.is_echo === true) {
-          const mid = typeof message.mid === "string" ? message.mid : undefined;
-          events.push({
-            schemaVersion: 1,
-            channel,
-            accountId,
-            eventType: "message.echo",
-            ...(mid === undefined ? {} : { providerMessageId: mid }),
-            ...(recipientIdentityId === undefined ? {} : { identityId: recipientIdentityId }),
-            ...(occurredAt === undefined ? {} : { occurredAt }),
-            receivedAt,
-            payload: { message }
-          });
-          continue;
-        }
 
         if (message !== undefined) {
           const mid = typeof message.mid === "string" ? message.mid : undefined;
-          events.push({
-            schemaVersion: 1,
+          const echo = message.is_echo === true;
+          const providerEventId = mid === undefined ? undefined : "message:" + mid;
+          events.push(makeEvent({
+            provider: "meta",
             channel,
+            capability: "messaging",
             accountId,
-            eventType: "message.received",
-            ...(mid === undefined ? {} : { providerMessageId: mid, providerEventId: "message:" + mid }),
-            ...(senderIdentityId === undefined ? {} : { identityId: senderIdentityId }),
+            eventType: echo ? "message.echo" : "message.received",
+            ...(providerEventId === undefined ? {} : { providerEventId }),
+            ...(mid === undefined ? {} : { providerMessageId: mid }),
+            ...((echo ? recipientId : senderId) === undefined ? {} : { identityId: echo ? recipientId! : senderId! }),
             ...(occurredAt === undefined ? {} : { occurredAt }),
             receivedAt,
-            payload: { message }
-          });
+            content: messengerContent(message),
+            data: { message }
+          }));
           continue;
         }
 
-        const eventType = item.postback
+        const eventType = item.postback !== undefined
           ? "message.postback"
-          : item.reaction
+          : item.reaction !== undefined
             ? "message.reaction"
-            : item.read
+            : item.read !== undefined
               ? "delivery.read"
-              : item.delivery
+              : item.delivery !== undefined
                 ? "delivery.delivered"
                 : "unknown";
 
-        events.push({
-          schemaVersion: 1,
+        events.push(makeEvent({
+          provider: "meta",
           channel,
+          capability: "messaging",
           accountId,
           eventType,
-          ...(senderIdentityId === undefined ? {} : { identityId: senderIdentityId }),
+          ...(senderId === undefined ? {} : { identityId: senderId }),
           ...(occurredAt === undefined ? {} : { occurredAt }),
           receivedAt,
-          payload: item
-        });
+          content: [],
+          data: item
+        }));
       }
     }
-
     return events;
   }
 
@@ -116,66 +238,59 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
         if (typeof rawChange !== "object" || rawChange === null) continue;
         const change = rawChange as Record<string, unknown>;
         if (change.field !== "messages" || typeof change.value !== "object" || change.value === null) continue;
-
         const v = change.value as Record<string, unknown>;
         const metadata = typeof v.metadata === "object" && v.metadata !== null
-          ? v.metadata as Record<string, unknown>
-          : {};
+          ? v.metadata as Record<string, unknown> : {};
         const accountId = typeof metadata.phone_number_id === "string"
           ? metadata.phone_number_id
-          : typeof e.id === "string"
-            ? e.id
-            : "";
+          : typeof e.id === "string" ? e.id : "";
+        if (accountId === "") continue;
 
         for (const rawMessage of Array.isArray(v.messages) ? v.messages : []) {
           if (typeof rawMessage !== "object" || rawMessage === null) continue;
-          const m = rawMessage as Record<string, unknown>;
-          const mid = typeof m.id === "string" ? m.id : undefined;
-          const occurredAt = isoFromSeconds(m.timestamp);
-
-          events.push({
-            schemaVersion: 1,
+          const message = rawMessage as Record<string, unknown>;
+          const mid = typeof message.id === "string" ? message.id : undefined;
+          const occurredAt = isoFromSeconds(message.timestamp);
+          events.push(makeEvent({
+            provider: "meta",
             channel: "whatsapp",
+            capability: "messaging",
             accountId,
             eventType: "message.received",
             ...(mid === undefined ? {} : { providerMessageId: mid, providerEventId: "message:" + mid }),
-            ...(typeof m.from === "string" ? { identityId: m.from } : {}),
+            ...(typeof message.from === "string" ? { identityId: message.from } : {}),
             ...(occurredAt === undefined ? {} : { occurredAt }),
             receivedAt,
-            payload: {
-              type: m.type,
-              text: m.text,
-              image: m.image,
-              video: m.video,
-              audio: m.audio,
-              document: m.document,
-              interactive: m.interactive
-            }
-          });
+            content: whatsappContent(message),
+            data: { message }
+          }));
         }
 
         for (const rawStatus of Array.isArray(v.statuses) ? v.statuses : []) {
           if (typeof rawStatus !== "object" || rawStatus === null) continue;
-          const s = rawStatus as Record<string, unknown>;
-          const mid = typeof s.id === "string" ? s.id : undefined;
-          const status = typeof s.status === "string" ? s.status : "status";
-          const occurredAt = isoFromSeconds(s.timestamp);
-
-          events.push({
-            schemaVersion: 1,
+          const statusItem = rawStatus as Record<string, unknown>;
+          const mid = typeof statusItem.id === "string" ? statusItem.id : undefined;
+          const status = typeof statusItem.status === "string" ? statusItem.status : "status";
+          const occurredAt = isoFromSeconds(statusItem.timestamp);
+          events.push(makeEvent({
+            provider: "meta",
             channel: "whatsapp",
+            capability: "messaging",
             accountId,
             eventType: "delivery." + status,
-            ...(mid === undefined ? {} : { providerMessageId: mid, providerEventId: "status:" + status + ":" + mid }),
-            ...(typeof s.recipient_id === "string" ? { identityId: s.recipient_id } : {}),
+            ...(mid === undefined ? {} : {
+              providerMessageId: mid,
+              providerEventId: "status:" + status + ":" + mid
+            }),
+            ...(typeof statusItem.recipient_id === "string" ? { identityId: statusItem.recipient_id } : {}),
             ...(occurredAt === undefined ? {} : { occurredAt }),
             receivedAt,
-            payload: { status: s.status, errors: s.errors }
-          });
+            content: [],
+            data: { status: statusItem.status, errors: statusItem.errors }
+          }));
         }
       }
     }
-
     return events;
   }
 
@@ -183,20 +298,24 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
 }
 
 export function ingressIdentity(event: CanonicalEvent): IngressIdentity {
-  const stable = event.providerEventId ?? hash([
-    event.channel,
-    event.accountId,
-    event.eventType,
-    event.providerMessageId ?? null,
-    event.identityId ?? null,
-    event.occurredAt ?? null,
-    event.payload
-  ]);
+  if (event.provider === "meta") {
+    const stable = event.providerEventId ?? event.id;
+    return {
+      deduplicationKey: hash(["meta-event-v1", event.channel, event.accountId, event.eventType, stable]),
+      partitionKey: hash([
+        "conversation-v1",
+        event.channel,
+        event.accountId,
+        event.identityId ?? event.providerMessageId ?? "account"
+      ])
+    };
+  }
 
   return {
-    deduplicationKey: hash(["meta-event-v1", event.channel, event.accountId, event.eventType, stable]),
+    deduplicationKey: hash(["event-v2", event.source, event.id]),
     partitionKey: hash([
-      "conversation-v1",
+      "conversation-v2",
+      event.provider,
       event.channel,
       event.accountId,
       event.identityId ?? event.providerMessageId ?? "account"

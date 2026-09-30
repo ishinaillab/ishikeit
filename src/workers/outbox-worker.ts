@@ -1,11 +1,12 @@
 import type { Logger } from "pino";
-import { MetaSendFailure, type MetaMessageSender } from "../channels/meta-send.js";
-import { metaOutboundPayloadSchema } from "../domain/outbound.js";
-import type { OutboxDeliveryStore, OutboxJob } from "../persistence/outbox.js";
+import { actionEnvelopeSchema } from "../domain/actions.js";
+import type { ActionDispatcher } from "../dispatch/dispatcher.js";
+import { DispatchFailure } from "../dispatch/failure.js";
+import { ACTION_DISPATCH_TOPIC, type OutboxDeliveryStore, type OutboxJob } from "../persistence/outbox.js";
 
 export interface OutboxWorkerOptions {
   store: OutboxDeliveryStore;
-  sender: MetaMessageSender;
+  dispatcher: ActionDispatcher;
   logger: Logger;
   pollIntervalMs?: number;
   leaseDurationMs?: number;
@@ -17,7 +18,7 @@ export interface OutboxWorkerOptions {
 
 export class OutboxWorker {
   readonly #store: OutboxDeliveryStore;
-  readonly #sender: MetaMessageSender;
+  readonly #dispatcher: ActionDispatcher;
   readonly #logger: Logger;
   readonly #pollIntervalMs: number;
   readonly #leaseDurationMs: number;
@@ -30,7 +31,7 @@ export class OutboxWorker {
 
   constructor(options: OutboxWorkerOptions) {
     this.#store = options.store;
-    this.#sender = options.sender;
+    this.#dispatcher = options.dispatcher;
     this.#logger = options.logger;
     this.#pollIntervalMs = options.pollIntervalMs ?? 1000;
     this.#leaseDurationMs = options.leaseDurationMs ?? 30_000;
@@ -53,32 +54,33 @@ export class OutboxWorker {
   }
 
   async runOnce(): Promise<boolean> {
-    const job = await this.#store.claimNext(this.#leaseDurationMs);
+    const job = await this.#store.claimNext(ACTION_DISPATCH_TOPIC, this.#leaseDurationMs);
     if (job === undefined) return false;
 
-    const parsed = metaOutboundPayloadSchema.safeParse(job.payload);
+    const parsed = actionEnvelopeSchema.safeParse(job.payload);
     if (!parsed.success) {
-      await this.#store.deadLetter(job, "invalid meta.message.send payload");
-      this.#logger.error({ outboxId: job.id }, "dead-lettered invalid outbound payload");
+      await this.#store.deadLetter(job, "invalid action.dispatch payload");
+      this.#logger.error({ outboxId: job.id }, "dead-lettered invalid action payload");
       return true;
     }
 
     try {
-      const result = await this.#sender.send(parsed.data);
-      const completed = await this.#store.complete(job, result.providerMessageId);
+      const result = await this.#dispatcher.dispatch(parsed.data);
+      const completed = await this.#store.complete(job, result.providerResourceId);
       if (!completed) {
-        this.#logger.warn({ outboxId: job.id }, "outbound completion lost its lease");
+        this.#logger.warn({ outboxId: job.id }, "action completion lost its lease");
       } else {
         this.#logger.info({
           outboxId: job.id,
-          channel: parsed.data.channel,
-          accountId: parsed.data.accountId,
-          providerMessageId: result.providerMessageId
-        }, "Meta outbound message published");
+          provider: parsed.data.provider,
+          capability: parsed.data.capability,
+          operation: parsed.data.operation,
+          providerResourceId: result.providerResourceId
+        }, "outbound action published");
       }
       return true;
     } catch (error) {
-      await this.#handleFailure(job, error, parsed.data.channel);
+      await this.#handleFailure(job, error, parsed.data.provider, parsed.data.capability, parsed.data.operation);
       return true;
     }
   }
@@ -95,10 +97,16 @@ export class OutboxWorker {
     }
   }
 
-  async #handleFailure(job: OutboxJob, error: unknown, channel: string): Promise<void> {
-    const failure = error instanceof MetaSendFailure
+  async #handleFailure(
+    job: OutboxJob,
+    error: unknown,
+    provider: string,
+    capability: string,
+    operation: string
+  ): Promise<void> {
+    const failure = error instanceof DispatchFailure
       ? error
-      : new MetaSendFailure("unexpected outbound worker failure", {
+      : new DispatchFailure("unexpected outbound dispatch failure", {
           retryable: true,
           ambiguous: true,
           cause: error
@@ -106,18 +114,18 @@ export class OutboxWorker {
     const nextAttemptNumber = job.attemptCount + 1;
 
     if (!failure.retryable || nextAttemptNumber >= this.#maxAttempts) {
-      const reason = this.#failureReason(failure);
-      await this.#store.deadLetter(job, reason);
+      await this.#store.deadLetter(job, this.#failureReason(failure));
       this.#logger.error({
         outboxId: job.id,
-        channel,
+        provider,
+        capability,
+        operation,
         retryable: failure.retryable,
         ambiguous: failure.ambiguous,
         status: failure.status,
-        graphCode: failure.graphCode,
-        graphSubcode: failure.graphSubcode,
+        providerCode: failure.providerCode,
         attempt: nextAttemptNumber
-      }, "Meta outbound message dead-lettered");
+      }, "outbound action dead-lettered");
       return;
     }
 
@@ -126,35 +134,32 @@ export class OutboxWorker {
     await this.#store.retry(job, nextAttemptAt);
     this.#logger.warn({
       outboxId: job.id,
-      channel,
+      provider,
+      capability,
+      operation,
       ambiguous: failure.ambiguous,
       status: failure.status,
-      graphCode: failure.graphCode,
-      graphSubcode: failure.graphSubcode,
+      providerCode: failure.providerCode,
       attempt: nextAttemptNumber,
       nextAttemptAt: nextAttemptAt.toISOString()
-    }, "Meta outbound message scheduled for retry");
+    }, "outbound action scheduled for retry");
   }
 
-  #backoffMs(attempt: number, retryAfterMs: number | undefined): number {
+  #backoffMs(attempt: number, retryAfter: number | undefined): number {
     const exponential = Math.min(this.#maxBackoffMs, this.#baseBackoffMs * (2 ** Math.max(0, attempt - 1)));
-    return Math.min(this.#maxBackoffMs, Math.max(exponential, retryAfterMs ?? 0));
+    return Math.min(this.#maxBackoffMs, Math.max(exponential, retryAfter ?? 0));
   }
 
-  #failureReason(failure: MetaSendFailure): string {
-    const parts = [
+  #failureReason(failure: DispatchFailure): string {
+    return [
       failure.message,
       failure.status === undefined ? undefined : `http=${failure.status}`,
-      failure.graphCode === undefined ? undefined : `graph_code=${failure.graphCode}`,
-      failure.graphSubcode === undefined ? undefined : `graph_subcode=${failure.graphSubcode}`,
+      failure.providerCode === undefined ? undefined : `provider_code=${failure.providerCode}`,
       failure.ambiguous ? "delivery_ambiguous=true" : undefined
-    ].filter((value): value is string => value !== undefined);
-    return parts.join("; ");
+    ].filter((value): value is string => value !== undefined).join("; ");
   }
 
   async #sleep(ms: number): Promise<void> {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, ms);
-    });
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
   }
 }

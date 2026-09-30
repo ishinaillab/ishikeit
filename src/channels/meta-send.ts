@@ -1,4 +1,6 @@
+import type { ContentPart } from "../domain/content.js";
 import type { MetaOutboundPayload, MetaSendResult } from "../domain/outbound.js";
+import { DispatchFailure } from "../dispatch/failure.js";
 
 interface GraphErrorBody {
   error?: {
@@ -25,13 +27,9 @@ export interface MetaSenderOptions {
   fetchImpl?: typeof fetch;
 }
 
-export class MetaSendFailure extends Error {
-  readonly retryable: boolean;
-  readonly ambiguous: boolean;
-  readonly status?: number;
+export class MetaSendFailure extends DispatchFailure {
   readonly graphCode?: number;
   readonly graphSubcode?: number;
-  readonly retryAfterMs?: number;
 
   constructor(
     message: string,
@@ -45,14 +43,19 @@ export class MetaSendFailure extends Error {
       cause?: unknown;
     }
   ) {
-    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    super(message, {
+      retryable: options.retryable,
+      ...(options.ambiguous === undefined ? {} : { ambiguous: options.ambiguous }),
+      ...(options.status === undefined ? {} : { status: options.status }),
+      ...(options.graphCode === undefined
+        ? {}
+        : { providerCode: `graph:${options.graphCode}${options.graphSubcode === undefined ? "" : ":" + options.graphSubcode}` }),
+      ...(options.retryAfterMs === undefined ? {} : { retryAfterMs: options.retryAfterMs }),
+      ...(options.cause === undefined ? {} : { cause: options.cause })
+    });
     this.name = "MetaSendFailure";
-    this.retryable = options.retryable;
-    this.ambiguous = options.ambiguous ?? false;
-    if (options.status !== undefined) this.status = options.status;
     if (options.graphCode !== undefined) this.graphCode = options.graphCode;
     if (options.graphSubcode !== undefined) this.graphSubcode = options.graphSubcode;
-    if (options.retryAfterMs !== undefined) this.retryAfterMs = options.retryAfterMs;
   }
 }
 
@@ -61,13 +64,12 @@ function retryAfterMs(value: string | null): number | undefined {
   const seconds = Number(value);
   if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
   const date = Date.parse(value);
-  if (!Number.isFinite(date)) return undefined;
-  return Math.max(0, date - Date.now());
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {
   try {
-    const parsed = await response.json() as unknown;
+    const parsed: unknown = await response.json();
     return typeof parsed === "object" && parsed !== null ? parsed as Record<string, unknown> : {};
   } catch {
     return {};
@@ -83,17 +85,52 @@ function whatsappMessageId(result: Record<string, unknown>): string | undefined 
   return typeof id === "string" ? id : undefined;
 }
 
-function validateText(payload: MetaOutboundPayload): void {
-  const bytes = Buffer.byteLength(payload.message.text, "utf8");
+function validatePart(payload: MetaOutboundPayload): void {
+  const part = payload.message;
+  if (part.kind === "structured") {
+    throw new MetaSendFailure("Structured content is not supported by the Meta messaging adapter", { retryable: false });
+  }
+  if (part.kind !== "text") return;
+
+  const bytes = Buffer.byteLength(part.text, "utf8");
   if (payload.channel === "instagram" && bytes > 1000) {
     throw new MetaSendFailure("Instagram text messages must be 1000 UTF-8 bytes or less", { retryable: false });
   }
-  if (payload.channel === "messenger" && payload.message.text.length >= 2000) {
+  if (payload.channel === "messenger" && part.text.length >= 2000) {
     throw new MetaSendFailure("Messenger text messages must be less than 2000 characters", { retryable: false });
   }
-  if (payload.channel === "whatsapp" && payload.message.text.length > 4096) {
+  if (payload.channel === "whatsapp" && part.text.length > 4096) {
     throw new MetaSendFailure("WhatsApp text messages must be 4096 characters or less", { retryable: false });
   }
+}
+
+function metaAttachmentType(part: Exclude<ContentPart, { kind: "text" | "structured" }>): string {
+  return part.kind === "document" ? "file" : part.kind;
+}
+
+function sourcePayload(part: Exclude<ContentPart, { kind: "text" | "structured" }>): Record<string, unknown> {
+  if (part.source.kind === "url") return { url: part.source.value };
+  if (part.source.kind === "provider") return { attachment_id: part.source.value };
+  throw new MetaSendFailure("Unsupported Meta media reference kind: " + part.source.kind, { retryable: false });
+}
+
+function whatsappMedia(
+  part: Exclude<ContentPart, { kind: "text" | "structured" }>
+): { type: string; value: Record<string, unknown> } {
+  const type = part.kind === "document" ? "document" : part.kind;
+  const value: Record<string, unknown> = part.source.kind === "url"
+    ? { link: part.source.value }
+    : part.source.kind === "provider"
+      ? { id: part.source.value }
+      : {};
+  if (Object.keys(value).length === 0) {
+    throw new MetaSendFailure("Unsupported WhatsApp media reference kind: " + part.source.kind, { retryable: false });
+  }
+  if (part.caption !== undefined && (type === "image" || type === "video" || type === "document")) {
+    value.caption = part.caption;
+  }
+  if (part.filename !== undefined && type === "document") value.filename = part.filename;
+  return { type, value };
 }
 
 export class MetaSender implements MetaMessageSender {
@@ -116,39 +153,52 @@ export class MetaSender implements MetaMessageSender {
   }
 
   async send(payload: MetaOutboundPayload): Promise<MetaSendResult> {
-    validateText(payload);
+    validatePart(payload);
 
     const token = payload.channel === "messenger"
       ? this.#messengerAccessToken
       : payload.channel === "instagram"
         ? this.#instagramAccessToken
         : this.#whatsappAccessToken;
-    const host = payload.channel === "instagram"
-      ? this.#instagramGraphHost
-      : "graph.facebook.com";
+    const host = payload.channel === "instagram" ? this.#instagramGraphHost : "graph.facebook.com";
     const url = `https://${host}/${this.#graphApiVersion}/${encodeURIComponent(payload.accountId)}/messages`;
 
-    const body = payload.channel === "messenger"
-      ? {
-          recipient: { id: payload.recipientId },
-          messaging_type: "RESPONSE",
-          message: { text: payload.message.text }
-        }
-      : payload.channel === "instagram"
-        ? {
-            recipient: { id: payload.recipientId },
-            message: { text: payload.message.text }
-          }
-        : {
-            messaging_product: "whatsapp",
-            recipient_type: "individual",
-            to: payload.recipientId,
-            type: "text",
-            text: {
-              preview_url: false,
-              body: payload.message.text
+    let body: Record<string, unknown>;
+    if (payload.channel === "whatsapp") {
+      const base: Record<string, unknown> = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: payload.recipientId
+      };
+      if (payload.replyTo !== undefined) base.context = { message_id: payload.replyTo };
+      if (payload.message.kind === "text") {
+        body = { ...base, type: "text", text: { preview_url: false, body: payload.message.text } };
+      } else if (payload.message.kind !== "structured") {
+        const media = whatsappMedia(payload.message);
+        body = { ...base, type: media.type, [media.type]: media.value };
+      } else {
+        throw new MetaSendFailure("Unsupported WhatsApp content", { retryable: false });
+      }
+    } else {
+      const message = payload.message.kind === "text"
+        ? { text: payload.message.text }
+        : payload.message.kind !== "structured"
+          ? {
+              attachment: {
+                type: metaAttachmentType(payload.message),
+                payload: sourcePayload(payload.message)
+              }
             }
-          };
+          : undefined;
+      if (message === undefined) throw new MetaSendFailure("Unsupported Meta content", { retryable: false });
+
+      body = {
+        recipient: { id: payload.recipientId },
+        ...(payload.channel === "messenger" ? { messaging_type: "RESPONSE" } : {}),
+        message,
+        ...(payload.replyTo === undefined ? {} : { reply_to: { mid: payload.replyTo } })
+      };
+    }
 
     let response: Response;
     try {
@@ -178,7 +228,6 @@ export class MetaSender implements MetaMessageSender {
       const retryAfter = retryAfterMs(response.headers.get("retry-after"));
       throw new MetaSendFailure(graphError?.message ?? `Meta request failed with HTTP ${response.status}`, {
         retryable: isTransient,
-        ambiguous: false,
         status: response.status,
         ...(graphError?.code === undefined ? {} : { graphCode: graphError.code }),
         ...(graphError?.error_subcode === undefined ? {} : { graphSubcode: graphError.error_subcode }),

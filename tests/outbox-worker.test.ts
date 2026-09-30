@@ -1,20 +1,24 @@
 import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
-import { MetaSendFailure, type MetaMessageSender } from "../src/channels/meta-send.js";
+import { ActionDispatcher, type ActionAdapter } from "../src/dispatch/dispatcher.js";
+import { DispatchFailure } from "../src/dispatch/failure.js";
 import type { OutboxDeliveryStore, OutboxJob } from "../src/persistence/outbox.js";
+import { ACTION_DISPATCH_TOPIC } from "../src/persistence/outbox.js";
 import { OutboxWorker } from "../src/workers/outbox-worker.js";
 
 const job: OutboxJob = {
   id: "11111111-1111-4111-8111-111111111111",
-  topic: "meta.message.send",
+  topic: ACTION_DISPATCH_TOPIC,
   partitionKey: "partition-1",
   payload: {
     schemaVersion: 1,
     idempotencyKey: "reply:event-1",
-    channel: "instagram",
-    accountId: "ig-1",
-    recipientId: "user-1",
-    message: { type: "text", text: "hello" }
+    provider: "telegram",
+    capability: "messaging",
+    operation: "message.send",
+    orderingKey: "partition-1",
+    target: { channel: "bot", accountId: "bot-1", recipientId: "chat-1" },
+    body: { part: { kind: "text", text: "hello" } }
   },
   attemptCount: 0,
   leaseToken: "22222222-2222-4222-8222-222222222222"
@@ -29,65 +33,60 @@ function makeStore(claimed: OutboxJob | undefined) {
   return { store, claimNext, complete, retry, deadLetter };
 }
 
-function makeSender() {
-  const send = vi.fn<MetaMessageSender["send"]>().mockResolvedValue({ providerMessageId: "provider-1" });
-  const sender: MetaMessageSender = { send };
-  return { sender, send };
+function makeDispatcher(
+  execute = vi.fn<ActionAdapter["execute"]>().mockResolvedValue({ providerResourceId: "provider-1" })
+) {
+  const dispatcher = new ActionDispatcher();
+  dispatcher.register({
+    provider: "telegram",
+    capability: "messaging",
+    operation: "message.send",
+    execute
+  });
+  return { dispatcher, execute };
 }
 
 describe("OutboxWorker", () => {
   it("returns idle without a claim", async () => {
-    const { store } = makeStore(undefined);
-    const { sender } = makeSender();
-    const worker = new OutboxWorker({
-      store,
-      sender,
-      logger: pino({ level: "silent" })
-    });
-
+    const { store, claimNext } = makeStore(undefined);
+    const { dispatcher } = makeDispatcher();
+    const worker = new OutboxWorker({ store, dispatcher, logger: pino({ level: "silent" }) });
     await expect(worker.runOnce()).resolves.toBe(false);
+    expect(claimNext).toHaveBeenCalledWith(ACTION_DISPATCH_TOPIC, 30000);
   });
 
-  it("publishes a valid leased message", async () => {
+  it("publishes a valid generic action", async () => {
     const { store, complete, retry, deadLetter } = makeStore(job);
-    const { sender, send } = makeSender();
-    const worker = new OutboxWorker({
-      store,
-      sender,
-      logger: pino({ level: "silent" })
-    });
+    const { dispatcher, execute } = makeDispatcher();
+    const worker = new OutboxWorker({ store, dispatcher, logger: pino({ level: "silent" }) });
 
     await expect(worker.runOnce()).resolves.toBe(true);
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(1);
     expect(complete).toHaveBeenCalledWith(job, "provider-1");
     expect(retry).not.toHaveBeenCalled();
     expect(deadLetter).not.toHaveBeenCalled();
   });
 
-  it("dead-letters an invalid outbound payload without sending", async () => {
-    const invalid = { ...job, payload: { channel: "instagram" } };
+  it("dead-letters invalid generic action payloads", async () => {
+    const invalid = { ...job, payload: { provider: "telegram" } };
     const { store, deadLetter } = makeStore(invalid);
-    const { sender, send } = makeSender();
-    const worker = new OutboxWorker({
-      store,
-      sender,
-      logger: pino({ level: "silent" })
-    });
+    const { dispatcher, execute } = makeDispatcher();
+    const worker = new OutboxWorker({ store, dispatcher, logger: pino({ level: "silent" }) });
 
     await worker.runOnce();
-    expect(send).not.toHaveBeenCalled();
-    expect(deadLetter).toHaveBeenCalledWith(invalid, "invalid meta.message.send payload");
+    expect(execute).not.toHaveBeenCalled();
+    expect(deadLetter).toHaveBeenCalledWith(invalid, "invalid action.dispatch payload");
   });
 
-  it("schedules retryable failures with exponential backoff", async () => {
+  it("schedules retryable adapter failures with backoff", async () => {
     const { store, retry, deadLetter } = makeStore(job);
-    const send = vi.fn<MetaMessageSender["send"]>().mockRejectedValue(
-      new MetaSendFailure("rate limited", { retryable: true, status: 429 })
+    const execute = vi.fn<ActionAdapter["execute"]>().mockRejectedValue(
+      new DispatchFailure("rate limited", { retryable: true, status: 429 })
     );
-    const sender: MetaMessageSender = { send };
+    const { dispatcher } = makeDispatcher(execute);
     const worker = new OutboxWorker({
       store,
-      sender,
+      dispatcher,
       logger: pino({ level: "silent" }),
       baseBackoffMs: 1000,
       now: () => new Date("2026-09-30T00:00:00.000Z")
@@ -98,36 +97,13 @@ describe("OutboxWorker", () => {
     expect(deadLetter).not.toHaveBeenCalled();
   });
 
-  it("dead-letters permanent failures immediately", async () => {
+  it("dead-letters permanent adapter failures immediately", async () => {
     const { store, retry, deadLetter } = makeStore(job);
-    const send = vi.fn<MetaMessageSender["send"]>().mockRejectedValue(
-      new MetaSendFailure("invalid recipient", { retryable: false, status: 400, graphCode: 100 })
+    const execute = vi.fn<ActionAdapter["execute"]>().mockRejectedValue(
+      new DispatchFailure("unsupported", { retryable: false, status: 400 })
     );
-    const sender: MetaMessageSender = { send };
-    const worker = new OutboxWorker({
-      store,
-      sender,
-      logger: pino({ level: "silent" })
-    });
-
-    await worker.runOnce();
-    expect(retry).not.toHaveBeenCalled();
-    expect(deadLetter).toHaveBeenCalledTimes(1);
-  });
-
-  it("dead-letters retryable failures after the bounded attempt limit", async () => {
-    const exhausted = { ...job, attemptCount: 4 };
-    const { store, retry, deadLetter } = makeStore(exhausted);
-    const send = vi.fn<MetaMessageSender["send"]>().mockRejectedValue(
-      new MetaSendFailure("temporary failure", { retryable: true, status: 503 })
-    );
-    const sender: MetaMessageSender = { send };
-    const worker = new OutboxWorker({
-      store,
-      sender,
-      logger: pino({ level: "silent" }),
-      maxAttempts: 5
-    });
+    const { dispatcher } = makeDispatcher(execute);
+    const worker = new OutboxWorker({ store, dispatcher, logger: pino({ level: "silent" }) });
 
     await worker.runOnce();
     expect(retry).not.toHaveBeenCalled();

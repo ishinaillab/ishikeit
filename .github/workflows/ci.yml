@@ -2,14 +2,14 @@ name: CI
 
 on:
   push:
-    branches: ["main", "foundation-v1"]
+    branches: ["main"]
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
-  check:
+  node:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -19,3 +19,14 @@ jobs:
           package-manager-cache: false
       - run: npm ci --ignore-scripts
       - run: npm run check
+
+  php-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          coverage: none
+      - name: Lint WordPress bridge
+        run: find wordpress/ishi-ai-bridge -name '*.php' -print0 | xargs -0 -n1 php -l

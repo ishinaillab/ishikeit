@@ -158,4 +158,74 @@ describe("Meta normalizer", () => {
     expect(instagramIdentity.deduplicationKey).not.toBe(messengerIdentity.deduplicationKey);
     expect(instagramIdentity.partitionKey).not.toBe(messengerIdentity.partitionKey);
   });
+  it("normalizes Messenger attachments into provider-neutral rich content", () => {
+    const [event] = normalizeMetaEnvelope({
+      object: "page",
+      entry: [{
+        id: "page-1",
+        messaging: [{
+          sender: { id: "psid-1" },
+          timestamp: 1790000000000,
+          message: {
+            mid: "mid-media-1",
+            attachments: [{
+              type: "image",
+              payload: { url: "https://scontent.xx.fbcdn.net/photo.jpg" }
+            }, {
+              type: "file",
+              payload: { url: "https://scontent.xx.fbcdn.net/file.pdf", name: "file.pdf" }
+            }]
+          }
+        }]
+      }]
+    }, "2026-09-29T00:00:00.000Z");
+
+    expect(event?.content).toEqual([
+      {
+        kind: "image",
+        source: { kind: "url", value: "https://scontent.xx.fbcdn.net/photo.jpg" }
+      },
+      {
+        kind: "document",
+        source: { kind: "url", value: "https://scontent.xx.fbcdn.net/file.pdf" },
+        filename: "file.pdf"
+      }
+    ]);
+  });
+
+  it("normalizes WhatsApp media IDs without downloading before the webhook ACK", () => {
+    const [event] = normalizeMetaEnvelope({
+      object: "whatsapp_business_account",
+      entry: [{
+        id: "waba-1",
+        changes: [{
+          field: "messages",
+          value: {
+            metadata: { phone_number_id: "phone-1" },
+            messages: [{
+              id: "wamid-media-1",
+              from: "15551234567",
+              timestamp: "1790000000",
+              type: "document",
+              document: {
+                id: "media-1",
+                mime_type: "application/pdf",
+                filename: "reference.pdf",
+                caption: "Please check this"
+              }
+            }]
+          }
+        }]
+      }]
+    }, "2026-09-29T00:00:00.000Z");
+
+    expect(event?.content).toEqual([{
+      kind: "document",
+      source: { kind: "provider", value: "media-1" },
+      mimeType: "application/pdf",
+      filename: "reference.pdf",
+      caption: "Please check this"
+    }]);
+  });
+
 });

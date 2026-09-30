@@ -12,6 +12,15 @@ const schema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).optional(),
   LOG_LEVEL: z.enum(["fatal","error","warn","info","debug","trace"]).default("info"),
   DATABASE_URL: z.string().min(1).optional(),
+
+  PROCESSOR_ENABLED: booleanFromEnv.default(false),
+  WORDPRESS_AI_BRIDGE_URL: z.string().url().optional(),
+  ISHI_AI_BRIDGE_TOKEN: z.string().min(32).optional(),
+  AI_BRIDGE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(180000).default(90000),
+  AI_FILE_TTL_SECONDS: z.coerce.number().int().min(60).max(86400).default(3600),
+  MEDIA_MAX_BYTES: z.coerce.number().int().min(1024).max(104857600).default(26214400),
+  MEDIA_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(15000),
+
   META_APP_ID: z.string().min(1).default("1042452472116584"),
   META_APP_SECRET: z.string().min(1).optional(),
   META_WEBHOOK_VERIFY_TOKEN: z.string().min(16).optional(),
@@ -23,18 +32,29 @@ const schema = z.object({
   META_INSTAGRAM_GRAPH_HOST: z.enum(["graph.instagram.com", "graph.facebook.com"]).default("graph.instagram.com"),
   META_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
 }).superRefine((value, ctx) => {
-  if (!value.META_OUTBOUND_ENABLED) return;
-  for (const key of [
-    "META_MESSENGER_ACCESS_TOKEN",
-    "META_INSTAGRAM_ACCESS_TOKEN",
-    "META_WHATSAPP_ACCESS_TOKEN"
-  ] as const) {
-    if (value[key] === undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: [key],
-        message: `${key} is required when META_OUTBOUND_ENABLED=true`
-      });
+  if (value.META_OUTBOUND_ENABLED) {
+    for (const key of [
+      "META_MESSENGER_ACCESS_TOKEN",
+      "META_INSTAGRAM_ACCESS_TOKEN",
+      "META_WHATSAPP_ACCESS_TOKEN"
+    ] as const) {
+      if (value[key] === undefined) {
+        ctx.addIssue({ code: "custom", path: [key], message: `${key} is required when META_OUTBOUND_ENABLED=true` });
+      }
+    }
+  }
+
+  if (value.PROCESSOR_ENABLED) {
+    for (const key of ["WORDPRESS_AI_BRIDGE_URL", "ISHI_AI_BRIDGE_TOKEN", "META_WHATSAPP_ACCESS_TOKEN"] as const) {
+      if (value[key] === undefined) {
+        ctx.addIssue({ code: "custom", path: [key], message: `${key} is required when PROCESSOR_ENABLED=true` });
+      }
+    }
+    if (value.NODE_ENV === "production" && value.WORDPRESS_AI_BRIDGE_URL !== undefined) {
+      const url = new URL(value.WORDPRESS_AI_BRIDGE_URL);
+      if (url.protocol !== "https:") {
+        ctx.addIssue({ code: "custom", path: ["WORDPRESS_AI_BRIDGE_URL"], message: "Production AI bridge URL must use HTTPS" });
+      }
     }
   }
 });

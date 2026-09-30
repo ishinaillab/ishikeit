@@ -1,32 +1,56 @@
 import { describe, expect, it } from "vitest";
-import type { MetaOutboundPayload } from "../src/domain/outbound.js";
-import { outboundJobId, outboundPartitionKey } from "../src/domain/outbound.js";
+import type { ActionEnvelope } from "../src/domain/actions.js";
+import { actionEnvelopeSchema, actionJobId, conversationOrderingKey } from "../src/domain/actions.js";
 
-function payload(idempotencyKey: string): MetaOutboundPayload {
+function action(idempotencyKey: string): ActionEnvelope {
   return {
     schemaVersion: 1,
     idempotencyKey,
-    channel: "instagram",
-    accountId: "ig-1",
-    recipientId: "user-1",
-    message: { type: "text", text: "hello" }
+    provider: "telegram",
+    capability: "messaging",
+    operation: "message.send",
+    orderingKey: "conversation-key",
+    target: { channel: "bot", accountId: "bot-1", recipientId: "chat-1" },
+    body: { part: { kind: "text", text: "hello" } }
   };
 }
 
-describe("outbound identities", () => {
-  it("derives a stable UUID-shaped job ID from the logical send identity", () => {
-    const first = outboundJobId(payload("reply:event-1"));
-    const second = outboundJobId(payload("reply:event-1"));
-
+describe("generic action identities", () => {
+  it("derives stable UUID-shaped job IDs without provider-specific core code", () => {
+    const first = actionJobId(action("reply:event-1"));
+    const second = actionJobId(action("reply:event-1"));
     expect(first).toBe(second);
     expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 
-  it("changes the job ID when the idempotency key changes", () => {
-    expect(outboundJobId(payload("reply:event-1"))).not.toBe(outboundJobId(payload("reply:event-2")));
+  it("changes the job identity when the logical action changes", () => {
+    expect(actionJobId(action("reply:event-1"))).not.toBe(actionJobId(action("reply:event-2")));
   });
 
-  it("keeps the conversation partition stable across logical sends", () => {
-    expect(outboundPartitionKey(payload("reply:event-1"))).toBe(outboundPartitionKey(payload("reply:event-2")));
+  it("accepts future provider capability and operation values", () => {
+    expect(actionEnvelopeSchema.safeParse({
+      ...action("campaign-1"),
+      provider: "meta",
+      capability: "marketing",
+      operation: "campaign.create",
+      target: { adAccountId: "act-1" },
+      body: { name: "Future campaign" }
+    }).success).toBe(true);
+  });
+
+  it("derives provider-neutral conversation ordering keys", () => {
+    const first = conversationOrderingKey({
+      provider: "telegram",
+      channel: "bot",
+      accountId: "bot-1",
+      identityId: "chat-1"
+    });
+    const second = conversationOrderingKey({
+      provider: "telegram",
+      channel: "bot",
+      accountId: "bot-1",
+      identityId: "chat-1"
+    });
+    expect(first).toBe(second);
   });
 });

@@ -106,4 +106,15 @@ describe("MessageReceivedHandler", () => {
       event: { ...stored.event, capability: "marketing", eventType: "lead.created" }
     })).toBe(false);
   });
+
+  it("does not claim routing standby or handover events", () => {
+    const handler = new MessageReceivedHandler({ respond: vi.fn<BrainClient["respond"]>() });
+
+    for (const eventType of ["standby.message", "handover.pass"]) {
+      expect(handler.canHandle({
+        ...stored,
+        event: { ...stored.event, capability: "routing", eventType }
+      })).toBe(false);
+    }
+  });
 });

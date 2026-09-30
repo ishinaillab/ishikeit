@@ -102,6 +102,21 @@ function whatsappContent(message: Record<string, unknown>): ContentPart[] {
   return content;
 }
 
+function handoverEventType(item: Record<string, unknown>): string | undefined {
+  if (item.pass_thread_control !== undefined) return "handover.pass";
+  if (item.take_thread_control !== undefined) return "handover.take";
+  if (item.request_thread_control !== undefined) return "handover.request";
+  return undefined;
+}
+
+function standbyEventType(item: Record<string, unknown>): string {
+  if (item.message !== undefined) return "standby.message";
+  if (item.postback !== undefined) return "standby.postback";
+  if (item.read !== undefined) return "standby.read";
+  if (item.delivery !== undefined) return "standby.delivery";
+  return "standby.unknown";
+}
+
 function makeEvent(input: {
   provider: string;
   channel: string;
@@ -166,6 +181,7 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
       const accountId = typeof e.id === "string" ? e.id : "";
       if (accountId === "") continue;
       const messaging = Array.isArray(e.messaging) ? e.messaging : [];
+      const standby = Array.isArray(e.standby) ? e.standby : [];
 
       for (const rawItem of messaging) {
         if (typeof rawItem !== "object" || rawItem === null) continue;
@@ -179,6 +195,23 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
         const senderId = typeof sender.id === "string" ? sender.id : undefined;
         const recipientId = typeof recipient.id === "string" ? recipient.id : undefined;
         const occurredAt = isoFromMillis(item.timestamp);
+        const routingType = handoverEventType(item);
+
+        if (routingType !== undefined) {
+          events.push(makeEvent({
+            provider: "meta",
+            channel,
+            capability: "routing",
+            accountId,
+            eventType: routingType,
+            ...(senderId === undefined ? {} : { identityId: senderId }),
+            ...(occurredAt === undefined ? {} : { occurredAt }),
+            receivedAt,
+            content: [],
+            data: { routing: "handover", item }
+          }));
+          continue;
+        }
 
         if (message !== undefined) {
           const mid = typeof message.mid === "string" ? message.mid : undefined;
@@ -222,6 +255,36 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
           receivedAt,
           content: [],
           data: item
+        }));
+      }
+
+      for (const rawItem of standby) {
+        if (typeof rawItem !== "object" || rawItem === null) continue;
+        const item = rawItem as Record<string, unknown>;
+        const sender = typeof item.sender === "object" && item.sender !== null
+          ? item.sender as Record<string, unknown> : {};
+        const message = typeof item.message === "object" && item.message !== null
+          ? item.message as Record<string, unknown> : undefined;
+        const senderId = typeof sender.id === "string" ? sender.id : undefined;
+        const occurredAt = isoFromMillis(item.timestamp);
+        const eventType = standbyEventType(item);
+        const mid = message === undefined || typeof message.mid !== "string" ? undefined : message.mid;
+
+        events.push(makeEvent({
+          provider: "meta",
+          channel,
+          capability: "routing",
+          accountId,
+          eventType,
+          ...(mid === undefined ? {} : {
+            providerMessageId: mid,
+            providerEventId: "standby:message:" + mid
+          }),
+          ...(senderId === undefined ? {} : { identityId: senderId }),
+          ...(occurredAt === undefined ? {} : { occurredAt }),
+          receivedAt,
+          content: [],
+          data: { routing: "standby", item }
         }));
       }
     }

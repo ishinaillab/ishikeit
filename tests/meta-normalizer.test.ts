@@ -193,6 +193,59 @@ describe("Meta normalizer", () => {
     ]);
   });
 
+  it("normalizes Instagram standby messages as routing-only events", () => {
+    const [event] = normalizeMetaEnvelope({
+      object: "instagram",
+      entry: [{
+        id: "ig-1",
+        standby: [{
+          sender: { id: "igsid-standby-1" },
+          recipient: { id: "ig-1" },
+          timestamp: 1790000000000,
+          message: { mid: "mid-standby-1", text: "hello from standby" }
+        }]
+      }]
+    }, "2026-09-29T00:00:00.000Z");
+
+    expect(event).toMatchObject({
+      channel: "instagram",
+      capability: "routing",
+      accountId: "ig-1",
+      eventType: "standby.message",
+      providerEventId: "standby:message:mid-standby-1",
+      providerMessageId: "mid-standby-1",
+      identityId: "igsid-standby-1",
+      content: []
+    });
+  });
+
+  it("normalizes Instagram handover events as routing-only events", () => {
+    const [event] = normalizeMetaEnvelope({
+      object: "instagram",
+      entry: [{
+        id: "ig-1",
+        messaging: [{
+          sender: { id: "igsid-handover-1" },
+          recipient: { id: "ig-1" },
+          timestamp: 1790000000000,
+          pass_thread_control: {
+            previous_owner_app_id: "app-old",
+            new_owner_app_id: "app-new"
+          }
+        }]
+      }]
+    }, "2026-09-29T00:00:00.000Z");
+
+    expect(event).toMatchObject({
+      channel: "instagram",
+      capability: "routing",
+      accountId: "ig-1",
+      eventType: "handover.pass",
+      identityId: "igsid-handover-1",
+      content: []
+    });
+  });
+
   it("normalizes WhatsApp media IDs without downloading before the webhook ACK", () => {
     const [event] = normalizeMetaEnvelope({
       object: "whatsapp_business_account",

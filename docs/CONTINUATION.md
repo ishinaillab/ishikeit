@@ -37,7 +37,7 @@ Hostinger is connected to:
 Verified deployed Git revision:
 
 ```text
-b94f814e7904878e3450dc7024d7d283a770a533
+b8562e557ba81739c5d51e7caaacff4e5b070c83
 ```
 
 That revision completed its GitHub Actions workflow successfully and Hostinger completed the corresponding Git-based Node.js build.
@@ -56,7 +56,7 @@ Verified `GET /health/capabilities` state:
   "architecture": "event-action-v1",
   "canonicalEventSchema": 2,
   "actionSchema": 1,
-  "wordpressBridgeApiSchema": 1,
+  "wordpressBridgeApiSchema": 2,
   "wordpressBridgeStorageSchema": "1.1.1",
   "runtime": {
     "processorEnabled": true,
@@ -233,6 +233,13 @@ The active private bridge is the WordPress plugin:
 Ishi AI Bridge
 ```
 
+Current bridge/runtime contract:
+
+- plugin version: `0.2.0`
+- bridge API schema: `2`
+- storage schema: `1.1.1`
+- authenticated audio API ready: `true`
+
 Current WordPress REST base:
 
 ```text
@@ -245,6 +252,7 @@ The bridge is responsible for:
 - durable AI-turn idempotency
 - request-fingerprint conflict protection
 - durable file-upload idempotency
+- idempotent audio transcription through AI Engine's dedicated transcription API
 - conversation continuity via AI Engine chat ID
 - server-side AI Engine calls
 - typed reply-part validation
@@ -260,6 +268,8 @@ Verified behaviors:
 - repeating the exact same turn returns the same durable result
 - reusing one turn ID with a different request is rejected
 - controlled file upload succeeded and replayed idempotently
+- controlled speech audio transcription succeeded through `/transcribe`
+- bridge health reports `aiEngineReady`, `fileApiReady`, and `audioApiReady`
 
 Provider tokens and provider webhook authentication do not live in this WordPress bridge.
 
@@ -473,36 +483,58 @@ Do not move the full-rollout cutover forward during an ordinary outage unless in
 
 Controlled provider-backed media validation completed on 2026-09-30.
 
-The validation used temporary WhatsApp Cloud API media objects and the production Ishikeit media resolver without sending customer-facing messages. Each temporary object was deleted after verification.
+The original resolver-only validation used temporary WhatsApp Cloud API media objects and the production Ishikeit media resolver without sending customer-facing messages. Those resolver-probe objects were deleted after verification.
 
-Verified byte-for-byte resolution paths:
+Verified byte-for-byte resolver paths:
 
 - image: PNG
 - document: plain text
 - audio: MP3
 - video: MP4
 
-The dedicated resolver test suite also verifies Meta-host allowlisting, redirect revalidation, declared and actual byte ceilings, WhatsApp metadata lookup, authenticated download, and retry classification.
+The resolver suite verifies Meta-host allowlisting, redirect revalidation, declared and actual byte ceilings, WhatsApp metadata lookup, authenticated download, safe filename derivation, and retry classification.
 
-Full repository validation after adding the resolver coverage:
+A later end-to-end production matrix validated the durable processor and dispatcher on deployed revision `b8562e557ba81739c5d51e7caaacff4e5b070c83`:
+
+- image: valid PNG was resolved, uploaded to AI Engine, processed on attempt 1, and generated a published Meta reply
+- document: plain-text document was resolved, uploaded to AI Engine, and processed on attempt 1
+- audio: speech-bearing MP3 was resolved, sent to the authenticated `/transcribe` bridge route, transcribed by AI Engine, processed on attempt 1, and generated a published Meta reply with a provider resource ID
+- video: MP4 was received as canonical portable media and processed on attempt 1, but is intentionally not sent into the current chatbot file-input path; the AI turn receives an explicit `unprocessedMediaKinds=[video]` safeguard so it must not claim to have inspected the video
+
+Video content interpretation is therefore not yet implemented. Video transport/receipt is supported, outbound video messaging is supported, and the current inbound behavior is deliberately safe rather than pretending the chatbot can inspect MP4 content.
+
+The end-to-end matrix's temporary provider media cleanup was not independently verified after the execution safety layer blocked a new cleanup helper. Do not state that those later matrix objects were deleted.
+
+Post-matrix operational metrics at `2026-09-30T14:32:15.641Z` showed:
+
+- inbound received: 38
+- inbound processed: 38
+- current inbound failures: 0
+- pending `action.dispatch`: 0
+- pending `inbound.event.accepted`: 0
+- pending legacy `meta.message.send`: 0
+- published attempts in the 60-minute window: 49
+- retries: 0
+- dead letters: 0
+
+Latest full repository validation:
 
 - lint: passed
 - typecheck: passed
 - test files: 12 passed
-- tests: 58 passed
+- tests: 65 passed
 - build: passed
-
 ## Current next work
 
-The durable messaging processor is now a production system, not a scaffold.
+The durable messaging processor is now a production system, not a scaffold. Operational metrics and audio transcription adaptation are already live; do not redo those phases.
 
-The next work should build on the adapter/registry boundaries rather than redesigning the core. Recommended sequence:
+Continue building on the adapter/registry boundaries rather than redesigning the core. Recommended sequence:
 
-1. add observability/operational metrics around processing latency, retry counts, dead letters, and provider error classes
-2. refine AI handoff/escalation behavior
+1. refine AI handoff/escalation behavior and make handoff states operationally observable
+2. if inbound video interpretation is required, add it as an explicit media-processing capability/adapter and keep the current no-inspection safeguard until a verified backend is available
 3. add Telegram as the first non-Meta messaging adapter
 4. add Meta lead-management capability as a separate capability/operation family
 5. add Meta Marketing API operations behind their own authorization/policy layer
-6. version and test each future provider adapter independently
+6. version and test each future provider adapter and media-capability contract independently
 
 Marketing API, lead management, and future providers must not be routed through the conversational message handler merely because they originate from Meta.

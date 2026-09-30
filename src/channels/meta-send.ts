@@ -19,9 +19,9 @@ export interface MetaMessageSender {
 
 export interface MetaSenderOptions {
   graphApiVersion: string;
-  messengerAccessToken?: string;
-  instagramAccessToken?: string;
-  whatsappAccessToken?: string;
+  messengerAccessToken?: string | undefined;
+  instagramAccessToken?: string | undefined;
+  whatsappAccessToken?: string | undefined;
   instagramGraphHost: "graph.instagram.com" | "graph.facebook.com";
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;

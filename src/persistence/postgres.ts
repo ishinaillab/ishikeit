@@ -18,6 +18,8 @@ interface ReadinessRow extends pg.QueryResultRow {
   capability: boolean;
   last_error: boolean;
   partition_key: boolean;
+  processing_outcome: boolean;
+  handoff_reason: boolean;
 }
 
 export class PostgresDatabase {
@@ -66,7 +68,21 @@ export class PostgresDatabase {
              WHERE table_schema='public'
                AND table_name='inbound_events'
                AND column_name='partition_key'
-           ) AS partition_key`
+           ) AS partition_key,
+           EXISTS (
+             SELECT 1
+             FROM information_schema.columns
+             WHERE table_schema='public'
+               AND table_name='inbound_events'
+               AND column_name='processing_outcome'
+           ) AS processing_outcome,
+           EXISTS (
+             SELECT 1
+             FROM information_schema.columns
+             WHERE table_schema='public'
+               AND table_name='inbound_events'
+               AND column_name='handoff_reason'
+           ) AS handoff_reason`
       );
 
       const row = result.rows[0];
@@ -76,7 +92,9 @@ export class PostgresDatabase {
         && row.provider === true
         && row.capability === true
         && row.last_error === true
-        && row.partition_key === true;
+        && row.partition_key === true
+        && row.processing_outcome === true
+        && row.handoff_reason === true;
     } catch {
       return false;
     }

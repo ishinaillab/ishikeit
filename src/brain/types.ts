@@ -11,6 +11,7 @@ export interface BrainTurnRequest {
 export interface BrainTurnResponse {
   parts: ContentPart[];
   handoff: boolean;
+  handoffReason?: string;
 }
 
 export interface BrainClient {

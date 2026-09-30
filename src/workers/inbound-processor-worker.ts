@@ -110,7 +110,7 @@ export class InboundProcessorWorker {
 
     const skipReason = this.#rolloutSkipReason(stored);
     if (skipReason !== undefined) {
-      await this.#events.complete(stored.id, []);
+      await this.#events.complete(stored.id, [], { outcome: "rollout_skipped" });
       const completed = await this.#queue.complete(job, undefined, {
         provider: stored.event.provider,
         capability: stored.event.capability,
@@ -135,8 +135,11 @@ export class InboundProcessorWorker {
     await this.#events.markProcessing(stored.id);
 
     try {
-      const actions = await this.#handlers.handle(stored);
-      await this.#events.complete(stored.id, actions);
+      const result = await this.#handlers.handle(stored);
+      await this.#events.complete(stored.id, result.actions, {
+        outcome: result.outcome,
+        ...(result.handoffReason === undefined ? {} : { handoffReason: result.handoffReason })
+      });
       const completed = await this.#queue.complete(job, undefined, {
         provider: stored.event.provider,
         capability: stored.event.capability,
@@ -152,7 +155,9 @@ export class InboundProcessorWorker {
           provider: stored.event.provider,
           channel: stored.event.channel,
           eventType: stored.event.eventType,
-          actionCount: actions.length
+          actionCount: result.actions.length,
+          processingOutcome: result.outcome,
+          ...(result.handoffReason === undefined ? {} : { handoffReason: result.handoffReason })
         }, "inbound event processed");
       }
       return true;

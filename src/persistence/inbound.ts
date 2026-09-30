@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type pg from "pg";
 import type { ActionEnvelope } from "../domain/actions.js";
+import { normalizeHandoffReason, type ProcessingDisposition } from "../domain/processing.js";
 import { canonicalEventSchema, type CanonicalEvent, type IngressIdentity } from "../domain/events.js";
 import { enqueueAction, INBOUND_ACCEPTED_TOPIC } from "./outbox.js";
 import type { PostgresDatabase } from "./postgres.js";
@@ -20,7 +21,7 @@ export interface StoredInboundEvent {
 export interface InboundEventProcessingStore {
   get(id: string): Promise<StoredInboundEvent | undefined>;
   markProcessing(id: string): Promise<void>;
-  complete(id: string, actions: readonly ActionEnvelope[]): Promise<void>;
+  complete(id: string, actions: readonly ActionEnvelope[], disposition: ProcessingDisposition): Promise<void>;
   recordFailure(id: string, reason: string): Promise<void>;
 }
 
@@ -107,16 +108,26 @@ export class PostgresInboundEventRepository implements InboundEventProcessingSto
     );
   }
 
-  async complete(id: string, actions: readonly ActionEnvelope[]): Promise<void> {
+  async complete(
+    id: string,
+    actions: readonly ActionEnvelope[],
+    disposition: ProcessingDisposition
+  ): Promise<void> {
+    const handoffReason = disposition.outcome === "handoff"
+      ? normalizeHandoffReason(disposition.handoffReason)
+      : null;
+
     await this.db.transaction(async (tx) => {
       for (const action of actions) await enqueueAction(tx, action);
       const result = await tx.query(
         `UPDATE inbound_events
          SET status = 'processed',
              processed_at = now(),
-             last_error = NULL
+             last_error = NULL,
+             processing_outcome = $2,
+             handoff_reason = $3
          WHERE id = $1::uuid AND processed_at IS NULL`,
-        [id]
+        [id, disposition.outcome, handoffReason]
       );
       if (result.rowCount !== 1) {
         const existing = await tx.query<{ processed_at: Date | null } & pg.QueryResultRow>(

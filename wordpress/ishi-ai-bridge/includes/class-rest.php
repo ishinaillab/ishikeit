@@ -221,12 +221,36 @@ final class Rest {
             $parts
         );
 
+        $handoff_reason = null;
+
+        if ( $handoff ) {
+            $handoff_reason = sanitize_key(
+                (string) apply_filters(
+                    'ishi_ai_bridge_handoff_reason',
+                    'unspecified',
+                    $data,
+                    $result,
+                    $parts
+                )
+            );
+
+            if ( '' === $handoff_reason ) {
+                $handoff_reason = 'unspecified';
+            }
+
+            $handoff_reason = substr( $handoff_reason, 0, 128 );
+        }
+
         $response = [
             'ok'      => true,
             'turnId'  => $turn_id,
             'parts'   => $handoff ? [] : $parts,
             'handoff' => $handoff,
         ];
+
+        if ( null !== $handoff_reason ) {
+            $response['handoffReason'] = $handoff_reason;
+        }
 
         if ( ! Storage::complete_turn( $turn_hash, $response ) ) {
             return new WP_Error(

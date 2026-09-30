@@ -2,7 +2,7 @@ import Fastify from "fastify";
 import type { Logger } from "pino";
 import type { InboundStore } from "../persistence/inbound.js";
 import { sha256Hex } from "../persistence/inbound.js";
-import { ingressIdentity, normalizeMetaEnvelope } from "../channels/meta-normalizer.js";
+import { metaIngressIdentity, normalizeMetaEnvelope } from "../channels/meta-normalizer.js";
 import { verifyMetaChallenge, verifyMetaSignature } from "../security/meta.js";
 
 export interface ServerDeps {
@@ -78,7 +78,7 @@ export function buildServer(deps: ServerDeps) {
       let created = 0;
 
       for (const event of events) {
-        if (await deps.inbound.ingest(event, ingressIdentity(event), rawHash) === "created") {
+        if (await deps.inbound.ingest(event, metaIngressIdentity(event), rawHash) === "created") {
           created++;
         }
       }

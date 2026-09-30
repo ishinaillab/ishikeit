@@ -540,13 +540,16 @@ Primary rule:
 
 - every pull request that changes a context-sensitive execution boundary must update `docs/CONTINUATION.md` in the same pull request
 - context-sensitive boundaries currently include application source, migrations, WordPress bridge code, environment-contract examples, package manifests/lockfile, TypeScript/ESLint configuration, and GitHub workflows
-- CI enforces this rule on pull requests through the `context-continuity` job
-- a deliberate `context-not-required` pull-request label may bypass the guard only when a maintainer has determined that the change has no durable project-context impact
+- CI checks this rule through the `context-continuity` job on pull requests and on every push to `main`
+- pull requests may use a deliberate `context-not-required` label only when a maintainer has determined that the change has no durable project-context impact
+- a direct push to `main` has no label bypass: if it changes a context-sensitive boundary without updating `docs/CONTINUATION.md`, the event-driven main-branch CI run fails and the missing context must be corrected immediately
 - secrets, raw customer payloads, access tokens, database URLs, and other sensitive values must never be copied into the continuation document
 
 This makes repository changes themselves the primary context-capture event. Runtime/configuration work performed outside Git still needs an immediate continuation update in the same operational task whenever it materially changes the verified project state.
 
-A daily Ishikeit context integrity sweep exists only as a safety net for missed or externally applied changes. It is not the source of truth and should not be used as a substitute for change-coupled documentation. If a native event-trigger surface becomes available for GitHub/configuration changes, prefer it over increasing polling frequency.
+The repository's `main` branch is currently not protected, so the CI check is not yet a hard pre-merge policy gate. Normal pull-request work receives the check before merge; direct pushes are detected immediately after the push. Repository administration should eventually require the relevant CI checks through branch protection or a ruleset when an administrative write surface is available.
+
+A daily Ishikeit context integrity sweep exists only as a safety net for missed or externally applied changes. It is not the source of truth and should not be used as a substitute for change-coupled documentation. If a native agent event-trigger surface becomes available for GitHub/configuration changes, prefer it over increasing polling frequency.
 
 ## Security posture
 

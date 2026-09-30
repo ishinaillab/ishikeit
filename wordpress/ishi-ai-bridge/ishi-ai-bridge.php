@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 define( 'ISHI_AI_BRIDGE_VERSION', '0.1.0' );
-define( 'ISHI_AI_BRIDGE_SCHEMA_VERSION', '1.0.0' );
+define( 'ISHI_AI_BRIDGE_SCHEMA_VERSION', '1.1.0' );
 define( 'ISHI_AI_BRIDGE_FILE', __FILE__ );
 define( 'ISHI_AI_BRIDGE_DIR', __DIR__ );
 

@@ -134,8 +134,26 @@ final class Rest {
         }
 
         $context = Validation::trusted_context( $data['context'] ?? [] );
+        $request_json = wp_json_encode(
+            [
+                'conversationId' => $conversation_id,
+                'message'        => $message,
+                'fileIds'        => $file_ids,
+                'context'        => $context,
+            ]
+        );
+
+        if ( false === $request_json ) {
+            return new WP_Error(
+                'ishi_ai_bridge_invalid_turn',
+                'Unable to fingerprint the AI turn.',
+                [ 'status' => 400 ]
+            );
+        }
+
         $turn_hash = hash( 'sha256', $turn_id );
-        $claim = Storage::claim_turn( $turn_hash );
+        $request_hash = hash( 'sha256', $request_json );
+        $claim = Storage::claim_turn( $turn_hash, $request_hash );
 
         if ( is_wp_error( $claim ) ) {
             return $claim;

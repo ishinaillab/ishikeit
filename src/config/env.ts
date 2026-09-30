@@ -25,6 +25,7 @@ const schema = z.object({
   META_APP_SECRET: z.string().min(1).optional(),
   META_WEBHOOK_VERIFY_TOKEN: z.string().min(16).optional(),
   META_GRAPH_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default("v26.0"),
+  ACTION_DISPATCH_ENABLED: booleanFromEnv.default(false),
   META_OUTBOUND_ENABLED: booleanFromEnv.default(false),
   META_MESSENGER_ACCESS_TOKEN: z.string().min(1).optional(),
   META_INSTAGRAM_ACCESS_TOKEN: z.string().min(1).optional(),
@@ -32,20 +33,8 @@ const schema = z.object({
   META_INSTAGRAM_GRAPH_HOST: z.enum(["graph.instagram.com", "graph.facebook.com"]).default("graph.instagram.com"),
   META_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
 }).superRefine((value, ctx) => {
-  if (value.META_OUTBOUND_ENABLED) {
-    for (const key of [
-      "META_MESSENGER_ACCESS_TOKEN",
-      "META_INSTAGRAM_ACCESS_TOKEN",
-      "META_WHATSAPP_ACCESS_TOKEN"
-    ] as const) {
-      if (value[key] === undefined) {
-        ctx.addIssue({ code: "custom", path: [key], message: `${key} is required when META_OUTBOUND_ENABLED=true` });
-      }
-    }
-  }
-
   if (value.PROCESSOR_ENABLED) {
-    for (const key of ["WORDPRESS_AI_BRIDGE_URL", "ISHI_AI_BRIDGE_TOKEN", "META_WHATSAPP_ACCESS_TOKEN"] as const) {
+    for (const key of ["WORDPRESS_AI_BRIDGE_URL", "ISHI_AI_BRIDGE_TOKEN"] as const) {
       if (value[key] === undefined) {
         ctx.addIssue({ code: "custom", path: [key], message: `${key} is required when PROCESSOR_ENABLED=true` });
       }
@@ -59,7 +48,10 @@ const schema = z.object({
   }
 });
 
-export type Environment = z.infer<typeof schema> & { HTTP_PORT_EFFECTIVE: number };
+export type Environment = z.infer<typeof schema> & {
+  HTTP_PORT_EFFECTIVE: number;
+  ACTION_DISPATCH_ENABLED_EFFECTIVE: boolean;
+};
 
 export function loadEnvironment(input: NodeJS.ProcessEnv = process.env): Environment {
   const parsed = schema.parse(input);
@@ -68,5 +60,9 @@ export function loadEnvironment(input: NodeJS.ProcessEnv = process.env): Environ
       if (parsed[key] === undefined) throw new Error(key + " is required in production");
     }
   }
-  return { ...parsed, HTTP_PORT_EFFECTIVE: parsed.HTTP_PORT ?? parsed.PORT ?? 3000 };
+  return {
+    ...parsed,
+    HTTP_PORT_EFFECTIVE: parsed.HTTP_PORT ?? parsed.PORT ?? 3000,
+    ACTION_DISPATCH_ENABLED_EFFECTIVE: parsed.ACTION_DISPATCH_ENABLED || parsed.META_OUTBOUND_ENABLED
+  };
 }

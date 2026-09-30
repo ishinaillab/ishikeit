@@ -41,12 +41,13 @@ const stored: StoredInboundEvent = {
 
 function makeQueue() {
   const claimNext = vi.fn<OutboxDeliveryStore["claimNext"]>().mockResolvedValue(job);
+  const renewLease = vi.fn<NonNullable<OutboxDeliveryStore["renewLease"]>>().mockResolvedValue(true);
   const complete = vi.fn<OutboxDeliveryStore["complete"]>().mockResolvedValue(true);
   const retry = vi.fn<OutboxDeliveryStore["retry"]>().mockResolvedValue(true);
   const deadLetter = vi.fn<OutboxDeliveryStore["deadLetter"]>().mockResolvedValue(true);
   return {
-    queue: { claimNext, complete, retry, deadLetter } satisfies OutboxDeliveryStore,
-    claimNext, complete, retry, deadLetter
+    queue: { claimNext, renewLease, complete, retry, deadLetter } satisfies OutboxDeliveryStore,
+    claimNext, renewLease, complete, retry, deadLetter
   };
 }
 
@@ -105,6 +106,29 @@ describe("InboundProcessorWorker", () => {
       operation: "message.received"
     }));
     expect(typeof q.complete.mock.calls[0]?.[2]?.durationMs).toBe("number");
+  });
+
+  it("renews the queue lease while a long-running handler is still processing", async () => {
+    const q = makeQueue();
+    const e = makeEvents();
+    const handlers = new EventHandlerRegistry();
+    handlers.register({
+      canHandle: () => true,
+      handle: () => new Promise((resolve) => {
+        setTimeout(() => resolve({ actions: [], outcome: "handled" }), 1100);
+      })
+    });
+    const worker = new InboundProcessorWorker({
+      queue: q.queue,
+      events: e.events,
+      handlers,
+      logger: pino({ level: "silent" }),
+      leaseDurationMs: 3000
+    });
+
+    await expect(worker.runOnce()).resolves.toBe(true);
+    expect(q.renewLease).toHaveBeenCalledWith(job, 3000);
+    expect(q.complete).toHaveBeenCalled();
   });
 
   it("marks unsupported event types processed without invoking an adapter", async () => {

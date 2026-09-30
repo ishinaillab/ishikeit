@@ -73,6 +73,23 @@ describe("environment", () => {
     expect(env.PROCESSOR_CUTOVER_AT).toBe("2026-09-30T09:30:00.000Z");
   });
 
+  it("keeps video interpretation opt-in and requires a Gemini key when enabled", () => {
+    expect(loadEnvironment(productionBase).VIDEO_INTERPRETER_PROVIDER).toBe("none");
+
+    expect(() => loadEnvironment({
+      ...productionBase,
+      VIDEO_INTERPRETER_PROVIDER: "gemini"
+    })).toThrow();
+
+    const env = loadEnvironment({
+      ...productionBase,
+      VIDEO_INTERPRETER_PROVIDER: "gemini",
+      GEMINI_API_KEY: "g".repeat(32)
+    });
+    expect(env.VIDEO_INTERPRETER_PROVIDER).toBe("gemini");
+    expect(env.GEMINI_VIDEO_MODEL).toBe("gemini-3.8-flash");
+  });
+
   it("parses and normalizes provider-neutral canary partition keys", () => {
     const first = "a".repeat(64);
     const second = "B".repeat(64);

@@ -23,6 +23,12 @@ const schema = z.object({
   AI_FILE_TTL_SECONDS: z.coerce.number().int().min(60).max(86400).default(3600),
   MEDIA_MAX_BYTES: z.coerce.number().int().min(1024).max(104857600).default(26214400),
   MEDIA_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(15000),
+  VIDEO_INTERPRETER_PROVIDER: z.enum(["none", "gemini"]).default("none"),
+  GEMINI_API_KEY: z.string().min(16).optional(),
+  GEMINI_VIDEO_MODEL: z.string().min(1).max(128).default("gemini-3.8-flash"),
+  VIDEO_INTERPRETER_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(60000),
+  VIDEO_INTERPRETER_TOTAL_TIMEOUT_MS: z.coerce.number().int().min(10000).max(600000).default(180000),
+  VIDEO_INTERPRETER_POLL_INTERVAL_MS: z.coerce.number().int().min(250).max(10000).default(2000),
 
   META_APP_ID: z.string().min(1).default("1042452472116584"),
   META_APP_SECRET: z.string().min(1).optional(),
@@ -36,6 +42,14 @@ const schema = z.object({
   META_INSTAGRAM_GRAPH_HOST: z.enum(["graph.instagram.com", "graph.facebook.com"]).default("graph.instagram.com"),
   META_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
 }).superRefine((value, ctx) => {
+  if (value.VIDEO_INTERPRETER_PROVIDER === "gemini" && value.GEMINI_API_KEY === undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["GEMINI_API_KEY"],
+      message: "GEMINI_API_KEY is required when VIDEO_INTERPRETER_PROVIDER=gemini"
+    });
+  }
+
   if (value.PROCESSOR_ENABLED) {
     for (const key of ["WORDPRESS_AI_BRIDGE_URL", "ISHI_AI_BRIDGE_TOKEN"] as const) {
       if (value[key] === undefined) {

@@ -134,8 +134,10 @@ export class InboundProcessorWorker {
 
     await this.#events.markProcessing(stored.id);
 
+    const stopLeaseHeartbeat = this.#startLeaseHeartbeat(job);
     try {
       const result = await this.#handlers.handle(stored);
+      await stopLeaseHeartbeat();
       await this.#events.complete(stored.id, result.actions, {
         outcome: result.outcome,
         ...(result.handoffReason === undefined ? {} : { handoffReason: result.handoffReason })
@@ -162,9 +164,37 @@ export class InboundProcessorWorker {
       }
       return true;
     } catch (error) {
+      await stopLeaseHeartbeat();
       await this.#handleFailure(job, stored, error, performance.now() - attemptStartedAt);
       return true;
     }
+  }
+
+  #startLeaseHeartbeat(job: OutboxJob): () => Promise<void> {
+    const renewLease = this.#queue.renewLease?.bind(this.#queue);
+    if (renewLease === undefined) return async () => {};
+
+    const intervalMs = Math.max(1_000, Math.floor(this.#leaseDurationMs / 3));
+    let renewal = Promise.resolve();
+    const timer = setInterval(() => {
+      renewal = renewal.then(async () => {
+        try {
+          const renewed = await renewLease(job, this.#leaseDurationMs);
+          if (!renewed) {
+            clearInterval(timer);
+            this.#logger.warn({ outboxId: job.id }, "inbound processing lease could not be renewed");
+          }
+        } catch (error) {
+          this.#logger.warn({ err: error, outboxId: job.id }, "inbound processing lease renewal failed");
+        }
+      });
+    }, intervalMs);
+    timer.unref();
+
+    return async () => {
+      clearInterval(timer);
+      await renewal;
+    };
   }
 
   async #runLoop(): Promise<void> {

@@ -45,7 +45,8 @@ describe("Meta webhook route", () => {
         processorEnabled: false,
         actionDispatchEnabled: false,
         processorCutoverAt: null,
-        processorCanaryPartitionCount: 0
+        processorCanaryPartitionCount: 0,
+        videoInterpreterProvider: "none"
       }
     });
     await server.close();
@@ -64,7 +65,8 @@ describe("Meta webhook route", () => {
         processorEnabled: true,
         actionDispatchEnabled: true,
         processorCutoverAt: "2026-09-30T09:30:00.000Z",
-        processorCanaryPartitionCount: 1
+        processorCanaryPartitionCount: 1,
+        videoInterpreterProvider: "gemini"
       }
     });
 
@@ -79,13 +81,15 @@ describe("Meta webhook route", () => {
         actionDispatchEnabled: boolean;
         processorCutoverAt: string | null;
         processorCanaryPartitionCount: number;
+        videoInterpreterProvider: "none" | "gemini";
       };
     }>();
     expect(body.runtime).toEqual({
       processorEnabled: true,
       actionDispatchEnabled: true,
       processorCutoverAt: "2026-09-30T09:30:00.000Z",
-      processorCanaryPartitionCount: 1
+      processorCanaryPartitionCount: 1,
+      videoInterpreterProvider: "gemini"
     });
     expect(res.body).not.toContain("secret");
     await server.close();

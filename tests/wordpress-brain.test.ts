@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalEvent } from "../src/domain/events.js";
 import { MediaResolverRegistry, type MediaResolver } from "../src/media/resolver.js";
+import { MediaInterpreterRegistry } from "../src/media/interpreter.js";
 import { WordPressBrainClient } from "../src/brain/wordpress.js";
 
 function bodyAsString(body: BodyInit | null | undefined): string {
@@ -261,6 +262,64 @@ describe("WordPressBrainClient", () => {
     expect(turnBody.fileIds).toEqual([]);
     expect(turnBody.message).toBe("Can you check this?");
     expect(turnBody.context.unprocessedMediaKinds).toEqual(["video"]);
+  });
+
+  it("uses a registered video interpreter and removes the unprocessed-video safeguard", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({
+        ok: true,
+        turnId: "11111111-1111-4111-8111-111111111111",
+        parts: [{ kind: "text", text: "I checked the video." }],
+        handoff: false
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    ));
+
+    const mediaInterpreters = new MediaInterpreterRegistry();
+    const interpret = vi.fn().mockResolvedValue({
+      text: "A hand with a pink manicure is shown close to the camera.",
+      backend: "test",
+      model: "test-video"
+    });
+    mediaInterpreters.register({ kind: "video", interpret });
+
+    const brain = new WordPressBrainClient({
+      baseUrl: "https://ishinaillab.com/wp-json/ishi-ai/v1",
+      token: "bridge-token",
+      mediaResolvers: registry({
+        bytes: new Uint8Array([1, 2, 3]),
+        filename: "clip.mp4",
+        mimeType: "video/mp4"
+      }),
+      mediaInterpreters,
+      fetchImpl
+    });
+
+    await brain.respond({
+      turnId: "11111111-1111-4111-8111-111111111111",
+      conversationId: "conversation-1",
+      event,
+      input: [{
+        kind: "video",
+        source: { kind: "provider", value: "media-1" },
+        caption: "Can you check this?"
+      }]
+    });
+
+    expect(interpret).toHaveBeenCalledOnce();
+    const turnBody = JSON.parse(
+      bodyAsString(fetchImpl.mock.calls[0]?.[1]?.body)
+    ) as {
+      fileIds: string[];
+      message: string;
+      context: { unprocessedMediaKinds: string[] };
+    };
+
+    expect(turnBody.fileIds).toEqual([]);
+    expect(turnBody.message).toContain("Can you check this?");
+    expect(turnBody.message).toContain("[Video analysis]");
+    expect(turnBody.message).toContain("pink manicure");
+    expect(turnBody.context.unprocessedMediaKinds).toEqual([]);
   });
 
   it("treats in-progress idempotency responses as retryable", async () => {

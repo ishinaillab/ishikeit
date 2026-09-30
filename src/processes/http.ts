@@ -5,6 +5,8 @@ import { MetaMessagingAdapter } from "../adapters/meta/messaging.js";
 import { WordPressBrainClient } from "../brain/wordpress.js";
 import { buildServer } from "../http/server.js";
 import { MetaMediaResolver } from "../media/meta.js";
+import { GeminiVideoInterpreter } from "../media/gemini-video.js";
+import { MediaInterpreterRegistry } from "../media/interpreter.js";
 import { MediaResolverRegistry } from "../media/resolver.js";
 import { createLogger } from "../observability/logger.js";
 import { PostgresOperationalMetrics } from "../observability/operational-metrics.js";
@@ -41,7 +43,8 @@ const server = buildServer({
     processorEnabled: env.PROCESSOR_ENABLED,
     actionDispatchEnabled: env.ACTION_DISPATCH_ENABLED_EFFECTIVE,
     processorCutoverAt: env.PROCESSOR_CUTOVER_AT ?? null,
-    processorCanaryPartitionCount: env.PROCESSOR_CANARY_PARTITION_KEYS_EFFECTIVE.length
+    processorCanaryPartitionCount: env.PROCESSOR_CANARY_PARTITION_KEYS_EFFECTIVE.length,
+    videoInterpreterProvider: env.VIDEO_INTERPRETER_PROVIDER
   }
 });
 
@@ -77,10 +80,25 @@ if (env.PROCESSOR_ENABLED) {
     requestTimeoutMs: env.MEDIA_REQUEST_TIMEOUT_MS
   }));
 
+  const mediaInterpreters = new MediaInterpreterRegistry();
+  if (env.VIDEO_INTERPRETER_PROVIDER === "gemini") {
+    if (env.GEMINI_API_KEY === undefined) {
+      throw new Error("Gemini video interpretation requires GEMINI_API_KEY");
+    }
+    mediaInterpreters.register(new GeminiVideoInterpreter({
+      apiKey: env.GEMINI_API_KEY,
+      model: env.GEMINI_VIDEO_MODEL,
+      requestTimeoutMs: env.VIDEO_INTERPRETER_REQUEST_TIMEOUT_MS,
+      totalTimeoutMs: env.VIDEO_INTERPRETER_TOTAL_TIMEOUT_MS,
+      pollIntervalMs: env.VIDEO_INTERPRETER_POLL_INTERVAL_MS
+    }));
+  }
+
   const brain = new WordPressBrainClient({
     baseUrl: env.WORDPRESS_AI_BRIDGE_URL,
     token: env.ISHI_AI_BRIDGE_TOKEN,
     mediaResolvers,
+    mediaInterpreters,
     requestTimeoutMs: env.AI_BRIDGE_TIMEOUT_MS,
     fileTtlSeconds: env.AI_FILE_TTL_SECONDS
   });

@@ -2,12 +2,14 @@ import { z } from "zod";
 import { contentPartSchema, isMediaContentPart } from "../domain/content.js";
 import type { BrainClient, BrainTurnRequest, BrainTurnResponse } from "./types.js";
 import type { MediaResolverRegistry } from "../media/resolver.js";
+import type { MediaInterpreterRegistry } from "../media/interpreter.js";
 import { ProcessingFailure } from "../processing/failure.js";
 
 interface WordPressBrainClientOptions {
   baseUrl: string;
   token: string;
   mediaResolvers: MediaResolverRegistry;
+  mediaInterpreters?: MediaInterpreterRegistry;
   requestTimeoutMs?: number;
   fileTtlSeconds?: number;
   fetchImpl?: typeof fetch;
@@ -45,6 +47,7 @@ export class WordPressBrainClient implements BrainClient {
   readonly #baseUrl: string;
   readonly #token: string;
   readonly #mediaResolvers: MediaResolverRegistry;
+  readonly #mediaInterpreters: MediaInterpreterRegistry | undefined;
   readonly #requestTimeoutMs: number;
   readonly #fileTtlSeconds: number;
   readonly #fetch: typeof fetch;
@@ -53,6 +56,7 @@ export class WordPressBrainClient implements BrainClient {
     this.#baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.#token = options.token;
     this.#mediaResolvers = options.mediaResolvers;
+    this.#mediaInterpreters = options.mediaInterpreters;
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 90_000;
     this.#fileTtlSeconds = options.fileTtlSeconds ?? 3600;
     this.#fetch = options.fetchImpl ?? fetch;
@@ -84,7 +88,18 @@ export class WordPressBrainClient implements BrainClient {
       }
 
       if (part.kind === "video") {
-        unprocessedMediaKinds.add("video");
+        if (this.#mediaInterpreters === undefined || !this.#mediaInterpreters.has("video")) {
+          unprocessedMediaKinds.add("video");
+          continue;
+        }
+
+        const media = await this.#mediaResolvers.resolve(request.event, part);
+        const interpretation = await this.#mediaInterpreters.interpret(request.event, part, media);
+        if (interpretation === undefined) {
+          unprocessedMediaKinds.add("video");
+        } else {
+          textSegments.push("[Video analysis]\n" + interpretation.text.slice(0, AUDIO_TRANSCRIPT_LIMIT));
+        }
         continue;
       }
 

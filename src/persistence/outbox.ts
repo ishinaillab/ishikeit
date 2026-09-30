@@ -35,6 +35,7 @@ export interface AttemptObservation {
 
 export interface OutboxDeliveryStore {
   claimNext(topic: string, leaseDurationMs: number): Promise<OutboxJob | undefined>;
+  renewLease?(job: OutboxJob, leaseDurationMs: number): Promise<boolean>;
   complete(job: OutboxJob, providerResourceId?: string, observation?: AttemptObservation): Promise<boolean>;
   retry(job: OutboxJob, nextAttemptAt: Date, observation?: AttemptObservation): Promise<boolean>;
   deadLetter(job: OutboxJob, reason: string, observation?: AttemptObservation): Promise<boolean>;
@@ -135,6 +136,20 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
       attemptCount: row.attempt_count,
       leaseToken: row.lease_token
     };
+  }
+
+  async renewLease(job: OutboxJob, leaseDurationMs: number): Promise<boolean> {
+    const result = await this.db.query(
+      `UPDATE outbox
+       SET lease_expires_at = now() + make_interval(secs => $3::double precision)
+       WHERE id = $1::uuid
+         AND lease_token = $2::uuid
+         AND published_at IS NULL
+         AND dead_lettered_at IS NULL
+       RETURNING id`,
+      [job.id, job.leaseToken, leaseDurationMs / 1000]
+    );
+    return result.rowCount === 1;
   }
 
   async complete(

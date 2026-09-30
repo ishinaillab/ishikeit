@@ -22,6 +22,7 @@ export interface ServerDeps {
     actionDispatchEnabled: boolean;
     processorCutoverAt: string | null;
     processorCanaryPartitionCount: number;
+    videoInterpreterProvider: "none" | "gemini";
   };
 }
 
@@ -38,7 +39,8 @@ export function buildServer(deps: ServerDeps) {
       processorEnabled: false,
       actionDispatchEnabled: false,
       processorCutoverAt: null,
-      processorCanaryPartitionCount: 0
+      processorCanaryPartitionCount: 0,
+      videoInterpreterProvider: "none"
     }
   }));
   server.get("/health/ready", async (_req, reply) =>

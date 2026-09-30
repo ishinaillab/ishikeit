@@ -3,6 +3,11 @@ import type { CanonicalEvent } from "../src/domain/events.js";
 import { MediaResolverRegistry, type MediaResolver } from "../src/media/resolver.js";
 import { WordPressBrainClient } from "../src/brain/wordpress.js";
 
+function bodyAsString(body: BodyInit | null | undefined): string {
+  if (typeof body !== "string") throw new Error("expected JSON request body");
+  return body;
+}
+
 const event: CanonicalEvent = {
   schemaVersion: 2,
   specversion: "1.0",
@@ -70,7 +75,7 @@ describe("WordPressBrainClient", () => {
       "content-type": "application/json"
     });
 
-    const body = JSON.parse(String(init?.body));
+    const body = JSON.parse(bodyAsString(init?.body)) as Record<string, unknown>;
     expect(body).toMatchObject({
       turnId: "11111111-1111-4111-8111-111111111111",
       conversationId: "conversation-1",
@@ -121,9 +126,11 @@ describe("WordPressBrainClient", () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(fetchImpl.mock.calls[0]?.[0]).toBe("https://ishinaillab.com/wp-json/ishi-ai/v1/files");
-    const secondBody = JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body));
-    expect(secondBody.fileIds).toEqual(["mwai-file-1"]);
-    expect(secondBody.message).toBe("What do you think?");
+    const secondBody = JSON.parse(
+      bodyAsString(fetchImpl.mock.calls[1]?.[1]?.body)
+    ) as Record<string, unknown>;
+    expect(secondBody["fileIds"]).toEqual(["mwai-file-1"]);
+    expect(secondBody["message"]).toBe("What do you think?");
   });
 
   it("treats in-progress idempotency responses as retryable", async () => {

@@ -1,26 +1,123 @@
 # Ishikeit
 
-Ishikeit is Ishi Nail Lab's first-party Meta business messaging backend for Messenger, Instagram, and WhatsApp.
+Ishikeit is Ishi Nail Lab's first-party event and action backend. Meta messaging is the first production provider, but the core processor is intentionally provider-neutral so additional platforms and capabilities can be added without redesigning the durable processing boundary.
 
-## Production foundation
+## Architecture
 
-The production boundary currently includes:
+The application is split into five contracts:
 
-- Node.js 24 + TypeScript + Fastify
-- one Meta webhook ingress: `/ishikeit/webhooks/meta`
-- GET verification challenge
+1. **Ingress adapters** authenticate provider webhooks and normalize them into canonical events.
+2. **Durable inbox/outbox persistence** commits the normalized event and an `inbound.event.accepted` record before the provider webhook is acknowledged.
+3. **Event handlers** consume durable events and create provider-neutral action envelopes.
+4. **Brain clients** provide conversational/AI decisions. The first brain is a private WordPress AI Engine bridge.
+5. **Action adapters** execute provider/capability/operation combinations such as `meta/messaging/message.send`.
+
+The core action envelope contains strings for `provider`, `capability`, and `operation`. Adding Telegram messaging, Meta Marketing API campaign operations, lead-management operations, or another provider therefore means registering new adapters/handlers rather than adding another provider enum to the durable core.
+
+Canonical events carry CloudEvents-style `specversion`, `id`, `source`, and `type` metadata plus Ishikeit routing fields. Provider-native data stays inside `data`; portable message content is represented as typed parts.
+
+## Rich content
+
+Portable content parts currently include:
+
+- text
+- image
+- video
+- audio
+- document
+- structured provider/application data
+
+Media is represented by an explicit reference type rather than by arbitrary provider payloads. Provider media resolution happens **after** the webhook ACK. The Meta resolver uses an HTTPS/host allowlist, disables automatic redirects, revalidates each redirect target, and enforces a configured byte limit before content is handed to the AI bridge.
+
+The Meta messaging adapter supports text and rich media for Messenger, Instagram Direct, and WhatsApp Cloud API. Provider-specific limits remain inside that adapter.
+
+## Production safety
+
+The production webhook boundary remains:
+
+- `GET /ishikeit/webhooks/meta` — Meta verification challenge
+- `POST /ishikeit/webhooks/meta` — signed Meta webhook ingress
 - exact raw-body `X-Hub-Signature-256` verification before JSON is trusted
-- PostgreSQL durable-before-ACK ingestion
+- PostgreSQL durable-before-ACK persistence
 - provider-aware normalization and deduplication
 - no permanent raw webhook-body archive
-- schema-aware health/readiness endpoints
-- durable outbox leasing, bounded retries, dead-lettering, and idempotent enqueue
-- Messenger, Instagram, and WhatsApp text-message send adapters for Graph API `v26.0`
-- outbound delivery disabled by default until all provider access tokens are configured and verified
+- schema-aware liveness/readiness
+- startup failure when the deployed database schema is incompatible
 
-AI execution remains disabled. The outbound worker only consumes explicit `meta.message.send` outbox records; inbound events are not automatically turned into replies.
+Historical `inbound.event.accepted` rows created before the processor existed are sealed by migration before the processor can be enabled. This prevents delayed replies to old tests or customer messages.
 
-Each logical outbound send must carry a stable `idempotencyKey`. Ishikeit derives a deterministic outbox UUID from that key plus the provider conversation identity. Re-enqueuing the same logical send is a no-op; reusing the same key with a different payload is rejected.
+## Durable processor
+
+The inbound processor is controlled by:
+
+```text
+PROCESSOR_ENABLED=false
+WORDPRESS_AI_BRIDGE_URL=https://ishinaillab.com/wp-json/ishi-ai/v1
+ISHI_AI_BRIDGE_TOKEN=<dedicated-high-entropy-token>
+```
+
+When enabled, the worker:
+
+1. leases one `inbound.event.accepted` record while preserving per-conversation ordering
+2. loads the normalized source event
+3. marks processing attempts
+4. resolves media only when required
+5. calls the WordPress AI bridge using the durable event ID as the AI-turn idempotency key
+6. receives typed reply parts or a human-handoff decision
+7. transactionally enqueues one or more `action.dispatch` records and marks the source event processed
+8. retries transient failures with bounded exponential backoff
+9. dead-letters permanent failures and exhausted retries
+
+The source event and generated actions remain separate durable records.
+
+## Provider action dispatcher
+
+The outbound dispatcher consumes `action.dispatch`. It does not know a fixed list of platforms. An `ActionDispatcher` registry resolves:
+
+```text
+provider / capability / operation
+```
+
+to a concrete adapter.
+
+The first registered adapter is:
+
+```text
+meta / messaging / message.send
+```
+
+Additional adapters can be registered later, for example:
+
+```text
+telegram / messaging / message.send
+meta / marketing / campaign.create
+meta / marketing / lead.read
+meta / marketing / lead.update
+```
+
+without changing the durable envelope or generic worker.
+
+## WordPress AI bridge
+
+The repository includes `wordpress/ishi-ai-bridge`, a small private WordPress plugin that deliberately keeps provider transport concerns out of WordPress.
+
+It exposes authenticated endpoints for:
+
+- `POST /wp-json/ishi-ai/v1/turn`
+- `POST /wp-json/ishi-ai/v1/files`
+- `GET /wp-json/ishi-ai/v1/health`
+
+The bridge:
+
+- authenticates with a dedicated bearer secret whose SHA-256 hash is stored server-side
+- uses a durable idempotency table for AI turns and media uploads
+- passes the conversation partition as AI Engine's `chatId`
+- passes AI Engine file IDs through its documented `fileIds` path
+- validates rich response parts before returning them to Ishikeit
+- keeps the AI Engine chatbot ID and file-size ceiling configurable
+- sends no social-provider requests itself
+
+The bridge can later add image/video/audio/document reply parts through the `ishi_ai_bridge_reply_parts` filter without changing the Ishikeit processor contract.
 
 ## Development
 
@@ -29,12 +126,19 @@ npm ci
 npm run check
 ```
 
+CI runs Node lint/typecheck/tests/build and PHP syntax checks for the WordPress bridge.
+
 The canonical database migration history lives in `ishinaillab/ishikeit-db`.
 
-## Outbound safety gate
+## Deployment gates
 
-Set `META_OUTBOUND_ENABLED=true` only after the Messenger Page token, Instagram user token, and WhatsApp system-user/business token have all been configured. Messenger and WhatsApp send through `graph.facebook.com`. Instagram defaults to `graph.instagram.com`; set `META_INSTAGRAM_GRAPH_HOST=graph.facebook.com` only when the account is intentionally using the Facebook Login-based Instagram API flow.
+Keep both execution gates disabled until migrations, bridge deployment, credentials, and controlled end-to-end tests are complete:
 
-WhatsApp free-form text replies are intended for active customer-service conversations. Initiating a WhatsApp conversation outside the customer-service window requires an approved message template and is outside the current text-only worker.
+```text
+PROCESSOR_ENABLED=false
+META_OUTBOUND_ENABLED=false
+```
 
-Access tokens are secrets. Keep them in the hosting environment only and never commit them.
+Then enable them independently. Inbound AI processing and provider action dispatch are deliberately separate switches.
+
+Access tokens and bridge credentials are secrets. Keep raw values in hosting/runtime secret storage only and never commit them.

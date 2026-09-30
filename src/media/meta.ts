@@ -5,7 +5,7 @@ import { ProcessingFailure } from "../processing/failure.js";
 
 interface MetaMediaResolverOptions {
   graphApiVersion: string;
-  whatsappAccessToken: string;
+  whatsappAccessToken?: string;
   maxBytes: number;
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -36,7 +36,7 @@ function safeFilename(value: string | undefined, url: URL): string {
 export class MetaMediaResolver implements MediaResolver {
   readonly provider = "meta";
   readonly #graphApiVersion: string;
-  readonly #whatsappAccessToken: string;
+  readonly #whatsappAccessToken: string | undefined;
   readonly #maxBytes: number;
   readonly #requestTimeoutMs: number;
   readonly #fetch: typeof fetch;
@@ -61,6 +61,13 @@ export class MetaMediaResolver implements MediaResolver {
     if (event.channel !== "whatsapp") {
       throw new ProcessingFailure(
         "Provider media IDs for this Meta channel require a channel-specific resolver update",
+        { retryable: false }
+      );
+    }
+
+    if (this.#whatsappAccessToken === undefined) {
+      throw new ProcessingFailure(
+        "WhatsApp media resolution requires a configured WhatsApp access token",
         { retryable: false }
       );
     }

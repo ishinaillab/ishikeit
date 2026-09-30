@@ -19,9 +19,9 @@ export interface MetaMessageSender {
 
 export interface MetaSenderOptions {
   graphApiVersion: string;
-  messengerAccessToken: string;
-  instagramAccessToken: string;
-  whatsappAccessToken: string;
+  messengerAccessToken?: string;
+  instagramAccessToken?: string;
+  whatsappAccessToken?: string;
   instagramGraphHost: "graph.instagram.com" | "graph.facebook.com";
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -135,9 +135,9 @@ function whatsappMedia(
 
 export class MetaSender implements MetaMessageSender {
   readonly #graphApiVersion: string;
-  readonly #messengerAccessToken: string;
-  readonly #instagramAccessToken: string;
-  readonly #whatsappAccessToken: string;
+  readonly #messengerAccessToken: string | undefined;
+  readonly #instagramAccessToken: string | undefined;
+  readonly #whatsappAccessToken: string | undefined;
   readonly #instagramGraphHost: "graph.instagram.com" | "graph.facebook.com";
   readonly #requestTimeoutMs: number;
   readonly #fetch: typeof fetch;
@@ -160,6 +160,12 @@ export class MetaSender implements MetaMessageSender {
       : payload.channel === "instagram"
         ? this.#instagramAccessToken
         : this.#whatsappAccessToken;
+    if (token === undefined) {
+      throw new MetaSendFailure(
+        `No Meta access token is configured for ${payload.channel}`,
+        { retryable: false }
+      );
+    }
     const host = payload.channel === "instagram" ? this.#instagramGraphHost : "graph.facebook.com";
     const url = `https://${host}/${this.#graphApiVersion}/${encodeURIComponent(payload.accountId)}/messages`;
 

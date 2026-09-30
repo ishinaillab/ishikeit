@@ -4,6 +4,7 @@ import type { InboundStore } from "../persistence/inbound.js";
 import { sha256Hex } from "../persistence/inbound.js";
 import { ingressIdentity, normalizeMetaEnvelope } from "../channels/meta-normalizer.js";
 import { verifyMetaChallenge, verifyMetaSignature } from "../security/meta.js";
+import { runtimeContract } from "../version.js";
 
 export interface ServerDeps {
   logger: Logger;
@@ -21,6 +22,7 @@ export function buildServer(deps: ServerDeps) {
   });
 
   server.get("/health/live", () => ({ status: "ok" }));
+  server.get("/health/capabilities", () => runtimeContract);
   server.get("/health/ready", async (_req, reply) =>
     (await deps.ready())
       ? { status: "ready" }

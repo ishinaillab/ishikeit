@@ -259,7 +259,7 @@ Two independent runtime switches remain:
 
 ```text
 PROCESSOR_ENABLED=false
-META_OUTBOUND_ENABLED=false
+ACTION_DISPATCH_ENABLED=false
 ```
 
 This supports staged verification:

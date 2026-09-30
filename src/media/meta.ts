@@ -5,7 +5,7 @@ import { ProcessingFailure } from "../processing/failure.js";
 
 interface MetaMediaResolverOptions {
   graphApiVersion: string;
-  whatsappAccessToken?: string;
+  whatsappAccessToken?: string | undefined;
   maxBytes: number;
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;

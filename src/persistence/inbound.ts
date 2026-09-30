@@ -18,6 +18,13 @@ export interface StoredInboundEvent {
   processedAt?: Date;
 }
 
+export interface InboundEventProcessingStore {
+  get(id: string): Promise<StoredInboundEvent | undefined>;
+  markProcessing(id: string): Promise<void>;
+  complete(id: string, actions: readonly ActionEnvelope[]): Promise<void>;
+  recordFailure(id: string, reason: string): Promise<void>;
+}
+
 interface EventRow extends pg.QueryResultRow {
   id: string;
   normalized_payload: unknown;
@@ -65,7 +72,7 @@ export class PostgresInboundStore implements InboundStore {
   }
 }
 
-export class PostgresInboundEventRepository {
+export class PostgresInboundEventRepository implements InboundEventProcessingStore {
   constructor(private readonly db: PostgresDatabase) {}
 
   async get(id: string): Promise<StoredInboundEvent | undefined> {

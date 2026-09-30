@@ -39,7 +39,7 @@ describe("Meta webhook route", () => {
       canonicalEventSchema: 2,
       actionSchema: 1,
       operationalMetricsSchema: 1,
-      wordpressBridgeApiSchema: 1,
+      wordpressBridgeApiSchema: 2,
       wordpressBridgeStorageSchema: "1.1.1",
       runtime: {
         processorEnabled: false,

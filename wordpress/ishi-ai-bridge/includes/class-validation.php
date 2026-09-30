@@ -104,12 +104,23 @@ final class Validation {
 
     public static function trusted_context( $context ): array {
         $context = is_array( $context ) ? $context : [];
+        $unprocessed = [];
+
+        if ( isset( $context['unprocessedMediaKinds'] ) && is_array( $context['unprocessedMediaKinds'] ) ) {
+            foreach ( array_slice( $context['unprocessedMediaKinds'], 0, 4 ) as $kind ) {
+                $kind = sanitize_key( (string) $kind );
+                if ( in_array( $kind, [ 'image', 'video', 'audio', 'document' ], true ) ) {
+                    $unprocessed[] = $kind;
+                }
+            }
+        }
 
         return [
-            'provider'   => sanitize_key( (string) ( $context['provider'] ?? 'unknown' ) ),
-            'channel'    => sanitize_key( (string) ( $context['channel'] ?? 'unknown' ) ),
-            'capability' => sanitize_key( (string) ( $context['capability'] ?? 'unknown' ) ),
-            'eventType'  => sanitize_text_field( (string) ( $context['eventType'] ?? 'unknown' ) ),
+            'provider'              => sanitize_key( (string) ( $context['provider'] ?? 'unknown' ) ),
+            'channel'               => sanitize_key( (string) ( $context['channel'] ?? 'unknown' ) ),
+            'capability'            => sanitize_key( (string) ( $context['capability'] ?? 'unknown' ) ),
+            'eventType'             => sanitize_text_field( (string) ( $context['eventType'] ?? 'unknown' ) ),
+            'unprocessedMediaKinds' => array_values( array_unique( $unprocessed ) ),
         ];
     }
 

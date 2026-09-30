@@ -25,6 +25,14 @@ const fileResponseSchema = z.object({
   file: z.object({ id: z.string().min(1) }).passthrough()
 }).passthrough();
 
+const transcriptionResponseSchema = z.object({
+  ok: z.literal(true),
+  transcript: z.string().min(1).max(100000)
+}).passthrough();
+
+const AUDIO_TRANSCRIPT_LIMIT = 80_000;
+const TURN_MESSAGE_LIMIT = 100_000;
+
 function retryAfterMs(value: string | null): number | undefined {
   if (value === null) return undefined;
   const seconds = Number(value);
@@ -52,12 +60,14 @@ export class WordPressBrainClient implements BrainClient {
   async respond(request: BrainTurnRequest): Promise<BrainTurnResponse> {
     const fileIds: string[] = [];
     const textSegments: string[] = [];
+    const unprocessedMediaKinds = new Set<string>();
 
     for (const part of request.input) {
       if (part.kind === "text") {
         textSegments.push(part.text);
         continue;
       }
+
       if (part.kind === "structured") {
         textSegments.push(
           "[Structured customer content: " + part.format + "]\n" +
@@ -65,15 +75,43 @@ export class WordPressBrainClient implements BrainClient {
         );
         continue;
       }
-      if (isMediaContentPart(part)) {
-        if (part.caption !== undefined && part.caption.length > 0) textSegments.push(part.caption);
-        const media = await this.#mediaResolvers.resolve(request.event, part);
-        fileIds.push(await this.#upload(media.bytes, media.filename, media.mimeType));
+
+      if (!isMediaContentPart(part)) continue;
+
+      if (part.caption !== undefined && part.caption.length > 0) {
+        textSegments.push(part.caption);
       }
+
+      if (part.kind === "video") {
+        unprocessedMediaKinds.add("video");
+        continue;
+      }
+
+      const media = await this.#mediaResolvers.resolve(request.event, part);
+      if (part.kind === "audio") {
+        const transcript = await this.#transcribe(
+          media.bytes,
+          media.filename,
+          media.mimeType
+        );
+        textSegments.push(
+          "[Audio transcript]\n" + transcript.slice(0, AUDIO_TRANSCRIPT_LIMIT)
+        );
+        continue;
+      }
+
+      fileIds.push(await this.#upload(media.bytes, media.filename, media.mimeType));
     }
 
-    const message = textSegments.join("\n\n").trim()
-      || "The customer sent one or more attachments without accompanying text. Respond appropriately to the attachments.";
+    let message = textSegments.join("\n\n").trim();
+
+    if (message.length === 0) {
+      message = unprocessedMediaKinds.has("video")
+        ? "The customer sent one or more video attachments without accompanying text."
+        : "The customer sent one or more attachments without accompanying text. Respond appropriately to the attachments.";
+    }
+
+    message = message.slice(0, TURN_MESSAGE_LIMIT);
 
     const response = await this.#request(this.#baseUrl + "/turn", {
       method: "POST",
@@ -83,7 +121,7 @@ export class WordPressBrainClient implements BrainClient {
         accept: "application/json"
       },
       body: JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         turnId: request.turnId,
         conversationId: request.conversationId,
         message,
@@ -93,19 +131,49 @@ export class WordPressBrainClient implements BrainClient {
           channel: request.event.channel,
           capability: request.event.capability,
           eventType: request.event.eventType,
-          occurredAt: request.event.occurredAt ?? null
+          occurredAt: request.event.occurredAt ?? null,
+          unprocessedMediaKinds: [...unprocessedMediaKinds]
         }
       })
     });
 
     const data: unknown = await response.json().catch(() => ({}));
     const parsed = turnResponseSchema.safeParse(data);
+
     if (!parsed.success) {
       throw new ProcessingFailure("WordPress AI bridge returned an invalid turn response", {
         retryable: response.status >= 500
       });
     }
+
     return { parts: parsed.data.parts, handoff: parsed.data.handoff };
+  }
+
+  async #transcribe(bytes: Uint8Array, filename: string, mimeType: string): Promise<string> {
+    const form = new FormData();
+    const copied = Uint8Array.from(bytes);
+    form.append("file", new Blob([copied], { type: mimeType }), filename);
+    form.append("ttl", String(this.#fileTtlSeconds));
+
+    const response = await this.#request(this.#baseUrl + "/transcribe", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer " + this.#token,
+        accept: "application/json"
+      },
+      body: form
+    });
+
+    const data: unknown = await response.json().catch(() => ({}));
+    const parsed = transcriptionResponseSchema.safeParse(data);
+
+    if (!parsed.success) {
+      throw new ProcessingFailure("WordPress AI bridge returned an invalid transcription response", {
+        retryable: response.status >= 500
+      });
+    }
+
+    return parsed.data.transcript;
   }
 
   async #upload(bytes: Uint8Array, filename: string, mimeType: string): Promise<string> {
@@ -123,13 +191,16 @@ export class WordPressBrainClient implements BrainClient {
       },
       body: form
     });
+
     const data: unknown = await response.json().catch(() => ({}));
     const parsed = fileResponseSchema.safeParse(data);
+
     if (!parsed.success) {
       throw new ProcessingFailure("WordPress AI bridge returned an invalid file response", {
         retryable: response.status >= 500
       });
     }
+
     return parsed.data.file.id;
   }
 
@@ -148,12 +219,13 @@ export class WordPressBrainClient implements BrainClient {
     }
 
     if (response.ok) return response;
+
     const retryable = response.status === 409 || response.status === 429 || response.status >= 500;
+    const retryAfter = retryAfterMs(response.headers.get("retry-after"));
+
     throw new ProcessingFailure("WordPress AI bridge returned HTTP " + response.status, {
       retryable,
-      ...(retryAfterMs(response.headers.get("retry-after")) === undefined
-        ? {}
-        : { retryAfterMs: retryAfterMs(response.headers.get("retry-after"))! })
+      ...(retryAfter === undefined ? {} : { retryAfterMs: retryAfter })
     });
   }
 }

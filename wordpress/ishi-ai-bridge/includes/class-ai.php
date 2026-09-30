@@ -38,6 +38,13 @@ final class AI {
                 . 'capability=' . $context['capability'] . "\n"
                 . 'event_type=' . $context['eventType'];
 
+            if ( ! empty( $context['unprocessedMediaKinds'] ) ) {
+                $trusted .= "\nunprocessed_media="
+                    . implode( ',', $context['unprocessedMediaKinds'] )
+                    . "\nMedia listed as unprocessed was received but not inspected. "
+                    . 'Do not claim to know its contents; rely only on accompanying text or captions.';
+            }
+
             return rtrim( (string) $instructions ) . "\n\n" . $trusted;
         };
 
@@ -71,6 +78,55 @@ final class AI {
         }
 
         return $result;
+    }
+
+    public static function transcribe( array $file ) {
+        global $mwai;
+
+        if ( ! is_object( $mwai ) || ! method_exists( $mwai, 'simpleTranscribeAudio' ) ) {
+            return new WP_Error(
+                'ishi_ai_bridge_audio_engine_unavailable',
+                'AI Engine audio transcription API is unavailable.',
+                [ 'status' => 503 ]
+            );
+        }
+
+        $tmp_name = isset( $file['tmp_name'] )
+            ? (string) $file['tmp_name']
+            : '';
+
+        if ( '' === $tmp_name || ! is_readable( $tmp_name ) ) {
+            return new WP_Error(
+                'ishi_ai_bridge_audio_invalid',
+                'Uploaded audio is unavailable for transcription.',
+                [ 'status' => 400 ]
+            );
+        }
+
+        try {
+            $transcript = $mwai->simpleTranscribeAudio( null, $tmp_name, [] );
+        } catch ( \Throwable $e ) {
+            self::log_failure(
+                'audio_transcription_failed',
+                hash( 'sha256', (string) ( $file['name'] ?? 'unknown' ) )
+            );
+
+            return new WP_Error(
+                'ishi_ai_bridge_audio_failed',
+                'AI Engine could not transcribe the audio.',
+                [ 'status' => 502 ]
+            );
+        }
+
+        if ( ! is_string( $transcript ) || '' === trim( $transcript ) ) {
+            return new WP_Error(
+                'ishi_ai_bridge_audio_invalid_response',
+                'AI Engine returned an invalid audio transcription.',
+                [ 'status' => 502 ]
+            );
+        }
+
+        return trim( $transcript );
     }
 
     public static function upload( array $file, int $ttl ) {
@@ -142,6 +198,7 @@ final class AI {
         return [
             'aiEngineReady' => is_object( $mwai ) && method_exists( $mwai, 'simpleChatbotQuery' ),
             'fileApiReady'  => is_object( $mwai ) && method_exists( $mwai, 'simpleFileUpload' ),
+            'audioApiReady' => is_object( $mwai ) && method_exists( $mwai, 'simpleTranscribeAudio' ),
         ];
     }
 

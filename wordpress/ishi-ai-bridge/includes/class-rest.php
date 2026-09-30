@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class Rest {
     public const REST_NS = 'ishi-ai/v1';
 
-    private const CACHE_POLICY_VERSION = '2';
+    private const CACHE_POLICY_VERSION = '3';
 
     public static function boot(): void {
         add_action( 'init', [ __CLASS__, 'protect_current_request_from_cache' ], 0 );
@@ -50,7 +50,7 @@ final class Rest {
             return;
         }
 
-        foreach ( [ '/health', '/turn', '/files' ] as $route ) {
+        foreach ( [ '/health', '/turn', '/files', '/transcribe' ] as $route ) {
             do_action(
                 'litespeed_purge_url',
                 rest_url( self::REST_NS . $route )
@@ -81,6 +81,16 @@ final class Rest {
             [
                 'methods'             => 'POST',
                 'callback'            => [ __CLASS__, 'upload_file' ],
+                'permission_callback' => [ Auth::class, 'verify' ],
+            ]
+        );
+
+        register_rest_route(
+            self::REST_NS,
+            '/transcribe',
+            [
+                'methods'             => 'POST',
+                'callback'            => [ __CLASS__, 'transcribe_audio' ],
                 'permission_callback' => [ Auth::class, 'verify' ],
             ]
         );
@@ -338,6 +348,118 @@ final class Rest {
         return Validation::response( $response );
     }
 
+    public static function transcribe_audio( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+        Storage::maybe_cleanup();
+
+        $files = $request->get_file_params();
+
+        if ( empty( $files['file'] ) || ! is_array( $files['file'] ) ) {
+            return new WP_Error(
+                'ishi_ai_bridge_missing_audio',
+                'A multipart audio file is required.',
+                [ 'status' => 400 ]
+            );
+        }
+
+        $file = $files['file'];
+
+        if ( ! empty( $file['error'] ) ) {
+            return new WP_Error(
+                'ishi_ai_bridge_audio_upload_error',
+                'Audio upload failed.',
+                [ 'status' => 400 ]
+            );
+        }
+
+        $size = isset( $file['size'] ) ? (int) $file['size'] : 0;
+        $max = Admin::settings()['file_max_bytes'];
+
+        if ( $size <= 0 || $size > $max ) {
+            return new WP_Error(
+                'ishi_ai_bridge_audio_too_large',
+                'Audio file size is not allowed.',
+                [ 'status' => 413 ]
+            );
+        }
+
+        $name = isset( $file['name'] )
+            ? sanitize_file_name( (string) $file['name'] )
+            : '';
+
+        $tmp_name = isset( $file['tmp_name'] )
+            ? (string) $file['tmp_name']
+            : '';
+
+        if ( '' === $name || '' === $tmp_name || ! is_uploaded_file( $tmp_name ) ) {
+            return new WP_Error(
+                'ishi_ai_bridge_invalid_audio',
+                'Invalid uploaded audio file.',
+                [ 'status' => 400 ]
+            );
+        }
+
+        $checked = wp_check_filetype_and_ext( $tmp_name, $name );
+        $mime_type = isset( $checked['type'] ) ? (string) $checked['type'] : '';
+
+        if ( empty( $checked['ext'] ) || 0 !== strpos( $mime_type, 'audio/' ) ) {
+            return new WP_Error(
+                'ishi_ai_bridge_audio_type',
+                'Audio file type is not allowed.',
+                [ 'status' => 415 ]
+            );
+        }
+
+        $ttl = isset( $_POST['ttl'] )
+            ? (int) $_POST['ttl']
+            : 3600;
+        $ttl = min( DAY_IN_SECONDS, max( 60, $ttl ) );
+
+        $content_hash = hash_file( 'sha256', $tmp_name );
+        if ( false === $content_hash ) {
+            return new WP_Error(
+                'ishi_ai_bridge_audio_hash_failed',
+                'Unable to fingerprint the uploaded audio.',
+                [ 'status' => 500 ]
+            );
+        }
+
+        $request_hash = hash(
+            'sha256',
+            "transcribe:v1\n" . $content_hash . "\n" . $name
+        );
+        $claim = Storage::claim_file( $request_hash, $ttl );
+
+        if ( is_wp_error( $claim ) ) {
+            return $claim;
+        }
+
+        if ( isset( $claim['cached_response'] ) ) {
+            return Validation::response( $claim['cached_response'] );
+        }
+
+        $transcript = AI::transcribe( $file );
+
+        if ( is_wp_error( $transcript ) ) {
+            Storage::release_file( $request_hash );
+            return $transcript;
+        }
+
+        $response = [
+            'ok'         => true,
+            'transcript' => $transcript,
+        ];
+
+        if ( ! Storage::complete_file( $request_hash, $response, $ttl ) ) {
+            return new WP_Error(
+                'ishi_ai_bridge_persistence_failed',
+                'Unable to persist the completed audio transcription.',
+                [ 'status' => 503 ]
+            );
+        }
+
+        return Validation::response( $response );
+    }
+
     public static function health(): WP_REST_Response {
         $health = AI::health();
 
@@ -349,6 +471,7 @@ final class Rest {
                 'tokenReady'    => '' !== Auth::token_hash(),
                 'aiEngineReady' => $health['aiEngineReady'],
                 'fileApiReady'  => $health['fileApiReady'],
+                'audioApiReady' => $health['audioApiReady'],
                 'botId'         => Admin::settings()['bot_id'],
             ]
         );

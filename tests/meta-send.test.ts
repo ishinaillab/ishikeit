@@ -26,6 +26,7 @@ describe("MetaSender", () => {
       graphApiVersion: "v26.0",
       messengerAccessToken: "page-token",
       instagramAccessToken: "ig-token",
+      whatsappAccessToken: "wa-token",
       instagramGraphHost: "graph.instagram.com",
       fetchImpl
     });
@@ -54,6 +55,7 @@ describe("MetaSender", () => {
       graphApiVersion: "v26.0",
       messengerAccessToken: "page-token",
       instagramAccessToken: "ig-token",
+      whatsappAccessToken: "wa-token",
       instagramGraphHost: "graph.instagram.com",
       fetchImpl
     });
@@ -72,6 +74,49 @@ describe("MetaSender", () => {
     });
   });
 
+  it("sends WhatsApp text replies through the versioned phone-number endpoint", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({
+        messaging_product: "whatsapp",
+        contacts: [{ input: "639496458940", wa_id: "639496458940" }],
+        messages: [{ id: "wamid.1" }]
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    ));
+    const sender = new MetaSender({
+      graphApiVersion: "v26.0",
+      messengerAccessToken: "page-token",
+      instagramAccessToken: "ig-token",
+      whatsappAccessToken: "wa-token",
+      instagramGraphHost: "graph.instagram.com",
+      fetchImpl
+    });
+
+    const payload: MetaOutboundPayload = {
+      ...base,
+      channel: "whatsapp",
+      accountId: "phone-number-1",
+      recipientId: "639496458940"
+    };
+    await expect(sender.send(payload)).resolves.toEqual({ providerMessageId: "wamid.1" });
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(url).toBe("https://graph.facebook.com/v26.0/phone-number-1/messages");
+    expect(init?.headers).toEqual({
+      authorization: "Bearer wa-token",
+      "content-type": "application/json"
+    });
+    expect(JSON.parse(bodyAsString(init?.body))).toEqual({
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: "639496458940",
+      type: "text",
+      text: {
+        preview_url: false,
+        body: "hello"
+      }
+    });
+  });
+
   it("classifies throttling as retryable and honors Retry-After", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
       JSON.stringify({ error: { message: "slow down", code: 4, is_transient: true } }),
@@ -81,6 +126,7 @@ describe("MetaSender", () => {
       graphApiVersion: "v26.0",
       messengerAccessToken: "page-token",
       instagramAccessToken: "ig-token",
+      whatsappAccessToken: "wa-token",
       instagramGraphHost: "graph.instagram.com",
       fetchImpl
     });
@@ -108,6 +154,7 @@ describe("MetaSender", () => {
       graphApiVersion: "v26.0",
       messengerAccessToken: "page-token",
       instagramAccessToken: "ig-token",
+      whatsappAccessToken: "wa-token",
       instagramGraphHost: "graph.instagram.com",
       fetchImpl
     });
@@ -126,6 +173,7 @@ describe("MetaSender", () => {
       graphApiVersion: "v26.0",
       messengerAccessToken: "page-token",
       instagramAccessToken: "ig-token",
+      whatsappAccessToken: "wa-token",
       instagramGraphHost: "graph.instagram.com",
       fetchImpl
     });
@@ -142,6 +190,7 @@ describe("MetaSender", () => {
       graphApiVersion: "v26.0",
       messengerAccessToken: "page-token",
       instagramAccessToken: "ig-token",
+      whatsappAccessToken: "wa-token",
       instagramGraphHost: "graph.instagram.com",
       fetchImpl
     });
@@ -153,4 +202,23 @@ describe("MetaSender", () => {
     })).rejects.toMatchObject({ retryable: false });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+  it("rejects WhatsApp text over 4096 characters before calling Meta", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const sender = new MetaSender({
+      graphApiVersion: "v26.0",
+      messengerAccessToken: "page-token",
+      instagramAccessToken: "ig-token",
+      whatsappAccessToken: "wa-token",
+      instagramGraphHost: "graph.instagram.com",
+      fetchImpl
+    });
+
+    await expect(sender.send({
+      ...base,
+      channel: "whatsapp",
+      message: { type: "text", text: "a".repeat(4097) }
+    })).rejects.toMatchObject({ retryable: false });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
 });

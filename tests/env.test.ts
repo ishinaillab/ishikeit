@@ -17,17 +17,25 @@ describe("environment", () => {
     expect(env.META_OUTBOUND_ENABLED).toBe(false);
   });
 
-  it("requires both provider access tokens when outbound delivery is enabled", () => {
+  it("requires all provider access tokens when outbound delivery is enabled", () => {
     expect(() => loadEnvironment({
       ...productionBase,
       META_OUTBOUND_ENABLED: "true"
+    })).toThrow();
+
+    expect(() => loadEnvironment({
+      ...productionBase,
+      META_OUTBOUND_ENABLED: "true",
+      META_MESSENGER_ACCESS_TOKEN: "page-token",
+      META_INSTAGRAM_ACCESS_TOKEN: "ig-token"
     })).toThrow();
 
     const env = loadEnvironment({
       ...productionBase,
       META_OUTBOUND_ENABLED: "true",
       META_MESSENGER_ACCESS_TOKEN: "page-token",
-      META_INSTAGRAM_ACCESS_TOKEN: "ig-token"
+      META_INSTAGRAM_ACCESS_TOKEN: "ig-token",
+      META_WHATSAPP_ACCESS_TOKEN: "wa-token"
     });
     expect(env.META_OUTBOUND_ENABLED).toBe(true);
   });

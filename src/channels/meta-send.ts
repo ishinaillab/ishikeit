@@ -19,6 +19,7 @@ export interface MetaSenderOptions {
   graphApiVersion: string;
   messengerAccessToken: string;
   instagramAccessToken: string;
+  whatsappAccessToken: string;
   instagramGraphHost: "graph.instagram.com" | "graph.facebook.com";
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -73,6 +74,14 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
   }
 }
 
+function whatsappMessageId(result: Record<string, unknown>): string | undefined {
+  if (!Array.isArray(result.messages)) return undefined;
+  const first = result.messages[0];
+  if (typeof first !== "object" || first === null) return undefined;
+  const id = (first as Record<string, unknown>).id;
+  return typeof id === "string" ? id : undefined;
+}
+
 function validateText(payload: MetaOutboundPayload): void {
   const bytes = Buffer.byteLength(payload.message.text, "utf8");
   if (payload.channel === "instagram" && bytes > 1000) {
@@ -81,12 +90,16 @@ function validateText(payload: MetaOutboundPayload): void {
   if (payload.channel === "messenger" && payload.message.text.length >= 2000) {
     throw new MetaSendFailure("Messenger text messages must be less than 2000 characters", { retryable: false });
   }
+  if (payload.channel === "whatsapp" && payload.message.text.length > 4096) {
+    throw new MetaSendFailure("WhatsApp text messages must be 4096 characters or less", { retryable: false });
+  }
 }
 
 export class MetaSender implements MetaMessageSender {
   readonly #graphApiVersion: string;
   readonly #messengerAccessToken: string;
   readonly #instagramAccessToken: string;
+  readonly #whatsappAccessToken: string;
   readonly #instagramGraphHost: "graph.instagram.com" | "graph.facebook.com";
   readonly #requestTimeoutMs: number;
   readonly #fetch: typeof fetch;
@@ -95,6 +108,7 @@ export class MetaSender implements MetaMessageSender {
     this.#graphApiVersion = options.graphApiVersion;
     this.#messengerAccessToken = options.messengerAccessToken;
     this.#instagramAccessToken = options.instagramAccessToken;
+    this.#whatsappAccessToken = options.whatsappAccessToken;
     this.#instagramGraphHost = options.instagramGraphHost;
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
     this.#fetch = options.fetchImpl ?? fetch;
@@ -105,21 +119,35 @@ export class MetaSender implements MetaMessageSender {
 
     const token = payload.channel === "messenger"
       ? this.#messengerAccessToken
-      : this.#instagramAccessToken;
-    const host = payload.channel === "messenger"
-      ? "graph.facebook.com"
-      : this.#instagramGraphHost;
+      : payload.channel === "instagram"
+        ? this.#instagramAccessToken
+        : this.#whatsappAccessToken;
+    const host = payload.channel === "instagram"
+      ? this.#instagramGraphHost
+      : "graph.facebook.com";
     const url = `https://${host}/${this.#graphApiVersion}/${encodeURIComponent(payload.accountId)}/messages`;
+
     const body = payload.channel === "messenger"
       ? {
           recipient: { id: payload.recipientId },
           messaging_type: "RESPONSE",
           message: { text: payload.message.text }
         }
-      : {
-          recipient: { id: payload.recipientId },
-          message: { text: payload.message.text }
-        };
+      : payload.channel === "instagram"
+        ? {
+            recipient: { id: payload.recipientId },
+            message: { text: payload.message.text }
+          }
+        : {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: payload.recipientId,
+            type: "text",
+            text: {
+              preview_url: false,
+              body: payload.message.text
+            }
+          };
 
     let response: Response;
     try {
@@ -161,7 +189,7 @@ export class MetaSender implements MetaMessageSender {
       ? result.message_id
       : typeof result.id === "string"
         ? result.id
-        : undefined;
+        : whatsappMessageId(result);
 
     return providerMessageId === undefined ? {} : { providerMessageId };
   }

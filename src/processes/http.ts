@@ -25,7 +25,11 @@ const server = buildServer({
 
 let outboundWorker: OutboxWorker | undefined;
 if (env.META_OUTBOUND_ENABLED) {
-  if (env.META_MESSENGER_ACCESS_TOKEN === undefined || env.META_INSTAGRAM_ACCESS_TOKEN === undefined) {
+  if (
+    env.META_MESSENGER_ACCESS_TOKEN === undefined ||
+    env.META_INSTAGRAM_ACCESS_TOKEN === undefined ||
+    env.META_WHATSAPP_ACCESS_TOKEN === undefined
+  ) {
     throw new Error("Meta outbound access tokens are required when outbound delivery is enabled");
   }
 
@@ -35,6 +39,7 @@ if (env.META_OUTBOUND_ENABLED) {
       graphApiVersion: env.META_GRAPH_API_VERSION,
       messengerAccessToken: env.META_MESSENGER_ACCESS_TOKEN,
       instagramAccessToken: env.META_INSTAGRAM_ACCESS_TOKEN,
+      whatsappAccessToken: env.META_WHATSAPP_ACCESS_TOKEN,
       instagramGraphHost: env.META_INSTAGRAM_GRAPH_HOST,
       requestTimeoutMs: env.META_OUTBOUND_REQUEST_TIMEOUT_MS
     }),

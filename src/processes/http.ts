@@ -108,6 +108,7 @@ process.once("SIGTERM", () => { void shutdown("SIGTERM"); });
 
 async function main(): Promise<void> {
   try {
+    await db.assertReady();
     await server.listen({ host: env.HTTP_HOST, port: env.HTTP_PORT_EFFECTIVE });
     if (processorWorker !== undefined) {
       processorWorker.start();

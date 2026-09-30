@@ -13,6 +13,7 @@ export interface SqlExecutor {
 interface ReadinessRow extends pg.QueryResultRow {
   inbound_events: boolean;
   outbox: boolean;
+  outbox_attempts: boolean;
   provider: boolean;
   capability: boolean;
   last_error: boolean;
@@ -37,6 +38,7 @@ export class PostgresDatabase {
         `SELECT
            to_regclass('public.inbound_events') IS NOT NULL AS inbound_events,
            to_regclass('public.outbox') IS NOT NULL AS outbox,
+           to_regclass('public.outbox_attempts') IS NOT NULL AS outbox_attempts,
            EXISTS (
              SELECT 1
              FROM information_schema.columns
@@ -70,6 +72,7 @@ export class PostgresDatabase {
       const row = result.rows[0];
       return row?.inbound_events === true
         && row.outbox === true
+        && row.outbox_attempts === true
         && row.provider === true
         && row.capability === true
         && row.last_error === true

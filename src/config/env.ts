@@ -12,6 +12,7 @@ const schema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).optional(),
   LOG_LEVEL: z.enum(["fatal","error","warn","info","debug","trace"]).default("info"),
   DATABASE_URL: z.string().min(1).optional(),
+  OPS_METRICS_TOKEN: z.string().min(32).optional(),
 
   PROCESSOR_ENABLED: booleanFromEnv.default(false),
   PROCESSOR_CUTOVER_AT: z.string().datetime({ offset: true }).optional(),

@@ -92,7 +92,12 @@ describe("InboundProcessorWorker", () => {
     expect(e.complete).toHaveBeenCalledWith(eventId, expect.arrayContaining([
       expect.objectContaining({ provider: "telegram", operation: "message.send" })
     ]));
-    expect(q.complete).toHaveBeenCalledWith(job);
+    expect(q.complete).toHaveBeenCalledWith(job, undefined, expect.objectContaining({
+      provider: "telegram",
+      capability: "messaging",
+      operation: "message.received"
+    }));
+    expect(typeof q.complete.mock.calls[0]?.[2]?.durationMs).toBe("number");
   });
 
   it("marks unsupported event types processed without invoking an adapter", async () => {
@@ -112,7 +117,11 @@ describe("InboundProcessorWorker", () => {
 
     await worker.runOnce();
     expect(e.complete).toHaveBeenCalledWith(eventId, []);
-    expect(q.complete).toHaveBeenCalledWith(job);
+    expect(q.complete).toHaveBeenCalledWith(job, undefined, expect.objectContaining({
+      provider: "telegram",
+      capability: "messaging",
+      operation: "delivery.read"
+    }));
   });
 
   it("retries transient processing failures without losing the source event", async () => {
@@ -134,7 +143,17 @@ describe("InboundProcessorWorker", () => {
 
     await worker.runOnce();
     expect(e.recordFailure).toHaveBeenCalledWith(eventId, "AI temporarily unavailable");
-    expect(q.retry).toHaveBeenCalledWith(job, new Date("2026-09-30T00:00:01.000Z"));
+    expect(q.retry).toHaveBeenCalledWith(
+      job,
+      new Date("2026-09-30T00:00:01.000Z"),
+      expect.objectContaining({
+        provider: "telegram",
+        capability: "messaging",
+        operation: "message.received",
+        retryable: true,
+        errorClass: "processing_failure"
+      })
+    );
     expect(q.deadLetter).not.toHaveBeenCalled();
   });
 
@@ -158,7 +177,11 @@ describe("InboundProcessorWorker", () => {
     expect(handle).not.toHaveBeenCalled();
     expect(e.markProcessing).not.toHaveBeenCalled();
     expect(e.complete).toHaveBeenCalledWith(eventId, []);
-    expect(q.complete).toHaveBeenCalledWith(job);
+    expect(q.complete).toHaveBeenCalledWith(job, undefined, expect.objectContaining({
+      provider: "telegram",
+      capability: "messaging",
+      operation: "message.received"
+    }));
   });
 
   it("processes only explicitly allowed partitions during a canary rollout", async () => {

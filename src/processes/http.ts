@@ -7,6 +7,7 @@ import { buildServer } from "../http/server.js";
 import { MetaMediaResolver } from "../media/meta.js";
 import { MediaResolverRegistry } from "../media/resolver.js";
 import { createLogger } from "../observability/logger.js";
+import { PostgresOperationalMetrics } from "../observability/operational-metrics.js";
 import { PostgresInboundEventRepository, PostgresInboundStore } from "../persistence/inbound.js";
 import { PostgresOutboxStore } from "../persistence/outbox.js";
 import { PostgresDatabase } from "../persistence/postgres.js";
@@ -30,6 +31,12 @@ const server = buildServer({
   inbound: new PostgresInboundStore(db),
   appSecret: env.META_APP_SECRET,
   verifyToken: env.META_WEBHOOK_VERIFY_TOKEN,
+  ...(env.OPS_METRICS_TOKEN === undefined
+    ? {}
+    : {
+        metrics: new PostgresOperationalMetrics(db),
+        opsMetricsToken: env.OPS_METRICS_TOKEN
+      }),
   runtimeState: {
     processorEnabled: env.PROCESSOR_ENABLED,
     actionDispatchEnabled: env.ACTION_DISPATCH_ENABLED_EFFECTIVE,

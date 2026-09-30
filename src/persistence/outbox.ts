@@ -21,11 +21,23 @@ export interface EnqueueResult {
   created: boolean;
 }
 
+export interface AttemptObservation {
+  provider?: string;
+  capability?: string;
+  operation?: string;
+  durationMs?: number;
+  retryable?: boolean;
+  ambiguous?: boolean;
+  httpStatus?: number;
+  providerCode?: string;
+  errorClass?: string;
+}
+
 export interface OutboxDeliveryStore {
   claimNext(topic: string, leaseDurationMs: number): Promise<OutboxJob | undefined>;
-  complete(job: OutboxJob, providerResourceId?: string): Promise<boolean>;
-  retry(job: OutboxJob, nextAttemptAt: Date): Promise<boolean>;
-  deadLetter(job: OutboxJob, reason: string): Promise<boolean>;
+  complete(job: OutboxJob, providerResourceId?: string, observation?: AttemptObservation): Promise<boolean>;
+  retry(job: OutboxJob, nextAttemptAt: Date, observation?: AttemptObservation): Promise<boolean>;
+  deadLetter(job: OutboxJob, reason: string, observation?: AttemptObservation): Promise<boolean>;
 }
 
 interface OutboxRow extends pg.QueryResultRow {
@@ -125,48 +137,124 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
     };
   }
 
-  async complete(job: OutboxJob, providerResourceId?: string): Promise<boolean> {
+  async complete(
+    job: OutboxJob,
+    providerResourceId?: string,
+    observation: AttemptObservation = {}
+  ): Promise<boolean> {
     const result = await this.db.query(
-      `UPDATE outbox
-       SET published_at = now(),
-           lease_expires_at = NULL,
-           lease_token = NULL,
-           payload = CASE
-             WHEN $3::text IS NULL THEN payload
-             ELSE payload || jsonb_build_object(
-               'delivery',
-               jsonb_build_object('providerResourceId',$3::text,'sentAt',now())
-             )
-           END
-       WHERE id = $1::uuid AND lease_token = $2::uuid`,
-      [job.id, job.leaseToken, providerResourceId ?? null]
+      `WITH updated AS (
+         UPDATE outbox
+         SET published_at = now(),
+             lease_expires_at = NULL,
+             lease_token = NULL,
+             payload = CASE
+               WHEN $3::text IS NULL THEN payload
+               ELSE payload || jsonb_build_object(
+                 'delivery',
+                 jsonb_build_object('providerResourceId',$3::text,'sentAt',now())
+               )
+             END
+         WHERE id = $1::uuid AND lease_token = $2::uuid
+         RETURNING id,topic,partition_key
+       )
+       INSERT INTO outbox_attempts
+       (outbox_id,topic,partition_key,attempt_number,outcome,provider,capability,operation,
+        duration_ms,retryable,ambiguous,http_status,provider_code,error_class)
+       SELECT id,topic,partition_key,$4,'published',$5,$6,$7,$8,NULL,NULL,NULL,NULL,NULL
+       FROM updated
+       RETURNING outbox_id`,
+      [
+        job.id,
+        job.leaseToken,
+        providerResourceId ?? null,
+        job.attemptCount + 1,
+        observation.provider ?? null,
+        observation.capability ?? null,
+        observation.operation ?? null,
+        observation.durationMs === undefined ? null : Math.max(0, Math.round(observation.durationMs))
+      ]
     );
     return result.rowCount === 1;
   }
 
-  async retry(job: OutboxJob, nextAttemptAt: Date): Promise<boolean> {
+  async retry(
+    job: OutboxJob,
+    nextAttemptAt: Date,
+    observation: AttemptObservation = {}
+  ): Promise<boolean> {
     const result = await this.db.query(
-      `UPDATE outbox
-       SET attempt_count = attempt_count + 1,
-           next_attempt_at = $3,
-           lease_expires_at = NULL,
-           lease_token = NULL
-       WHERE id = $1::uuid AND lease_token = $2::uuid`,
-      [job.id, job.leaseToken, nextAttemptAt]
+      `WITH updated AS (
+         UPDATE outbox
+         SET attempt_count = attempt_count + 1,
+             next_attempt_at = $3,
+             lease_expires_at = NULL,
+             lease_token = NULL
+         WHERE id = $1::uuid AND lease_token = $2::uuid
+         RETURNING id,topic,partition_key
+       )
+       INSERT INTO outbox_attempts
+       (outbox_id,topic,partition_key,attempt_number,outcome,provider,capability,operation,
+        duration_ms,retryable,ambiguous,http_status,provider_code,error_class)
+       SELECT id,topic,partition_key,$4,'retry',$5,$6,$7,$8,$9,$10,$11,$12,$13
+       FROM updated
+       RETURNING outbox_id`,
+      [
+        job.id,
+        job.leaseToken,
+        nextAttemptAt,
+        job.attemptCount + 1,
+        observation.provider ?? null,
+        observation.capability ?? null,
+        observation.operation ?? null,
+        observation.durationMs === undefined ? null : Math.max(0, Math.round(observation.durationMs)),
+        observation.retryable ?? null,
+        observation.ambiguous ?? null,
+        observation.httpStatus ?? null,
+        observation.providerCode ?? null,
+        observation.errorClass ?? null
+      ]
     );
     return result.rowCount === 1;
   }
 
-  async deadLetter(job: OutboxJob, reason: string): Promise<boolean> {
+  async deadLetter(
+    job: OutboxJob,
+    reason: string,
+    observation: AttemptObservation = {}
+  ): Promise<boolean> {
     const result = await this.db.query(
-      `UPDATE outbox
-       SET attempt_count = attempt_count + 1,
-           dead_lettered_at = now(),
-           dead_letter_reason = $3,
-           lease_expires_at = NULL,
-           lease_token = NULL
-       WHERE id = $1::uuid AND lease_token = $2::uuid`,
-      [job.id, job.leaseToken, reason.slice(0, 2000)]
+      `WITH updated AS (
+         UPDATE outbox
+         SET attempt_count = attempt_count + 1,
+             dead_lettered_at = now(),
+             dead_letter_reason = $3,
+             lease_expires_at = NULL,
+             lease_token = NULL
+         WHERE id = $1::uuid AND lease_token = $2::uuid
+         RETURNING id,topic,partition_key
+       )
+       INSERT INTO outbox_attempts
+       (outbox_id,topic,partition_key,attempt_number,outcome,provider,capability,operation,
+        duration_ms,retryable,ambiguous,http_status,provider_code,error_class)
+       SELECT id,topic,partition_key,$4,'dead_letter',$5,$6,$7,$8,$9,$10,$11,$12,$13
+       FROM updated
+       RETURNING outbox_id`,
+      [
+        job.id,
+        job.leaseToken,
+        reason.slice(0, 2000),
+        job.attemptCount + 1,
+        observation.provider ?? null,
+        observation.capability ?? null,
+        observation.operation ?? null,
+        observation.durationMs === undefined ? null : Math.max(0, Math.round(observation.durationMs)),
+        observation.retryable ?? null,
+        observation.ambiguous ?? null,
+        observation.httpStatus ?? null,
+        observation.providerCode ?? null,
+        observation.errorClass ?? null
+      ]
     );
     return result.rowCount === 1;
   }

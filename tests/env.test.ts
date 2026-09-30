@@ -9,6 +9,19 @@ const productionBase = {
 };
 
 describe("environment", () => {
+  it("requires a high-entropy operational metrics token when configured", () => {
+    expect(() => loadEnvironment({
+      ...productionBase,
+      OPS_METRICS_TOKEN: "short"
+    })).toThrow();
+
+    const token = "m".repeat(32);
+    expect(loadEnvironment({
+      ...productionBase,
+      OPS_METRICS_TOKEN: token
+    }).OPS_METRICS_TOKEN).toBe(token);
+  });
+
   it("keeps action dispatch disabled for literal false values", () => {
     const env = loadEnvironment({
       ...productionBase,

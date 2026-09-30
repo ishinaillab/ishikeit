@@ -57,6 +57,7 @@ export class OutboxWorker {
     const job = await this.#store.claimNext(ACTION_DISPATCH_TOPIC, this.#leaseDurationMs);
     if (job === undefined) return false;
 
+    const attemptStartedAt = performance.now();
     const parsed = actionEnvelopeSchema.safeParse(job.payload);
     if (!parsed.success) {
       await this.#store.deadLetter(job, "invalid action.dispatch payload");
@@ -66,7 +67,12 @@ export class OutboxWorker {
 
     try {
       const result = await this.#dispatcher.dispatch(parsed.data);
-      const completed = await this.#store.complete(job, result.providerResourceId);
+      const completed = await this.#store.complete(job, result.providerResourceId, {
+        provider: parsed.data.provider,
+        capability: parsed.data.capability,
+        operation: parsed.data.operation,
+        durationMs: performance.now() - attemptStartedAt
+      });
       if (!completed) {
         this.#logger.warn({ outboxId: job.id }, "action completion lost its lease");
       } else {
@@ -80,7 +86,14 @@ export class OutboxWorker {
       }
       return true;
     } catch (error) {
-      await this.#handleFailure(job, error, parsed.data.provider, parsed.data.capability, parsed.data.operation);
+      await this.#handleFailure(
+        job,
+        error,
+        parsed.data.provider,
+        parsed.data.capability,
+        parsed.data.operation,
+        performance.now() - attemptStartedAt
+      );
       return true;
     }
   }
@@ -102,7 +115,8 @@ export class OutboxWorker {
     error: unknown,
     provider: string,
     capability: string,
-    operation: string
+    operation: string,
+    durationMs: number
   ): Promise<void> {
     const failure = error instanceof DispatchFailure
       ? error
@@ -114,7 +128,17 @@ export class OutboxWorker {
     const nextAttemptNumber = job.attemptCount + 1;
 
     if (!failure.retryable || nextAttemptNumber >= this.#maxAttempts) {
-      await this.#store.deadLetter(job, this.#failureReason(failure));
+      await this.#store.deadLetter(job, this.#failureReason(failure), {
+        provider,
+        capability,
+        operation,
+        durationMs,
+        retryable: failure.retryable,
+        ambiguous: failure.ambiguous,
+        ...(failure.status === undefined ? {} : { httpStatus: failure.status }),
+        ...(failure.providerCode === undefined ? {} : { providerCode: failure.providerCode }),
+        errorClass: this.#errorClass(failure)
+      });
       this.#logger.error({
         outboxId: job.id,
         provider,
@@ -131,7 +155,17 @@ export class OutboxWorker {
 
     const delayMs = this.#backoffMs(nextAttemptNumber, failure.retryAfterMs);
     const nextAttemptAt = new Date(this.#now().getTime() + delayMs);
-    await this.#store.retry(job, nextAttemptAt);
+    await this.#store.retry(job, nextAttemptAt, {
+      provider,
+      capability,
+      operation,
+      durationMs,
+      retryable: failure.retryable,
+      ambiguous: failure.ambiguous,
+      ...(failure.status === undefined ? {} : { httpStatus: failure.status }),
+      ...(failure.providerCode === undefined ? {} : { providerCode: failure.providerCode }),
+      errorClass: this.#errorClass(failure)
+    });
     this.#logger.warn({
       outboxId: job.id,
       provider,
@@ -148,6 +182,15 @@ export class OutboxWorker {
   #backoffMs(attempt: number, retryAfter: number | undefined): number {
     const exponential = Math.min(this.#maxBackoffMs, this.#baseBackoffMs * (2 ** Math.max(0, attempt - 1)));
     return Math.min(this.#maxBackoffMs, Math.max(exponential, retryAfter ?? 0));
+  }
+
+  #errorClass(failure: DispatchFailure): string {
+    if (failure.status === 429) return "throttled";
+    if (failure.status === 401 || failure.status === 403) return "authorization";
+    if (failure.status !== undefined && failure.status >= 500) return "provider_server";
+    if (failure.status !== undefined && failure.status >= 400) return "provider_client";
+    if (failure.ambiguous) return "transport_ambiguous";
+    return failure.retryable ? "transient" : "permanent";
   }
 
   #failureReason(failure: DispatchFailure): string {

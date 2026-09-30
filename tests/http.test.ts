@@ -38,6 +38,7 @@ describe("Meta webhook route", () => {
       architecture: "event-action-v1",
       canonicalEventSchema: 2,
       actionSchema: 1,
+      operationalMetricsSchema: 1,
       wordpressBridgeApiSchema: 1,
       wordpressBridgeStorageSchema: "1.1.1",
       runtime: {
@@ -87,6 +88,55 @@ describe("Meta webhook route", () => {
       processorCanaryPartitionCount: 1
     });
     expect(res.body).not.toContain("secret");
+    await server.close();
+  });
+
+  it("protects operational metrics and bounds the requested window", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const snapshot = vi.fn().mockResolvedValue({
+      generatedAt: "2026-09-30T00:00:00.000Z",
+      windowMinutes: 15,
+      inbound: {
+        received: 1,
+        processed: 1,
+        failedCurrent: 0,
+        processingLatencyMs: { p50: 100, p95: 100, max: 100 }
+      },
+      queue: [],
+      attempts: { published: 1, retries: 0, deadLetters: 0, byRoute: [] }
+    });
+    const token = "o".repeat(32);
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      metrics: { snapshot },
+      opsMetricsToken: token
+    });
+
+    const unauthorized = await server.inject({ method: "GET", url: "/ops/metrics" });
+    expect(unauthorized.statusCode).toBe(401);
+    expect(snapshot).not.toHaveBeenCalled();
+
+    const invalid = await server.inject({
+      method: "GET",
+      url: "/ops/metrics?window=2",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const ok = await server.inject({
+      method: "GET",
+      url: "/ops/metrics?window=15",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.headers["cache-control"]).toBe("private, no-store");
+    expect(snapshot).toHaveBeenCalledWith(15);
+    expect(ok.json()).toMatchObject({ windowMinutes: 15 });
+
     await server.close();
   });
 

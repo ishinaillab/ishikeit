@@ -62,7 +62,12 @@ describe("OutboxWorker", () => {
 
     await expect(worker.runOnce()).resolves.toBe(true);
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(complete).toHaveBeenCalledWith(job, "provider-1");
+    expect(complete).toHaveBeenCalledWith(job, "provider-1", expect.objectContaining({
+      provider: "telegram",
+      capability: "messaging",
+      operation: "message.send"
+    }));
+    expect(typeof complete.mock.calls[0]?.[2]?.durationMs).toBe("number");
     expect(retry).not.toHaveBeenCalled();
     expect(deadLetter).not.toHaveBeenCalled();
   });
@@ -93,7 +98,18 @@ describe("OutboxWorker", () => {
     });
 
     await worker.runOnce();
-    expect(retry).toHaveBeenCalledWith(job, new Date("2026-09-30T00:00:01.000Z"));
+    expect(retry).toHaveBeenCalledWith(
+      job,
+      new Date("2026-09-30T00:00:01.000Z"),
+      expect.objectContaining({
+        provider: "telegram",
+        capability: "messaging",
+        operation: "message.send",
+        retryable: true,
+        errorClass: "throttled",
+        httpStatus: 429
+      })
+    );
     expect(deadLetter).not.toHaveBeenCalled();
   });
 

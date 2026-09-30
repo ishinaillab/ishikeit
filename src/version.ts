@@ -3,6 +3,7 @@ export const runtimeContract = Object.freeze({
   architecture: "event-action-v1",
   canonicalEventSchema: 2,
   actionSchema: 1,
+  operationalMetricsSchema: 1,
   wordpressBridgeApiSchema: 1,
   wordpressBridgeStorageSchema: "1.1.1"
 });

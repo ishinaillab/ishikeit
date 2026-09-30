@@ -5,6 +5,8 @@ import { sha256Hex } from "../persistence/inbound.js";
 import { metaIngressIdentity, normalizeMetaEnvelope } from "../channels/meta-normalizer.js";
 import { verifyMetaChallenge, verifyMetaSignature } from "../security/meta.js";
 import { runtimeContract } from "../version.js";
+import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
+import { verifyBearerAuthorization } from "../security/bearer.js";
 
 export interface ServerDeps {
   logger: Logger;
@@ -13,6 +15,8 @@ export interface ServerDeps {
   appSecret: string;
   verifyToken: string;
   webhookBodyLimit?: number;
+  metrics?: OperationalMetricsReader;
+  opsMetricsToken?: string;
   runtimeState?: {
     processorEnabled: boolean;
     actionDispatchEnabled: boolean;
@@ -42,6 +46,40 @@ export function buildServer(deps: ServerDeps) {
       ? { status: "ready" }
       : reply.code(503).send({ status: "not_ready" })
   );
+
+  if ((deps.metrics === undefined) !== (deps.opsMetricsToken === undefined)) {
+    throw new Error("operational metrics require both a reader and a bearer token");
+  }
+
+  if (deps.metrics !== undefined && deps.opsMetricsToken !== undefined) {
+    const metrics = deps.metrics;
+    const opsMetricsToken = deps.opsMetricsToken;
+    server.get<{ Querystring: { window?: string } }>("/ops/metrics", async (req, reply) => {
+      if (!verifyBearerAuthorization(req.headers.authorization, opsMetricsToken)) {
+        return reply
+          .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401)
+          .send({ status: "unauthorized" });
+      }
+
+      const rawWindow = req.query.window ?? "60";
+      if (!/^\d+$/.test(rawWindow)) {
+        return reply.code(400).send({ status: "invalid_window" });
+      }
+      const windowMinutes = Number(rawWindow);
+      if (!Number.isInteger(windowMinutes) || windowMinutes < 5 || windowMinutes > 1440) {
+        return reply.code(400).send({ status: "invalid_window" });
+      }
+
+      reply.header("cache-control", "private, no-store");
+      try {
+        return await metrics.snapshot(windowMinutes);
+      } catch (error) {
+        deps.logger.error({ err: error }, "operational metrics snapshot failed");
+        return reply.code(503).send({ status: "metrics_unavailable" });
+      }
+    });
+  }
 
   server.register((scope, _opts, done) => {
     scope.removeContentTypeParser("application/json");

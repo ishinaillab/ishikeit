@@ -15,6 +15,7 @@ export function createLogger(env: Environment) {
         "META_INSTAGRAM_ACCESS_TOKEN",
         "META_WHATSAPP_ACCESS_TOKEN",
         "ISHI_AI_BRIDGE_TOKEN",
+        "OPS_METRICS_TOKEN",
         "accessToken",
         "token",
         "*.accessToken",

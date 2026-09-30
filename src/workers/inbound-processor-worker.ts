@@ -72,9 +72,14 @@ export class InboundProcessorWorker {
     const job = await this.#queue.claimNext(INBOUND_ACCEPTED_TOPIC, this.#leaseDurationMs);
     if (job === undefined) return false;
 
+    const attemptStartedAt = performance.now();
     const accepted = acceptedPayloadSchema.safeParse(job.payload);
     if (!accepted.success) {
-      await this.#queue.deadLetter(job, "invalid inbound.event.accepted payload");
+      await this.#queue.deadLetter(job, "invalid inbound.event.accepted payload", {
+        durationMs: performance.now() - attemptStartedAt,
+        retryable: false,
+        errorClass: "invalid_payload"
+      });
       this.#logger.error({ outboxId: job.id }, "dead-lettered invalid inbound queue payload");
       return true;
     }
@@ -84,20 +89,34 @@ export class InboundProcessorWorker {
     });
 
     if (stored === undefined) {
-      await this.#queue.deadLetter(job, "inbound event no longer exists");
+      await this.#queue.deadLetter(job, "inbound event no longer exists", {
+        durationMs: performance.now() - attemptStartedAt,
+        retryable: false,
+        errorClass: "orphaned_event"
+      });
       this.#logger.error({ outboxId: job.id, eventId: accepted.data.eventId }, "dead-lettered orphaned inbound job");
       return true;
     }
 
     if (stored.processedAt !== undefined || stored.status === "processed") {
-      await this.#queue.complete(job);
+      await this.#queue.complete(job, undefined, {
+        provider: stored.event.provider,
+        capability: stored.event.capability,
+        operation: stored.event.eventType,
+        durationMs: performance.now() - attemptStartedAt
+      });
       return true;
     }
 
     const skipReason = this.#rolloutSkipReason(stored);
     if (skipReason !== undefined) {
       await this.#events.complete(stored.id, []);
-      const completed = await this.#queue.complete(job);
+      const completed = await this.#queue.complete(job, undefined, {
+        provider: stored.event.provider,
+        capability: stored.event.capability,
+        operation: stored.event.eventType,
+        durationMs: performance.now() - attemptStartedAt
+      });
       if (!completed) {
         this.#logger.warn({ outboxId: job.id, eventId: stored.id, skipReason }, "rollout skip lost its queue lease");
       } else {
@@ -118,7 +137,12 @@ export class InboundProcessorWorker {
     try {
       const actions = await this.#handlers.handle(stored);
       await this.#events.complete(stored.id, actions);
-      const completed = await this.#queue.complete(job);
+      const completed = await this.#queue.complete(job, undefined, {
+        provider: stored.event.provider,
+        capability: stored.event.capability,
+        operation: stored.event.eventType,
+        durationMs: performance.now() - attemptStartedAt
+      });
       if (!completed) {
         this.#logger.warn({ outboxId: job.id, eventId: stored.id }, "inbound completion lost its lease");
       } else {
@@ -133,7 +157,7 @@ export class InboundProcessorWorker {
       }
       return true;
     } catch (error) {
-      await this.#handleFailure(job, stored.id, error);
+      await this.#handleFailure(job, stored, error, performance.now() - attemptStartedAt);
       return true;
     }
   }
@@ -150,7 +174,13 @@ export class InboundProcessorWorker {
     }
   }
 
-  async #handleFailure(job: OutboxJob, eventId: string, error: unknown): Promise<void> {
+  async #handleFailure(
+    job: OutboxJob,
+    stored: StoredInboundEvent,
+    error: unknown,
+    durationMs: number
+  ): Promise<void> {
+    const eventId = stored.id;
     const failure = error instanceof ProcessingFailure
       ? error
       : new ProcessingFailure("unexpected inbound processing failure", { retryable: true, cause: error });
@@ -160,7 +190,14 @@ export class InboundProcessorWorker {
     await this.#events.recordFailure(eventId, reason);
 
     if (!failure.retryable || nextAttemptNumber >= this.#maxAttempts) {
-      await this.#queue.deadLetter(job, reason);
+      await this.#queue.deadLetter(job, reason, {
+        provider: stored.event.provider,
+        capability: stored.event.capability,
+        operation: stored.event.eventType,
+        durationMs,
+        retryable: failure.retryable,
+        errorClass: error instanceof ProcessingFailure ? "processing_failure" : "unexpected"
+      });
       this.#logger.error({
         outboxId: job.id,
         eventId,
@@ -172,7 +209,14 @@ export class InboundProcessorWorker {
 
     const delayMs = this.#backoffMs(nextAttemptNumber, failure.retryAfterMs);
     const nextAttemptAt = new Date(this.#now().getTime() + delayMs);
-    await this.#queue.retry(job, nextAttemptAt);
+    await this.#queue.retry(job, nextAttemptAt, {
+      provider: stored.event.provider,
+      capability: stored.event.capability,
+      operation: stored.event.eventType,
+      durationMs,
+      retryable: failure.retryable,
+      errorClass: error instanceof ProcessingFailure ? "processing_failure" : "unexpected"
+    });
     this.#logger.warn({
       outboxId: job.id,
       eventId,

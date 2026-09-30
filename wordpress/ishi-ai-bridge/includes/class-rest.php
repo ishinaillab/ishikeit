@@ -168,19 +168,6 @@ final class Rest {
     public static function upload_file( WP_REST_Request $request ): WP_REST_Response|WP_Error {
         Storage::maybe_cleanup();
 
-        $key = Validation::opaque_id(
-            $request->get_header( 'idempotency-key' ),
-            255
-        );
-
-        if ( is_wp_error( $key ) ) {
-            return new WP_Error(
-                'ishi_ai_bridge_missing_idempotency_key',
-                'A valid Idempotency-Key header is required.',
-                [ 'status' => 400 ]
-            );
-        }
-
         $files = $request->get_file_params();
 
         if ( empty( $files['file'] ) || ! is_array( $files['file'] ) ) {
@@ -243,7 +230,17 @@ final class Rest {
             : 3600;
 
         $ttl = min( DAY_IN_SECONDS, max( 60, $ttl ) );
-        $request_hash = hash( 'sha256', $key );
+
+        $content_hash = hash_file( 'sha256', $tmp_name );
+        if ( false === $content_hash ) {
+            return new WP_Error(
+                'ishi_ai_bridge_file_hash_failed',
+                'Unable to fingerprint the uploaded file.',
+                [ 'status' => 500 ]
+            );
+        }
+
+        $request_hash = hash( 'sha256', $content_hash . "\n" . $name );
         $claim = Storage::claim_file( $request_hash, $ttl );
 
         if ( is_wp_error( $claim ) ) {

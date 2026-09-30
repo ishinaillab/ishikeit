@@ -128,6 +128,34 @@ describe("MetaMediaResolver", () => {
       .toEqual({ authorization: "Bearer wa-token" });
   });
 
+  it.each([
+    ["image", "image/png", "png"],
+    ["audio", "audio/mpeg", "mp3"],
+    ["video", "video/mp4", "mp4"]
+  ] as const)(
+    "adds a trusted MIME extension for WhatsApp %s media without filenames",
+    async (kind, mimeType, extension) => {
+      const fetchImpl = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          url: "https://lookaside.fbsbx.com/whatsapp_business/attachments/file",
+          mime_type: mimeType,
+          file_size: "4"
+        }), { status: 200, headers: { "content-type": "application/json" } }))
+        .mockResolvedValueOnce(new Response(
+          new Uint8Array([1, 2, 3, 4]),
+          { status: 200, headers: { "content-type": mimeType } }
+        ));
+
+      await expect(resolver(fetchImpl).resolve(event, {
+        kind,
+        source: { kind: "provider", value: "media-1" }
+      })).resolves.toMatchObject({
+        filename: "file." + extension,
+        mimeType
+      });
+    }
+  );
+
   it("classifies provider throttling and server failures as retryable", async () => {
     const throttled = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 429 }));
     await expect(resolver(throttled).resolve(event, imagePart))

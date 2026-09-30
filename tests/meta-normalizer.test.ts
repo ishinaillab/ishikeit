@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ingressIdentity, normalizeMetaEnvelope } from "../src/channels/meta-normalizer.js";
+import { metaIngressIdentity, normalizeMetaEnvelope } from "../src/channels/meta-normalizer.js";
 
 describe("Meta normalizer", () => {
   it("normalizes Messenger messages with page-scoped identity", () => {
@@ -69,8 +69,8 @@ describe("Meta normalizer", () => {
       identityId: "igsid-1"
     });
 
-    expect(ingressIdentity(event!).partitionKey).toBe(
-      ingressIdentity({
+    expect(metaIngressIdentity(event!).partitionKey).toBe(
+      metaIngressIdentity({
         ...event!,
         eventType: "message.received",
         identityId: "igsid-1"
@@ -150,9 +150,9 @@ describe("Meta normalizer", () => {
     expect(retry).toBeDefined();
     expect(instagram).toBeDefined();
 
-    const messengerIdentity = ingressIdentity(messenger!);
-    const retryIdentity = ingressIdentity(retry!);
-    const instagramIdentity = ingressIdentity(instagram!);
+    const messengerIdentity = metaIngressIdentity(messenger!);
+    const retryIdentity = metaIngressIdentity(retry!);
+    const instagramIdentity = metaIngressIdentity(instagram!);
 
     expect(retryIdentity.deduplicationKey).toBe(messengerIdentity.deduplicationKey);
     expect(instagramIdentity.deduplicationKey).not.toBe(messengerIdentity.deduplicationKey);

@@ -14,6 +14,8 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1).optional(),
 
   PROCESSOR_ENABLED: booleanFromEnv.default(false),
+  PROCESSOR_CUTOVER_AT: z.string().datetime({ offset: true }).optional(),
+  PROCESSOR_CANARY_PARTITION_KEYS: z.string().default(""),
   WORDPRESS_AI_BRIDGE_URL: z.string().url().optional(),
   ISHI_AI_BRIDGE_TOKEN: z.string().min(32).optional(),
   AI_BRIDGE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(180000).default(90000),
@@ -39,10 +41,19 @@ const schema = z.object({
         ctx.addIssue({ code: "custom", path: [key], message: `${key} is required when PROCESSOR_ENABLED=true` });
       }
     }
-    if (value.NODE_ENV === "production" && value.WORDPRESS_AI_BRIDGE_URL !== undefined) {
-      const url = new URL(value.WORDPRESS_AI_BRIDGE_URL);
-      if (url.protocol !== "https:") {
-        ctx.addIssue({ code: "custom", path: ["WORDPRESS_AI_BRIDGE_URL"], message: "Production AI bridge URL must use HTTPS" });
+    if (value.NODE_ENV === "production") {
+      if (value.PROCESSOR_CUTOVER_AT === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["PROCESSOR_CUTOVER_AT"],
+          message: "PROCESSOR_CUTOVER_AT is required when PROCESSOR_ENABLED=true in production"
+        });
+      }
+      if (value.WORDPRESS_AI_BRIDGE_URL !== undefined) {
+        const url = new URL(value.WORDPRESS_AI_BRIDGE_URL);
+        if (url.protocol !== "https:") {
+          ctx.addIssue({ code: "custom", path: ["WORDPRESS_AI_BRIDGE_URL"], message: "Production AI bridge URL must use HTTPS" });
+        }
       }
     }
   }
@@ -51,10 +62,26 @@ const schema = z.object({
 export type Environment = z.infer<typeof schema> & {
   HTTP_PORT_EFFECTIVE: number;
   ACTION_DISPATCH_ENABLED_EFFECTIVE: boolean;
+  PROCESSOR_CANARY_PARTITION_KEYS_EFFECTIVE: readonly string[];
 };
 
 export function loadEnvironment(input: NodeJS.ProcessEnv = process.env): Environment {
   const parsed = schema.parse(input);
+  const canaryPartitionKeys = parsed.PROCESSOR_CANARY_PARTITION_KEYS
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => value.length > 0);
+
+  for (const partitionKey of canaryPartitionKeys) {
+    if (!/^[0-9a-f]{64}$/.test(partitionKey)) {
+      throw new Error("PROCESSOR_CANARY_PARTITION_KEYS must contain comma-separated SHA-256 hex partition keys");
+    }
+  }
+
+  if (new Set(canaryPartitionKeys).size !== canaryPartitionKeys.length) {
+    throw new Error("PROCESSOR_CANARY_PARTITION_KEYS must not contain duplicates");
+  }
+
   if (parsed.NODE_ENV === "production") {
     for (const key of ["DATABASE_URL","META_APP_SECRET","META_WEBHOOK_VERIFY_TOKEN"] as const) {
       if (parsed[key] === undefined) throw new Error(key + " is required in production");
@@ -63,6 +90,7 @@ export function loadEnvironment(input: NodeJS.ProcessEnv = process.env): Environ
   return {
     ...parsed,
     HTTP_PORT_EFFECTIVE: parsed.HTTP_PORT ?? parsed.PORT ?? 3000,
-    ACTION_DISPATCH_ENABLED_EFFECTIVE: parsed.ACTION_DISPATCH_ENABLED || parsed.META_OUTBOUND_ENABLED
+    ACTION_DISPATCH_ENABLED_EFFECTIVE: parsed.ACTION_DISPATCH_ENABLED || parsed.META_OUTBOUND_ENABLED,
+    PROCESSOR_CANARY_PARTITION_KEYS_EFFECTIVE: canaryPartitionKeys
   };
 }

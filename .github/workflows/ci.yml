@@ -32,34 +32,43 @@ jobs:
         run: find wordpress/ishi-ai-bridge -name '*.php' -print0 | xargs -0 -n1 php -l
 
   context-continuity:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Verify durable context is updated
+      - name: Verify durable context continuity
         shell: bash
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          CONTEXT_SKIP: ${{ contains(github.event.pull_request.labels.*.name, 'context-not-required') }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          PUSH_BEFORE_SHA: ${{ github.event.before || '' }}
+          CONTEXT_SKIP: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'context-not-required') }}
         run: |
           set -euo pipefail
 
-          if [[ "$CONTEXT_SKIP" == "true" ]]; then
+          if [[ "$EVENT_NAME" == "pull_request" && "$CONTEXT_SKIP" == "true" ]]; then
             echo "context-not-required label present; continuity guard bypassed."
             exit 0
           fi
 
-          mapfile -t changed < <(git diff --name-only "$BASE_SHA"...HEAD)
-          printf 'Changed files:\n%s\n' "${changed[*]}"
-
-          for path in "${changed[@]}"; do
-            if [[ "$path" == "docs/CONTINUATION.md" ]]; then
-              echo "Durable continuation context updated in this pull request."
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$PR_BASE_SHA"
+            range="$base...HEAD"
+          else
+            base="$PUSH_BEFORE_SHA"
+            if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+              base="$(git rev-parse HEAD^ 2>/dev/null || true)"
+            fi
+            if [[ -z "$base" ]]; then
+              echo "No previous revision is available; skipping continuity comparison."
               exit 0
             fi
-          done
+            range="$base..HEAD"
+          fi
+
+          mapfile -t changed < <(git diff --name-only "$range")
+          printf 'Changed files:\n%s\n' "${changed[*]}"
 
           material=false
           for path in "${changed[@]}"; do
@@ -71,9 +80,21 @@ jobs:
             esac
           done
 
-          if [[ "$material" == "true" ]]; then
-            echo "::error::This pull request changes a context-sensitive project boundary but does not update docs/CONTINUATION.md. Update the durable context, or apply the maintainer-only context-not-required label when the change has no durable project-context impact."
-            exit 1
+          if [[ "$material" != "true" ]]; then
+            echo "No context-sensitive project boundary changed."
+            exit 0
           fi
 
-          echo "No context-sensitive project boundary changed."
+          for path in "${changed[@]}"; do
+            if [[ "$path" == "docs/CONTINUATION.md" ]]; then
+              echo "Durable continuation context updated with the context-sensitive change."
+              exit 0
+            fi
+          done
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            echo "::error::This pull request changes a context-sensitive project boundary but does not update docs/CONTINUATION.md. Update the durable context, or apply the context-not-required label when the change has no durable project-context impact."
+          else
+            echo "::error::main received a context-sensitive change without a docs/CONTINUATION.md update. Add a follow-up durable-context correction immediately."
+          fi
+          exit 1

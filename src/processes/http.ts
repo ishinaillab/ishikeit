@@ -2,9 +2,11 @@ import { MetaSender } from "../channels/meta-send.js";
 import { loadEnvironment } from "../config/env.js";
 import { ActionDispatcher } from "../dispatch/dispatcher.js";
 import { MetaMessagingAdapter } from "../adapters/meta/messaging.js";
+import { TelegramMessagingAdapter } from "../adapters/telegram/messaging.js";
 import { WordPressBrainClient } from "../brain/wordpress.js";
 import { buildServer } from "../http/server.js";
 import { MetaMediaResolver } from "../media/meta.js";
+import { TelegramMediaResolver } from "../media/telegram.js";
 import { GeminiVideoInterpreter } from "../media/gemini-video.js";
 import { MediaInterpreterRegistry } from "../media/interpreter.js";
 import { MediaResolverRegistry } from "../media/resolver.js";
@@ -17,6 +19,8 @@ import { MessageReceivedHandler } from "../processing/message-handler.js";
 import { EventHandlerRegistry } from "../processing/registry.js";
 import { InboundProcessorWorker } from "../workers/inbound-processor-worker.js";
 import { OutboxWorker } from "../workers/outbox-worker.js";
+import { TelegramSender } from "../channels/telegram-send.js";
+import { telegramBotIdFromToken } from "../security/telegram.js";
 
 const env = loadEnvironment();
 const logger = createLogger(env);
@@ -27,12 +31,19 @@ if (env.DATABASE_URL === undefined || env.META_APP_SECRET === undefined || env.M
 
 const db = new PostgresDatabase(env.DATABASE_URL);
 const queue = new PostgresOutboxStore(db);
+const telegram = env.TELEGRAM_BOT_TOKEN === undefined || env.TELEGRAM_WEBHOOK_SECRET === undefined
+  ? undefined
+  : {
+      botId: telegramBotIdFromToken(env.TELEGRAM_BOT_TOKEN),
+      webhookSecret: env.TELEGRAM_WEBHOOK_SECRET
+    };
 const server = buildServer({
   logger,
   ready: () => db.ready(),
   inbound: new PostgresInboundStore(db),
   appSecret: env.META_APP_SECRET,
   verifyToken: env.META_WEBHOOK_VERIFY_TOKEN,
+  ...(telegram === undefined ? {} : { telegram }),
   ...(env.OPS_METRICS_TOKEN === undefined
     ? {}
     : {
@@ -59,6 +70,12 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
     instagramGraphHost: env.META_INSTAGRAM_GRAPH_HOST,
     requestTimeoutMs: env.META_OUTBOUND_REQUEST_TIMEOUT_MS
   })));
+  if (env.TELEGRAM_BOT_TOKEN !== undefined) {
+    dispatcher.register(new TelegramMessagingAdapter(new TelegramSender({
+      botToken: env.TELEGRAM_BOT_TOKEN,
+      requestTimeoutMs: env.TELEGRAM_OUTBOUND_REQUEST_TIMEOUT_MS
+    })));
+  }
 
   outboundWorker = new OutboxWorker({ store: queue, dispatcher, logger });
 }
@@ -79,6 +96,13 @@ if (env.PROCESSOR_ENABLED) {
     maxBytes: env.MEDIA_MAX_BYTES,
     requestTimeoutMs: env.MEDIA_REQUEST_TIMEOUT_MS
   }));
+  if (env.TELEGRAM_BOT_TOKEN !== undefined) {
+    mediaResolvers.register(new TelegramMediaResolver({
+      botToken: env.TELEGRAM_BOT_TOKEN,
+      maxBytes: env.MEDIA_MAX_BYTES,
+      requestTimeoutMs: env.MEDIA_REQUEST_TIMEOUT_MS
+    }));
+  }
 
   const mediaInterpreters = new MediaInterpreterRegistry();
   if (env.VIDEO_INTERPRETER_PROVIDER === "gemini") {

@@ -728,6 +728,29 @@ Merge/deployment verification:
 - TikTok webhook returned HTTP 404 after deployment because no TikTok credential set is configured; this is the intended inactive/configuration-gated state
 - post-deploy processor/outbound activity remained present with no runtime error
 
+OAuth-lifecycle merge/deployment verification:
+
+- GitHub PR #29 squash-merged to `main`
+- merged revision: `135d6856f10517ce9ff7eb658e9e4db175b3cb41`
+- the tested branch tree and merged `main` tree were verified identical
+- merged-main GitHub Actions CI run `36914140091` completed successfully
+- Hostinger automatic build `01a0f8ed-aee7-711d-a25e-e2436b574d2c` completed for `135d6856f10517ce9ff7eb658e9e4db175b3cb41`
+- post-deploy `GET /health/ready` returned `{"status":"ready"}`
+- fresh Hostinger runtime audit reported 36 log entries, 0 WARN/ERROR, and the inbound AI processor enabled after deploy
+- `POST /ishikeit/webhooks/tiktok` returned HTTP 404 because no TikTok provider configuration is present
+- `GET /ops/tiktok/oauth/status` returned HTTP 404 because no TikTok OAuth application configuration is present
+- the trusted local production recovery `.env` contains no `TIKTOK_*` or `OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64` values, so TikTok remains intentionally inactive
+
+Current TikTok API-version compatibility check — 2026-10-02:
+
+- TikTok's current API for Business documentation announces a general v2.0 release and explains that endpoints without material contract changes may require only a version-path change
+- Business Messaging and TikTok-account OAuth are not yet usable on v2.0 at the live API edge
+- no-credential probe of `/open_api/v1.3/tt_user/oauth2/token/` returned TikTok code `40002` (`client_id` missing), proving the v1.3 OAuth route is active
+- the same probe against `/open_api/v2.0/tt_user/oauth2/token/` returned HTTP 404
+- no-token probe of `/open_api/v1.3/business/message/send/` returned TikTok code `40104` (access token empty), proving the v1.3 Business Messaging route is active
+- the same probe against `/open_api/v2.0/business/message/send/` returned HTTP 403 / TikTok code `40006` (`no schema found`)
+- therefore keep `TIKTOK_BUSINESS_API_VERSION=v1.3` for Business Messaging/OAuth until TikTok exposes those provider contracts on v2.0; do not mechanically migrate these paths merely because the general API documentation has a v2.0 section
+
 TikTok is **not production-active yet**. No real TikTok credential has been added to Hostinger and no TikTok Business Messaging webhook has been registered. Before activation:
 
 1. create/use the real TikTok for Business developer app

@@ -19,7 +19,7 @@ Provider-specific semantics belong in adapters. Generic persistence, leasing, re
 
 ## Ingress
 
-The current production ingress adapter is Meta.
+The current production ingress adapter is Meta. A Telegram Bot API ingress adapter is implemented behind configuration and remains inactive until its runtime credentials and provider webhook are configured.
 
 `GET /ishikeit/webhooks/meta` performs Meta's verification challenge.
 
@@ -36,7 +36,7 @@ The current production ingress adapter is Meta.
 
 AI, media downloads, profile lookups, provider calls, and WordPress requests never run before the webhook ACK.
 
-A future Telegram webhook should be implemented as another ingress adapter/route that emits the same canonical event contract.
+Telegram uses `POST /ishikeit/webhooks/telegram`. It validates Telegram's secret-token header before JSON parsing, normalizes Bot API updates into the same canonical event contract, derives deterministic update deduplication and per-chat partition identities, and commits through the same durable-before-ACK store.
 
 ## Canonical events
 
@@ -195,16 +195,16 @@ The `OutboxWorker` is provider-neutral. It validates the generic envelope and as
 provider / capability / operation
 ```
 
-The first adapter is:
+Registered messaging adapters are:
 
 ```text
 meta / messaging / message.send
+telegram / messaging / message.send
 ```
 
 Future examples can be registered without modifying the worker:
 
 ```text
-telegram / messaging / message.send
 meta / marketing / campaign.create
 meta / marketing / campaign.update
 meta / leads / lead.read
@@ -286,3 +286,16 @@ PostgreSQL stores normalized events, hashes, durable actions, attempt state, and
 Meta Graph API target is configured by `META_GRAPH_API_VERSION`.
 
 Canonical event, action, bridge, and provider adapter contracts are versioned independently. Provider API upgrades are deliberate and tested rather than automatic.
+
+
+## Telegram Bot API adapter
+
+Telegram is the first non-Meta messaging adapter and does not introduce a Telegram-specific durable core.
+
+Ingress verifies `X-Telegram-Bot-Api-Secret-Token` before parsing JSON, uses Bot API `update_id` as the provider event identity, and partitions conversations by configured bot account plus reply chat ID. Normal messages can carry portable text, photo, video/animation/video-note, audio/voice, and document content. Non-conversational or edited update families are persisted with non-`message.received` event types, so the generic message handler does not accidentally interpret them as new customer turns.
+
+Outbound registers `telegram / messaging / message.send`. It maps portable text/image/video/audio/document parts to the corresponding Bot API send operations, validates Telegram text and caption limits before network I/O, preserves provider throttling guidance, and marks transport failures as delivery-ambiguous rather than claiming exactly-once delivery. The adapter rejects an action when its target account does not match the configured bot token.
+
+Inbound provider `file_id` media is resolved only after webhook ACK using `getFile`. Downloads are restricted to Telegram's official Bot API file endpoint, redirects and unsafe returned file paths are rejected, and the resolver enforces both Ishikeit's configured media ceiling and Telegram Cloud Bot API's download ceiling.
+
+Activation is deliberately configuration-gated: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` must be configured together. Production should initially subscribe only to `message` updates, then run a controlled end-to-end canary before the integration is declared active.

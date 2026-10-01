@@ -147,14 +147,20 @@ Then enable processing and action dispatch independently. The legacy `META_OUTBO
 
 The required staged procedure is documented in [`docs/production-rollout.md`](docs/production-rollout.md).
 
-## Telegram activation
+## Telegram production
 
-Telegram remains configuration-gated. Configure `TELEGRAM_BOT_TOKEN` and a dedicated high-entropy `TELEGRAM_WEBHOOK_SECRET` together, then register this HTTPS webhook with Telegram:
+Telegram messaging is production-active through `@ishinailbot` (`Ishi Nail Lab`).
+
+Production webhook:
 
 ```text
 POST https://apps.ishinaillab.com/ishikeit/webhooks/telegram
 ```
 
-Start with `allowed_updates=["message"]` so the production webhook receives only the update family that the conversational handler intentionally processes. On first production registration, also use `drop_pending_updates=true` so messages accumulated before Ishikeit's launch are not replayed into the processor; inspect `getWebhookInfo` after registration. Ishikeit verifies `X-Telegram-Bot-Api-Secret-Token` before parsing the update, persists the canonical event before acknowledging it, and resolves inbound provider `file_id` media only after the webhook ACK through Telegram's `getFile` path. A controlled end-to-end canary is required before Telegram is considered production-active.
+The runtime requires `TELEGRAM_BOT_TOKEN` and a dedicated high-entropy `TELEGRAM_WEBHOOK_SECRET` together. Ishikeit verifies `X-Telegram-Bot-Api-Secret-Token` before parsing updates, persists the canonical event before acknowledging it, and resolves inbound provider `file_id` media only after webhook ACK through Telegram's `getFile` path.
+
+The initial production registration used `allowed_updates=["message"]` and `drop_pending_updates=true`. A controlled human-originated canary then verified durable ingress, AI processing, one `telegram / messaging / message.send` action, first-attempt provider delivery, a persisted Telegram provider message ID, zero pending recent actions, and zero recent dead letters. Post-canary `getWebhookInfo` reported the expected webhook URL, zero pending updates, and no delivery error.
+
+For future token/webhook rotations, preserve the same safe sequence: update the complete production environment from a trusted secret source, verify readiness, register the webhook with the dedicated secret, inspect `getWebhookInfo`, and run a controlled canary. Hostinger's environment replacement operation is full-replacement; never round-trip masked values returned by its environment-variable listing.
 
 Access tokens and bridge credentials are secrets. Keep raw values in hosting/runtime secret storage only and never commit them.

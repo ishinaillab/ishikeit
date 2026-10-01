@@ -1,6 +1,6 @@
 # Ishikeit
 
-Ishikeit is Ishi Nail Lab's first-party event and action backend. Meta messaging is the first production provider, and Telegram Bot API support is implemented as the first non-Meta messaging adapter. The core processor remains provider-neutral so additional platforms and capabilities can be added without redesigning the durable processing boundary.
+Ishikeit is Ishi Nail Lab's first-party event and action backend. Meta and Telegram messaging are production-active, and TikTok for Business Business Messaging is implemented behind configuration and provider-access gates. The core processor remains provider-neutral so additional platforms and capabilities can be added without redesigning the durable processing boundary.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ The application is split into five contracts:
 4. **Brain clients** provide conversational/AI decisions. The first brain is a private WordPress AI Engine bridge.
 5. **Action adapters** execute provider/capability/operation combinations such as `meta/messaging/message.send`.
 
-The core action envelope contains strings for `provider`, `capability`, and `operation`. Adding Telegram messaging, Meta Marketing API campaign operations, lead-management operations, or another provider therefore means registering new adapters/handlers rather than adding another provider enum to the durable core.
+The core action envelope contains strings for `provider`, `capability`, and `operation`. Adding TikTok messaging, Meta Marketing API campaign operations, lead-management operations, or another provider therefore means registering new adapters/handlers rather than adding another provider enum to the durable core.
 
 Canonical events carry CloudEvents-style `specversion`, `id`, `source`, and `type` metadata plus Ishikeit routing fields. Provider-native data stays inside `data`; portable message content is represented as typed parts.
 
@@ -29,7 +29,7 @@ Portable content parts currently include:
 
 Media is represented by an explicit reference type rather than by arbitrary provider payloads. Provider media resolution happens **after** the webhook ACK. The Meta resolver uses an HTTPS/host allowlist, disables automatic redirects, revalidates each redirect target, and enforces a configured byte limit before content is handed to the AI bridge.
 
-The Meta messaging adapter supports text and rich media for Messenger, Instagram Direct, and WhatsApp Cloud API. The Telegram adapter maps the same portable text, image, video, audio, and document parts to Telegram Bot API methods. Provider-specific limits remain inside each adapter.
+The Meta messaging adapter supports text and rich media for Messenger, Instagram Direct, and WhatsApp Cloud API. The Telegram adapter maps the same portable text, image, video, audio, and document parts to Telegram Bot API methods. The TikTok Business Messaging ingress maps inbound text, image, video, and structured message types to the same portable contract; its initial generic outbound adapter intentionally sends text only, while TikTok image upload/templates/automatic messages remain separate future operations. Provider-specific limits remain inside each adapter.
 
 ## Production safety
 
@@ -37,7 +37,9 @@ The production webhook boundary remains:
 
 - `GET /ishikeit/webhooks/meta` — Meta verification challenge
 - `POST /ishikeit/webhooks/meta` — signed Meta webhook ingress
-- exact raw-body `X-Hub-Signature-256` verification before JSON is trusted
+- `POST /ishikeit/webhooks/telegram` — Telegram secret-token authenticated ingress when configured
+- `POST /ishikeit/webhooks/tiktok` — TikTok HMAC-authenticated Business Messaging ingress when configured
+- exact raw-body provider authentication before JSON is trusted
 - PostgreSQL durable-before-ACK persistence
 - provider-aware normalization and deduplication
 - no permanent raw webhook-body archive
@@ -85,6 +87,7 @@ Registered messaging adapters are:
 ```text
 meta / messaging / message.send
 telegram / messaging / message.send
+tiktok / messaging / message.send
 ```
 
 Additional adapters can be registered later, for example:
@@ -146,6 +149,27 @@ For a canary rollout, set `PROCESSOR_CANARY_PARTITION_KEYS` to one or more hashe
 Then enable processing and action dispatch independently. The legacy `META_OUTBOUND_ENABLED` variable remains a compatibility alias during migration, but new deployments should use `ACTION_DISPATCH_ENABLED`.
 
 The required staged procedure is documented in [`docs/production-rollout.md`](docs/production-rollout.md).
+
+## TikTok Business Messaging
+
+TikTok for Business Business Messaging is implemented behind configuration and TikTok access/authorization gates. It is **not production-active yet**.
+
+Implemented contract:
+
+- `POST /ishikeit/webhooks/tiktok`
+- exact raw-body `TikTok-Signature` HMAC-SHA256 verification with a bounded timestamp age
+- `provider=tiktok`, `channel=business`, `capability=messaging`
+- deterministic provider-event deduplication and per-conversation partitioning
+- inbound text, image, video, share-post, and other structured message normalization
+- inbound image/video provider-media resolution only after webhook ACK
+- `tiktok / messaging / message.send` with generic outbound text replies
+- provider-specific throttling/transport failure classification
+- business-account target validation
+- credential/signature log redaction
+
+TikTok's Business Messaging API is a distinct product family from its Marketing, Organic, and Lead APIs. Templates, automatic messages, Comment-to-Message, image upload/send, lead operations, and advertising operations should therefore be added as explicit future operations rather than hidden inside generic `message.send`.
+
+Production activation requires a real TikTok for Business developer app with Business Messaging API access, completion of TikTok's applicable security/privacy review, authorization of the target Business Account, a production token lifecycle, Business Messaging webhook configuration pointing to Ishikeit, and a controlled human-originated end-to-end canary. No TikTok credentials are committed to this repository.
 
 ## Telegram production
 

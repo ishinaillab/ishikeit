@@ -1,6 +1,6 @@
 # Ishikeit production architecture
 
-Status: provider-neutral durable processor is production-active for Meta messaging and Telegram messaging behind independent execution gates.
+Status: provider-neutral durable processor is production-active for Meta and Telegram messaging; TikTok Business Messaging is implemented behind provider-access and runtime-configuration gates.
 
 ## Design goals
 
@@ -9,6 +9,7 @@ Ishikeit is built around durable **events** and durable **actions**, not around 
 The core must remain stable when a future capability is introduced. Examples include:
 
 - Telegram messaging
+- TikTok Business Messaging
 - additional Meta messaging surfaces
 - Meta Marketing API campaign management
 - Meta lead capture/management
@@ -19,7 +20,7 @@ Provider-specific semantics belong in adapters. Generic persistence, leasing, re
 
 ## Ingress
 
-The production ingress adapters are Meta and Telegram Bot API. Telegram is configured with a dedicated bot credential and webhook secret and is production-active after a controlled end-to-end canary.
+The production-active ingress adapters are Meta and Telegram Bot API. A TikTok Business Messaging ingress adapter is also implemented but remains inactive until TikTok grants the required Business Messaging access, the Business Account is authorized, and production credentials are configured.
 
 `GET /ishikeit/webhooks/meta` performs Meta's verification challenge.
 
@@ -37,6 +38,8 @@ The production ingress adapters are Meta and Telegram Bot API. Telegram is confi
 AI, media downloads, profile lookups, provider calls, and WordPress requests never run before the webhook ACK.
 
 Telegram uses `POST /ishikeit/webhooks/telegram`. It validates Telegram's secret-token header before JSON parsing, normalizes Bot API updates into the same canonical event contract, derives deterministic update deduplication and per-chat partition identities, and commits through the same durable-before-ACK store.
+
+TikTok uses `POST /ishikeit/webhooks/tiktok` when configured. It verifies the exact raw body using TikTok's `TikTok-Signature` HMAC-SHA256 contract, enforces a bounded signature timestamp age to reduce replay risk, normalizes Business Messaging webhook content into canonical events, partitions by Business Account plus conversation, and commits through the same durable-before-ACK store.
 
 ## Canonical events
 
@@ -131,7 +134,7 @@ The Meta resolver currently:
 
 WhatsApp media IDs are resolved through the official Graph Media API only after ingress is committed. Messenger/Instagram attachment URLs are downloaded only through the Meta resolver.
 
-A future provider receives its own resolver and credentials.
+Telegram has a provider-specific `file_id` resolver. TikTok Business Messaging has a provider-media resolver for inbound image/video media IDs: it requests a TikTok download URL only after durable webhook ACK, requires HTTPS, rejects local/private-literal destinations, constrains redirects to the provider-returned host, and enforces request and byte ceilings. Future providers receive their own resolver and credentials.
 
 ## WordPress AI bridge
 
@@ -200,6 +203,7 @@ Registered messaging adapters are:
 ```text
 meta / messaging / message.send
 telegram / messaging / message.send
+tiktok / messaging / message.send
 ```
 
 Future examples can be registered without modifying the worker:
@@ -283,10 +287,24 @@ PostgreSQL stores normalized events, hashes, durable actions, attempt state, and
 
 ## Versioning
 
-Meta Graph API target is configured by `META_GRAPH_API_VERSION`.
+Meta Graph API target is configured by `META_GRAPH_API_VERSION`. TikTok Business Messaging's API target is independently configured by `TIKTOK_BUSINESS_API_VERSION`.
 
 Canonical event, action, bridge, and provider adapter contracts are versioned independently. Provider API upgrades are deliberate and tested rather than automatic.
 
+
+## TikTok Business Messaging adapter
+
+TikTok Business Messaging is implemented as another provider adapter, not as a new durable core. The route is configuration-gated and is not production-active until TikTok grants the required Business Messaging access and a Business Account is authorized.
+
+Ingress verifies the exact raw request body with the `TikTok-Signature` timestamp/signature pair before JSON parsing. The verifier computes HMAC-SHA256 over `timestamp + "." + raw_body` with the configured app secret and rejects signatures outside a bounded replay window. It validates the webhook `client_key`; signed events whose `user_openid` belongs to a different authorized Business Account are acknowledged as ignored without persistence so TikTok does not retry another account's traffic into this single-account deployment. Business Messaging `im_receive_msg` events normalize as `message.received`; `im_send_msg` echoes normalize as `message.sent`, so the conversational handler cannot accidentally answer its own outbound echo. TikTok's privacy-reduced `im_receive_msg_eu` envelope has no conversation/message body and is intentionally persisted as a non-conversational event instead of being guessed into an AI turn. Conversation ID becomes the canonical reply identity and durable ordering partition only when TikTok actually provides it.
+
+Inbound message normalization currently covers text, image, video, share-post, and unknown structured TikTok message types. Image/video provider media IDs are resolved only after webhook ACK by the TikTok media resolver, which requests a provider download URL using the authorized Business Account credential and applies HTTPS, redirect, timeout, and byte-ceiling safeguards before the AI bridge sees bytes.
+
+Outbound registers `tiktok / messaging / message.send`. The initial generic operation intentionally supports text only and enforces TikTok's text limit before network I/O. Transport failures are marked retryable and delivery-ambiguous; provider/API failures remain provider-specific. The adapter also rejects actions whose target Business Account differs from its configured account.
+
+TikTok-specific image upload/send, templates, automatic messages, Comment-to-Message, unlock-conversation operations, leads, Organic API actions, and Marketing API actions are intentionally **not** folded into generic `message.send`. They should be separate typed operations/capabilities so TikTok policy windows, permissions, data handling, and review requirements remain explicit.
+
+Production activation requires the full TikTok Business Messaging credential set, TikTok's applicable access/security/privacy review, Business Account authorization, a durable token lifecycle, provider webhook configuration pointing to `/ishikeit/webhooks/tiktok`, capability checks, and a controlled human-originated end-to-end canary. No TikTok credential is committed to the repository.
 
 ## Telegram Bot API adapter
 

@@ -3,10 +3,12 @@ import { loadEnvironment } from "../config/env.js";
 import { ActionDispatcher } from "../dispatch/dispatcher.js";
 import { MetaMessagingAdapter } from "../adapters/meta/messaging.js";
 import { TelegramMessagingAdapter } from "../adapters/telegram/messaging.js";
+import { TikTokBusinessMessagingAdapter } from "../adapters/tiktok/messaging.js";
 import { WordPressBrainClient } from "../brain/wordpress.js";
 import { buildServer } from "../http/server.js";
 import { MetaMediaResolver } from "../media/meta.js";
 import { TelegramMediaResolver } from "../media/telegram.js";
+import { TikTokMediaResolver } from "../media/tiktok.js";
 import { GeminiVideoInterpreter } from "../media/gemini-video.js";
 import { MediaInterpreterRegistry } from "../media/interpreter.js";
 import { MediaResolverRegistry } from "../media/resolver.js";
@@ -20,6 +22,7 @@ import { EventHandlerRegistry } from "../processing/registry.js";
 import { InboundProcessorWorker } from "../workers/inbound-processor-worker.js";
 import { OutboxWorker } from "../workers/outbox-worker.js";
 import { TelegramSender } from "../channels/telegram-send.js";
+import { TikTokBusinessSender } from "../channels/tiktok-send.js";
 import { telegramBotIdFromToken } from "../security/telegram.js";
 
 const env = loadEnvironment();
@@ -37,6 +40,19 @@ const telegram = env.TELEGRAM_BOT_TOKEN === undefined || env.TELEGRAM_WEBHOOK_SE
       botId: telegramBotIdFromToken(env.TELEGRAM_BOT_TOKEN),
       webhookSecret: env.TELEGRAM_WEBHOOK_SECRET
     };
+const tiktok = (
+  env.TIKTOK_BUSINESS_APP_ID === undefined
+  || env.TIKTOK_BUSINESS_APP_SECRET === undefined
+  || env.TIKTOK_BUSINESS_ID === undefined
+  || env.TIKTOK_BUSINESS_ACCESS_TOKEN === undefined
+)
+  ? undefined
+  : {
+      appId: env.TIKTOK_BUSINESS_APP_ID,
+      clientSecret: env.TIKTOK_BUSINESS_APP_SECRET,
+      businessId: env.TIKTOK_BUSINESS_ID,
+      maxSignatureAgeSeconds: env.TIKTOK_WEBHOOK_MAX_AGE_SECONDS
+    };
 const server = buildServer({
   logger,
   ready: () => db.ready(),
@@ -44,6 +60,7 @@ const server = buildServer({
   appSecret: env.META_APP_SECRET,
   verifyToken: env.META_WEBHOOK_VERIFY_TOKEN,
   ...(telegram === undefined ? {} : { telegram }),
+  ...(tiktok === undefined ? {} : { tiktok }),
   ...(env.OPS_METRICS_TOKEN === undefined
     ? {}
     : {
@@ -76,6 +93,17 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
       requestTimeoutMs: env.TELEGRAM_OUTBOUND_REQUEST_TIMEOUT_MS
     })));
   }
+  if (
+    env.TIKTOK_BUSINESS_ID !== undefined
+    && env.TIKTOK_BUSINESS_ACCESS_TOKEN !== undefined
+  ) {
+    dispatcher.register(new TikTokBusinessMessagingAdapter(new TikTokBusinessSender({
+      businessId: env.TIKTOK_BUSINESS_ID,
+      accessToken: env.TIKTOK_BUSINESS_ACCESS_TOKEN,
+      apiVersion: env.TIKTOK_BUSINESS_API_VERSION,
+      requestTimeoutMs: env.TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS
+    })));
+  }
 
   outboundWorker = new OutboxWorker({ store: queue, dispatcher, logger });
 }
@@ -99,6 +127,18 @@ if (env.PROCESSOR_ENABLED) {
   if (env.TELEGRAM_BOT_TOKEN !== undefined) {
     mediaResolvers.register(new TelegramMediaResolver({
       botToken: env.TELEGRAM_BOT_TOKEN,
+      maxBytes: env.MEDIA_MAX_BYTES,
+      requestTimeoutMs: env.MEDIA_REQUEST_TIMEOUT_MS
+    }));
+  }
+  if (
+    env.TIKTOK_BUSINESS_ID !== undefined
+    && env.TIKTOK_BUSINESS_ACCESS_TOKEN !== undefined
+  ) {
+    mediaResolvers.register(new TikTokMediaResolver({
+      businessId: env.TIKTOK_BUSINESS_ID,
+      accessToken: env.TIKTOK_BUSINESS_ACCESS_TOKEN,
+      apiVersion: env.TIKTOK_BUSINESS_API_VERSION,
       maxBytes: env.MEDIA_MAX_BYTES,
       requestTimeoutMs: env.MEDIA_REQUEST_TIMEOUT_MS
     }));

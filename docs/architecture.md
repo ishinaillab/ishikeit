@@ -1,6 +1,6 @@
 # Ishikeit production architecture
 
-Status: provider-neutral durable processor implemented behind independent safety gates; Meta messaging remains the first concrete provider integration.
+Status: provider-neutral durable processor is production-active for Meta messaging and Telegram messaging behind independent execution gates.
 
 ## Design goals
 
@@ -19,7 +19,7 @@ Provider-specific semantics belong in adapters. Generic persistence, leasing, re
 
 ## Ingress
 
-The current production ingress adapter is Meta. A Telegram Bot API ingress adapter is implemented behind configuration and remains inactive until its runtime credentials and provider webhook are configured.
+The production ingress adapters are Meta and Telegram Bot API. Telegram is configured with a dedicated bot credential and webhook secret and is production-active after a controlled end-to-end canary.
 
 `GET /ishikeit/webhooks/meta` performs Meta's verification challenge.
 
@@ -298,4 +298,4 @@ Outbound registers `telegram / messaging / message.send`. It maps portable text/
 
 Inbound provider `file_id` media is resolved only after webhook ACK using `getFile`. Downloads are restricted to Telegram's official Bot API file endpoint, redirects and unsafe returned file paths are rejected, and the resolver enforces both Ishikeit's configured media ceiling and Telegram Cloud Bot API's download ceiling.
 
-Activation is deliberately configuration-gated: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` must be configured together. Production should initially subscribe only to `message` updates. The first `setWebhook` call must use `drop_pending_updates=true` so pre-launch pending updates cannot become delayed AI turns, and `getWebhookInfo` should be checked immediately afterward. Then run a controlled end-to-end canary before the integration is declared active.
+Activation remains configuration-gated: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` must be configured together. Production is currently active on `@ishinailbot`; the initial `setWebhook` used `allowed_updates=["message"]` and `drop_pending_updates=true`, and post-canary `getWebhookInfo` reported zero pending updates and no delivery error. The controlled canary persisted one Telegram `message.received` event, generated one `telegram / messaging / message.send` action, and published it on the first attempt with a Telegram provider message ID. Future credential rotations must repeat the readiness, webhook, and canary checks before being considered complete.

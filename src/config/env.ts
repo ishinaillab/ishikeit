@@ -13,6 +13,7 @@ const schema = z.object({
   LOG_LEVEL: z.enum(["fatal","error","warn","info","debug","trace"]).default("info"),
   DATABASE_URL: z.string().min(1).optional(),
   OPS_METRICS_TOKEN: z.string().min(32).optional(),
+  OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: z.string().min(40).max(64).optional(),
 
   PROCESSOR_ENABLED: booleanFromEnv.default(false),
   PROCESSOR_CUTOVER_AT: z.string().datetime({ offset: true }).optional(),
@@ -48,10 +49,14 @@ const schema = z.object({
 
   TIKTOK_BUSINESS_APP_ID: z.string().min(1).max(256).optional(),
   TIKTOK_BUSINESS_APP_SECRET: z.string().min(16).max(512).optional(),
+  TIKTOK_BUSINESS_AUTHORIZATION_URL: z.string().url().optional(),
+  TIKTOK_BUSINESS_REDIRECT_URI: z.string().url().optional(),
   TIKTOK_BUSINESS_ID: z.string().min(1).max(256).optional(),
-  TIKTOK_BUSINESS_ACCESS_TOKEN: z.string().min(16).max(4096).optional(),
   TIKTOK_BUSINESS_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default("v1.3"),
   TIKTOK_WEBHOOK_MAX_AGE_SECONDS: z.coerce.number().int().min(30).max(900).default(300),
+  TIKTOK_OAUTH_STATE_TTL_SECONDS: z.coerce.number().int().min(60).max(1800).default(600),
+  TIKTOK_TOKEN_REFRESH_SKEW_SECONDS: z.coerce.number().int().min(60).max(3600).default(300),
+  TIKTOK_OAUTH_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
 }).superRefine((value, ctx) => {
   if ((value.TELEGRAM_BOT_TOKEN === undefined) !== (value.TELEGRAM_WEBHOOK_SECRET === undefined)) {
@@ -62,21 +67,59 @@ const schema = z.object({
     });
   }
 
-  const tiktokKeys = [
+  const tiktokOAuthKeys = [
     "TIKTOK_BUSINESS_APP_ID",
     "TIKTOK_BUSINESS_APP_SECRET",
-    "TIKTOK_BUSINESS_ID",
-    "TIKTOK_BUSINESS_ACCESS_TOKEN"
+    "TIKTOK_BUSINESS_AUTHORIZATION_URL",
+    "TIKTOK_BUSINESS_REDIRECT_URI",
+    "OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64"
   ] as const;
-  const configuredTikTokKeys = tiktokKeys.filter((key) => value[key] !== undefined);
-  if (configuredTikTokKeys.length !== 0 && configuredTikTokKeys.length !== tiktokKeys.length) {
-    for (const key of tiktokKeys) {
+  const configuredTikTokOAuthKeys = tiktokOAuthKeys.filter((key) => value[key] !== undefined);
+  if (
+    configuredTikTokOAuthKeys.length !== 0
+    && configuredTikTokOAuthKeys.length !== tiktokOAuthKeys.length
+  ) {
+    for (const key of tiktokOAuthKeys) {
       if (value[key] === undefined) {
         ctx.addIssue({
           code: "custom",
           path: [key],
-          message: "TikTok Business Messaging credentials must be configured together"
+          message: "TikTok OAuth application settings must be configured together"
         });
+      }
+    }
+  }
+
+  if (
+    configuredTikTokOAuthKeys.length === tiktokOAuthKeys.length
+    && value.OPS_METRICS_TOKEN === undefined
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["OPS_METRICS_TOKEN"],
+      message: "TikTok OAuth operations require OPS_METRICS_TOKEN"
+    });
+  }
+
+  if (value.TIKTOK_BUSINESS_ID !== undefined && configuredTikTokOAuthKeys.length !== tiktokOAuthKeys.length) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["TIKTOK_BUSINESS_ID"],
+      message: "TikTok Business Account activation requires the complete OAuth application configuration"
+    });
+  }
+
+  if (value.NODE_ENV === "production") {
+    for (const key of ["TIKTOK_BUSINESS_AUTHORIZATION_URL", "TIKTOK_BUSINESS_REDIRECT_URI"] as const) {
+      const raw = value[key];
+      if (raw !== undefined) {
+        const url = new URL(raw);
+        if (url.protocol !== "https:") {
+          ctx.addIssue({ code: "custom", path: [key], message: "TikTok production OAuth URLs must use HTTPS" });
+        }
+        if (key === "TIKTOK_BUSINESS_REDIRECT_URI" && !url.pathname.endsWith("/")) {
+          ctx.addIssue({ code: "custom", path: [key], message: "TikTok redirect URI path must end with a slash" });
+        }
       }
     }
   }
@@ -134,6 +177,31 @@ export function loadEnvironment(input: NodeJS.ProcessEnv = process.env): Environ
 
   if (new Set(canaryPartitionKeys).size !== canaryPartitionKeys.length) {
     throw new Error("PROCESSOR_CANARY_PARTITION_KEYS must not contain duplicates");
+  }
+
+  if (parsed.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined) {
+    const key = Buffer.from(parsed.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64, "base64");
+    if (
+      key.length !== 32
+      || key.toString("base64").replace(/=+$/u, "")
+        !== parsed.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64.replace(/=+$/u, "")
+    ) {
+      throw new Error("OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 must encode exactly 32 bytes");
+    }
+  }
+
+  if (parsed.TIKTOK_BUSINESS_AUTHORIZATION_URL !== undefined) {
+    const url = new URL(parsed.TIKTOK_BUSINESS_AUTHORIZATION_URL);
+    if (!(url.hostname === "tiktok.com" || url.hostname.endsWith(".tiktok.com"))) {
+      throw new Error("TIKTOK_BUSINESS_AUTHORIZATION_URL must use an official TikTok host");
+    }
+  }
+
+  if (parsed.TIKTOK_BUSINESS_REDIRECT_URI !== undefined) {
+    const url = new URL(parsed.TIKTOK_BUSINESS_REDIRECT_URI);
+    if (url.search !== "" || url.hash !== "") {
+      throw new Error("TIKTOK_BUSINESS_REDIRECT_URI must not include a query string or fragment");
+    }
   }
 
   if (parsed.NODE_ENV === "production") {

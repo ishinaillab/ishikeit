@@ -1,6 +1,6 @@
 # Ishikeit continuation handoff
 
-Updated: 2026-10-01
+Updated: 2026-10-02
 
 ## Canonical project
 
@@ -624,7 +624,7 @@ The temporary Telegram credential handoff file was cleared after the credential 
 
 ## TikTok Business Messaging adapter — implementation milestone 2026-10-02
 
-TikTok for Business Business Messaging is now implemented through the existing provider-neutral event/action boundaries. No database migration was required.
+TikTok for Business Business Messaging is implemented through the existing provider-neutral event/action boundaries. The original messaging adapter required no schema change; the later production OAuth lifecycle adds the dedicated OAuth migration documented below.
 
 Implemented runtime boundary:
 
@@ -642,24 +642,71 @@ Implemented runtime boundary:
 - generic TikTok outbound intentionally restricted to text in this milestone
 - target Business Account validation
 - provider-specific transport/rate-limit failure classification
-- TikTok signature/app-secret/access-token log redaction
-- TikTok credentials must be configured as one complete set
+- TikTok signature/app-secret/OAuth-secret log redaction
+- HTTP request serialization strips query strings, preventing OAuth callback state/auth codes from entering request logs
+- TikTok OAuth application settings must be configured as one complete protected set; Business Account activation is a separate post-authorization step
 
-Configuration contract:
+Configuration contract after the OAuth-lifecycle hardening:
 
 ```text
 TIKTOK_BUSINESS_APP_ID
 TIKTOK_BUSINESS_APP_SECRET
+TIKTOK_BUSINESS_AUTHORIZATION_URL
+TIKTOK_BUSINESS_REDIRECT_URI=https://apps.ishinaillab.com/ishikeit/oauth/tiktok/callback/
+OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64
 TIKTOK_BUSINESS_ID
-TIKTOK_BUSINESS_ACCESS_TOKEN
 TIKTOK_BUSINESS_API_VERSION=v1.3
 TIKTOK_WEBHOOK_MAX_AGE_SECONDS=300
+TIKTOK_OAUTH_STATE_TTL_SECONDS=600
+TIKTOK_TOKEN_REFRESH_SKEW_SECONDS=300
+TIKTOK_OAUTH_REQUEST_TIMEOUT_MS=10000
 TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS=10000
 ```
 
+`TIKTOK_BUSINESS_ACCESS_TOKEN` is deliberately no longer a production environment variable. TikTok Business Account access tokens are short-lived and are now obtained/refreshed through the durable OAuth flow.
+
 Current official TikTok API for Business documentation treats Business Messaging, Marketing, Organic, and other API product families separately. Keep that separation in Ishikeit. Automatic messages, templates, Comment-to-Message, image upload/send, conversation unlock, lead operations, Organic API actions, Marketing API actions, and future TikTok surfaces must be explicit operations/capabilities rather than hidden behind generic conversational `message.send`.
 
-Repository validation for this milestone:
+### TikTok OAuth/token lifecycle hardening — 2026-10-02
+
+The static-access-token design was replaced before production activation because TikTok Business Account access tokens are short-lived. The app now implements the provider's account-holder OAuth lifecycle rather than requiring a daily manual token replacement.
+
+Implemented:
+
+- protected `POST /ops/tiktok/oauth/start` returns a TikTok authorization URL carrying a cryptographically random one-time state
+- only the SHA-256 state hash, exact redirect URI, expiry, provider, and consumed timestamp are stored
+- public `GET /ishikeit/oauth/tiktok/callback/` atomically consumes state before exchanging the authorization code
+- authorization-code exchange uses `tt_user/oauth2/token/`
+- refresh uses `tt_user/oauth2/refresh_token/`
+- protected `GET /ops/tiktok/oauth/status` returns safe account/scope/expiry metadata only
+- OAuth access/refresh tokens are AES-256-GCM encrypted in the application before PostgreSQL storage
+- the encryption key is a dedicated 32-byte server secret and is never stored in PostgreSQL
+- ciphertext AAD binds each token to provider, Business Account ID, and access/refresh token kind
+- access tokens refresh before expiry; replacement refresh credentials are persisted when returned
+- concurrent requests in one process share one in-flight refresh operation
+- refresh is also serialized across application processes with a PostgreSQL advisory lock; a waiting process re-reads the durable credential after acquiring the lock and skips provider refresh when another process already renewed it
+- missing/expired refresh credentials require Business Account reauthorization and are classified non-retryable; transient OAuth network/rate-limit/server failures remain retryable
+- TikTok sender/media calls obtain tokens dynamically; pre-send token failures are retryable but not delivery-ambiguous
+- logger redaction covers OAuth encryption key plus access/refresh token fields
+- application startup fails if TikTok OAuth is configured while the OAuth schema is absent; once `TIKTOK_BUSINESS_ID` is set, startup/readiness also require a matching decryptable durable credential with a usable refresh token
+
+Database migration in `ishinaillab/ishikeit-db`:
+
+```text
+supabase/migrations/20261002020000_oauth_credentials.sql
+```
+
+It adds RLS-protected `oauth_credentials` and `oauth_authorization_states` tables, revokes `anon`/`authenticated`, enforces encrypted-token IV/tag shape and all-or-none refresh-token fields, and indexes active state expiry. The migration was first executed against production inside an explicit transaction and rolled back; that dry-run verified both tables could be created successfully. GitHub PR #5 in `ishinaillab/ishikeit-db` was then squash-merged as `952cd7894230f9ed69397922a7c3da2fa47f1777`, the exact merged migration was permanently applied to production, both tables were verified with RLS enabled, and `anon`/`authenticated` were verified to have no SELECT privilege. Because the SQL was applied directly after the Supabase CLI hit a local Windows spawn failure, the remote Supabase migration ledger was explicitly repaired and read back as version `20261002020000`, name `oauth_credentials`, with 9 recorded statements.
+
+Latest local application validation:
+
+- lint: passed
+- typecheck: passed
+- test files: 26 passed
+- tests: 132 passed
+- build: passed
+
+Repository validation for the original base-adapter milestone:
 
 - lint: passed
 - typecheck: passed
@@ -685,14 +732,15 @@ TikTok is **not production-active yet**. No real TikTok credential has been adde
 
 1. create/use the real TikTok for Business developer app
 2. obtain Business Messaging API access and complete TikTok's applicable data-security/privacy review
-3. authorize the target TikTok Business Account
-4. prove the production access-token/refresh lifecycle rather than relying on a manually copied short-lived token
-5. verify the Business Account's messaging capability/limits through TikTok's supported API
-6. configure the complete TikTok credential set in the trusted production secret source and Hostinger without round-tripping masked values
-7. register the Business Messaging webhook to `https://apps.ishinaillab.com/ishikeit/webhooks/tiktok`
-8. verify signed webhook delivery and durable-before-ACK persistence
-9. run one controlled human-originated direct-message canary through webhook -> PostgreSQL -> AI bridge -> `action.dispatch` -> TikTok reply
-10. audit provider resource identity, attempts, pending queue, dead letters, and runtime warnings/errors before calling TikTok production-active
+3. configure the TikTok OAuth application settings in the trusted production secret source: app ID, app secret, TikTok-generated authorization URL, exact HTTPS redirect URI, operational bearer token, and the dedicated OAuth encryption key
+4. deploy the OAuth lifecycle code while leaving `TIKTOK_BUSINESS_ID` unset so TikTok messaging remains inactive
+5. call the protected `POST /ops/tiktok/oauth/start`, complete Business Account authorization in TikTok, and verify `GET /ops/tiktok/oauth/status` reports the authorized `open_id`, scopes, and refresh availability without exposing tokens
+6. set `TIKTOK_BUSINESS_ID` to that verified `open_id`, restart/redeploy, and verify the TikTok webhook/sender/media boundaries become active for only that account
+7. verify the Business Account's messaging capability/limits through TikTok's supported API
+8. register the Business Messaging webhook to `https://apps.ishinaillab.com/ishikeit/webhooks/tiktok`
+9. verify signed webhook delivery and durable-before-ACK persistence
+10. run one controlled human-originated direct-message canary through webhook -> PostgreSQL -> AI bridge -> `action.dispatch` -> TikTok reply
+11. audit token refresh behavior, provider resource identity, attempts, pending queue, dead letters, and runtime warnings/errors before calling TikTok production-active
 
 Do not claim TikTok production activation until those provider-backed checks have succeeded.
 

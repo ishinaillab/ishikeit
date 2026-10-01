@@ -1,7 +1,7 @@
 import pg from "pg";
 const { Pool } = pg;
 
-export type SqlValue = string | number | boolean | Date | Buffer | null;
+export type SqlValue = string | number | boolean | Date | Buffer | readonly string[] | null;
 
 export interface SqlExecutor {
   query<T extends pg.QueryResultRow = pg.QueryResultRow>(
@@ -125,6 +125,30 @@ export class PostgresDatabase {
       throw error;
     } finally {
       client.release();
+    }
+  }
+
+  async withAdvisoryLock<T>(lockName: string, work: () => Promise<T>): Promise<T> {
+    const client = await this.#pool.connect();
+    let locked = false;
+    try {
+      await client.query(
+        "SELECT pg_advisory_lock(hashtextextended($1::text, 0))",
+        [lockName]
+      );
+      locked = true;
+      return await work();
+    } finally {
+      try {
+        if (locked) {
+          await client.query(
+            "SELECT pg_advisory_unlock(hashtextextended($1::text, 0))",
+            [lockName]
+          );
+        }
+      } finally {
+        client.release();
+      }
     }
   }
 

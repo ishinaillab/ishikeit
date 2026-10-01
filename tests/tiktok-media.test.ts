@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { AccessTokenError } from "../src/auth/token-provider.js";
 import type { CanonicalEvent } from "../src/domain/events.js";
 import { TikTokMediaResolver } from "../src/media/tiktok.js";
 
@@ -91,6 +92,27 @@ describe("TikTokMediaResolver", () => {
       source: { kind: "provider", value: "media-audio" }
     })).rejects.toMatchObject({ retryable: false });
 
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not retry authorization-required token failures before network I/O", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const resolver = new TikTokMediaResolver({
+      businessId: "business-1",
+      accessTokenProvider: {
+        getAccessToken: () => Promise.reject(new AccessTokenError(
+          "reauthorization required",
+          { retryable: false }
+        ))
+      },
+      maxBytes: 1024,
+      fetchImpl
+    });
+
+    await expect(resolver.resolve(event, {
+      kind: "image",
+      source: { kind: "provider", value: "media-1" }
+    })).rejects.toMatchObject({ retryable: false });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 

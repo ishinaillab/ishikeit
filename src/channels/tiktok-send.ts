@@ -1,9 +1,15 @@
 import { DispatchFailure } from "../dispatch/failure.js";
 import type { ContentPart } from "../domain/content.js";
+import {
+  AccessTokenError,
+  StaticAccessTokenProvider,
+  type AccessTokenProvider
+} from "../auth/token-provider.js";
 
 interface TikTokBusinessSenderOptions {
   businessId: string;
-  accessToken: string;
+  accessToken?: string;
+  accessTokenProvider?: AccessTokenProvider;
   apiVersion?: string;
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -27,14 +33,18 @@ function providerCode(value: unknown): string | undefined {
 
 export class TikTokBusinessSender {
   readonly businessId: string;
-  readonly #accessToken: string;
+  readonly #accessTokenProvider: AccessTokenProvider;
   readonly #apiVersion: string;
   readonly #requestTimeoutMs: number;
   readonly #fetch: typeof fetch;
 
   constructor(options: TikTokBusinessSenderOptions) {
     this.businessId = options.businessId;
-    this.#accessToken = options.accessToken;
+    if ((options.accessToken === undefined) === (options.accessTokenProvider === undefined)) {
+      throw new Error("TikTok sender requires exactly one access-token source");
+    }
+    this.#accessTokenProvider = options.accessTokenProvider
+      ?? new StaticAccessTokenProvider(options.accessToken!);
     this.#apiVersion = options.apiVersion ?? "v1.3";
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
     this.#fetch = options.fetchImpl ?? fetch;
@@ -72,6 +82,17 @@ export class TikTokBusinessSender {
   }
 
   async #request(payload: Record<string, unknown>): Promise<TikTokSendResult> {
+    let accessToken: string;
+    try {
+      accessToken = await this.#accessTokenProvider.getAccessToken();
+    } catch (error) {
+      throw new DispatchFailure("TikTok OAuth access token is unavailable", {
+        retryable: error instanceof AccessTokenError ? error.retryable : true,
+        ambiguous: false,
+        cause: error
+      });
+    }
+
     let response: Response;
     try {
       response = await this.#fetch(
@@ -81,7 +102,7 @@ export class TikTokBusinessSender {
           headers: {
             "content-type": "application/json",
             accept: "application/json",
-            "Access-Token": this.#accessToken
+            "Access-Token": accessToken
           },
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(this.#requestTimeoutMs)

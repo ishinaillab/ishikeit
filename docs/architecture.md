@@ -283,7 +283,7 @@ This supports staged verification:
 
 Raw webhook bytes exist only long enough to authenticate and parse the request.
 
-PostgreSQL stores normalized events, hashes, durable actions, attempt state, and bounded error metadata. Logs avoid customer message bodies and redact provider/bridge credentials.
+PostgreSQL stores normalized events, hashes, durable actions, attempt state, and bounded error metadata. Logs avoid customer message bodies and redact provider/bridge credentials. HTTP request serialization strips query strings before logging so OAuth callback state and authorization codes cannot enter request logs.
 
 ## Versioning
 
@@ -300,11 +300,31 @@ Ingress verifies the exact raw request body with the `TikTok-Signature` timestam
 
 Inbound message normalization currently covers text, image, video, share-post, and unknown structured TikTok message types. Image/video provider media IDs are resolved only after webhook ACK by the TikTok media resolver, which requests a provider download URL using the authorized Business Account credential and applies HTTPS, redirect, timeout, and byte-ceiling safeguards before the AI bridge sees bytes.
 
-Outbound registers `tiktok / messaging / message.send`. The initial generic operation intentionally supports text only and enforces TikTok's text limit before network I/O. Transport failures are marked retryable and delivery-ambiguous; provider/API failures remain provider-specific. The adapter also rejects actions whose target Business Account differs from its configured account.
+Outbound registers `tiktok / messaging / message.send`. The initial generic operation intentionally supports text only and enforces TikTok's text limit before network I/O. Token acquisition happens before the provider send request; an OAuth/token-refresh failure is therefore retryable but not delivery-ambiguous. Transport failures after the send request begins remain retryable and delivery-ambiguous. Provider/API failures remain provider-specific, and the adapter rejects actions whose target Business Account differs from its configured account.
+
+### TikTok OAuth lifecycle
+
+TikTok Business Account authorization is modeled separately from messaging. Static production access tokens are not used because TikTok Business Account access tokens are short-lived.
+
+The OAuth lifecycle uses:
+
+- `POST /ops/tiktok/oauth/start` behind the existing operational bearer credential
+- a cryptographically random state value whose SHA-256 hash, expiry, provider, and exact redirect URI are persisted
+- `GET /ishikeit/oauth/tiktok/callback/` as the exact HTTPS redirect target
+- atomic one-time state consumption before authorization-code exchange
+- TikTok's `tt_user/oauth2/token/` authorization-code exchange
+- TikTok's `tt_user/oauth2/refresh_token/` refresh flow
+- `GET /ops/tiktok/oauth/status` for token-free operational metadata
+
+OAuth access/refresh tokens are encrypted in the application with AES-256-GCM before PostgreSQL storage. Each encrypted value uses a fresh 96-bit IV and authenticated additional data that binds the ciphertext to provider, Business Account ID, and token kind. The AES key is a dedicated 32-byte server secret and is never stored in PostgreSQL. The schema stores token expiry, refresh expiry, scopes, and a monotonically increasing token version.
+
+The `TikTokAccessTokenManager` reads the durable credential by `open_id`, refreshes before the configured expiry skew, persists replacement access/refresh credentials, preserves a refresh token when TikTok omits a replacement, rejects a refresh response for a different Business Account, and requires reauthorization after refresh-token expiry. Concurrent requests in one process share one in-flight refresh. Cross-process refresh is serialized with a PostgreSQL advisory lock keyed to provider/account; after acquiring that lock, the manager re-reads the durable credential and skips the provider refresh when another process already renewed it.
+
+OAuth tables use RLS and revoke `anon`/`authenticated`. Application startup fails when TikTok OAuth is configured but the OAuth schema is absent. Once `TIKTOK_BUSINESS_ID` is set, both startup and `/health/ready` require a matching decryptable durable credential with a usable refresh token. Missing/expired authorization is non-retryable and requires reauthorization; transient OAuth transport, throttling, and server failures remain retryable. The general database readiness path remains unchanged for deployments where TikTok OAuth is not configured.
 
 TikTok-specific image upload/send, templates, automatic messages, Comment-to-Message, unlock-conversation operations, leads, Organic API actions, and Marketing API actions are intentionally **not** folded into generic `message.send`. They should be separate typed operations/capabilities so TikTok policy windows, permissions, data handling, and review requirements remain explicit.
 
-Production activation requires the full TikTok Business Messaging credential set, TikTok's applicable access/security/privacy review, Business Account authorization, a durable token lifecycle, provider webhook configuration pointing to `/ishikeit/webhooks/tiktok`, capability checks, and a controlled human-originated end-to-end canary. No TikTok credential is committed to the repository.
+Production activation requires TikTok's applicable Business Messaging access/security/privacy review, app OAuth configuration, Business Account authorization, provider webhook configuration pointing to `/ishikeit/webhooks/tiktok`, capability/scope checks, and a controlled human-originated end-to-end canary. No TikTok credential is committed to the repository.
 
 ## Telegram Bot API adapter
 

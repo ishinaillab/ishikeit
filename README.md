@@ -1,6 +1,6 @@
 # Ishikeit
 
-Ishikeit is Ishi Nail Lab's first-party event and action backend. Meta messaging is the first production provider, but the core processor is intentionally provider-neutral so additional platforms and capabilities can be added without redesigning the durable processing boundary.
+Ishikeit is Ishi Nail Lab's first-party event and action backend. Meta messaging is the first production provider, and Telegram Bot API support is implemented as the first non-Meta messaging adapter. The core processor remains provider-neutral so additional platforms and capabilities can be added without redesigning the durable processing boundary.
 
 ## Architecture
 
@@ -29,7 +29,7 @@ Portable content parts currently include:
 
 Media is represented by an explicit reference type rather than by arbitrary provider payloads. Provider media resolution happens **after** the webhook ACK. The Meta resolver uses an HTTPS/host allowlist, disables automatic redirects, revalidates each redirect target, and enforces a configured byte limit before content is handed to the AI bridge.
 
-The Meta messaging adapter supports text and rich media for Messenger, Instagram Direct, and WhatsApp Cloud API. Provider-specific limits remain inside that adapter.
+The Meta messaging adapter supports text and rich media for Messenger, Instagram Direct, and WhatsApp Cloud API. The Telegram adapter maps the same portable text, image, video, audio, and document parts to Telegram Bot API methods. Provider-specific limits remain inside each adapter.
 
 ## Production safety
 
@@ -80,16 +80,16 @@ provider / capability / operation
 
 to a concrete adapter.
 
-The first registered adapter is:
+Registered messaging adapters are:
 
 ```text
 meta / messaging / message.send
+telegram / messaging / message.send
 ```
 
 Additional adapters can be registered later, for example:
 
 ```text
-telegram / messaging / message.send
 meta / marketing / campaign.create
 meta / marketing / lead.read
 meta / marketing / lead.update
@@ -146,5 +146,15 @@ For a canary rollout, set `PROCESSOR_CANARY_PARTITION_KEYS` to one or more hashe
 Then enable processing and action dispatch independently. The legacy `META_OUTBOUND_ENABLED` variable remains a compatibility alias during migration, but new deployments should use `ACTION_DISPATCH_ENABLED`.
 
 The required staged procedure is documented in [`docs/production-rollout.md`](docs/production-rollout.md).
+
+## Telegram activation
+
+Telegram remains configuration-gated. Configure `TELEGRAM_BOT_TOKEN` and a dedicated high-entropy `TELEGRAM_WEBHOOK_SECRET` together, then register this HTTPS webhook with Telegram:
+
+```text
+POST https://apps.ishinaillab.com/ishikeit/webhooks/telegram
+```
+
+Start with `allowed_updates=["message"]` so the production webhook receives only the update family that the conversational handler intentionally processes. Ishikeit verifies `X-Telegram-Bot-Api-Secret-Token` before parsing the update, persists the canonical event before acknowledging it, and resolves inbound provider `file_id` media only after the webhook ACK through Telegram's `getFile` path. A controlled end-to-end canary is required before Telegram is considered production-active.
 
 Access tokens and bridge credentials are secrets. Keep raw values in hosting/runtime secret storage only and never commit them.

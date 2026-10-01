@@ -571,7 +571,7 @@ Validation on PR #24:
 - 18 test files passed
 - 96 tests passed
 
-Production activation is deliberately not part of the code change. Keep Telegram runtime credentials unset until a real bot token and dedicated high-entropy webhook secret are stored in production secret storage. Then register `https://apps.ishinaillab.com/ishikeit/webhooks/telegram` with `allowed_updates=["message"]` and run a controlled end-to-end canary before declaring Telegram active.
+Production activation is deliberately not part of the code change. Keep Telegram runtime credentials unset until a real bot token and dedicated high-entropy webhook secret are stored in production secret storage. Then register `https://apps.ishinaillab.com/ishikeit/webhooks/telegram` with `allowed_updates=["message"]` and `drop_pending_updates=true`, verify `getWebhookInfo`, and run a controlled end-to-end canary before declaring Telegram active. The drop step is intentional: Telegram documents that changing `allowed_updates` does not remove updates already created before `setWebhook`.
 
 ## Context engineering and durable continuity
 

@@ -50,8 +50,12 @@ describe("TelegramMediaResolver", () => {
     expect(resolved.filename).toBe("reference.pdf");
     expect(resolved.mimeType).toBe("application/pdf");
     expect([...resolved.bytes]).toEqual([1, 2, 3, 4]);
-    expect(String(fetchImpl.mock.calls[0]?.[0])).toContain("/getFile");
-    expect(String(fetchImpl.mock.calls[1]?.[0])).toContain("/file/bot");
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe(
+      "https://api.telegram.org/bot" + token + "/getFile"
+    );
+    expect(fetchImpl.mock.calls[1]?.[0]).toBe(
+      "https://api.telegram.org/file/bot" + token + "/documents/reference.pdf"
+    );
   });
 
   it("rejects media above the configured ceiling before provider I/O", async () => {

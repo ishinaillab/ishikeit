@@ -668,6 +668,19 @@ Repository validation for this milestone:
 - build: passed
 - `git diff --check`: passed
 
+Merge/deployment verification:
+
+- GitHub PR #27 squash-merged to `main`
+- merged revision: `933c79a3b04a7a932844c64455ae11e3234607b1`
+- PR CI passed Node, PHP lint, and context-continuity
+- merged-main CI passed
+- Hostinger automatic build `01a0f879-11ab-71bf-9d2f-7416638948c5` completed for the merged revision
+- post-deploy `GET /health/ready` returned `{"status":"ready"}`
+- post-deploy runtime audit reported 31 entries and 0 WARN/ERROR
+- existing Telegram webhook remained protected: unauthenticated POST returned HTTP 401
+- TikTok webhook returned HTTP 404 after deployment because no TikTok credential set is configured; this is the intended inactive/configuration-gated state
+- post-deploy processor/outbound activity remained present with no runtime error
+
 TikTok is **not production-active yet**. No real TikTok credential has been added to Hostinger and no TikTok Business Messaging webhook has been registered. Before activation:
 
 1. create/use the real TikTok for Business developer app

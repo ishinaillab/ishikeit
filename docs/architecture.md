@@ -298,4 +298,4 @@ Outbound registers `telegram / messaging / message.send`. It maps portable text/
 
 Inbound provider `file_id` media is resolved only after webhook ACK using `getFile`. Downloads are restricted to Telegram's official Bot API file endpoint, redirects and unsafe returned file paths are rejected, and the resolver enforces both Ishikeit's configured media ceiling and Telegram Cloud Bot API's download ceiling.
 
-Activation is deliberately configuration-gated: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` must be configured together. Production should initially subscribe only to `message` updates, then run a controlled end-to-end canary before the integration is declared active.
+Activation is deliberately configuration-gated: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` must be configured together. Production should initially subscribe only to `message` updates. The first `setWebhook` call must use `drop_pending_updates=true` so pre-launch pending updates cannot become delayed AI turns, and `getWebhookInfo` should be checked immediately afterward. Then run a controlled end-to-end canary before the integration is declared active.

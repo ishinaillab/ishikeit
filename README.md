@@ -155,6 +155,6 @@ Telegram remains configuration-gated. Configure `TELEGRAM_BOT_TOKEN` and a dedic
 POST https://apps.ishinaillab.com/ishikeit/webhooks/telegram
 ```
 
-Start with `allowed_updates=["message"]` so the production webhook receives only the update family that the conversational handler intentionally processes. Ishikeit verifies `X-Telegram-Bot-Api-Secret-Token` before parsing the update, persists the canonical event before acknowledging it, and resolves inbound provider `file_id` media only after the webhook ACK through Telegram's `getFile` path. A controlled end-to-end canary is required before Telegram is considered production-active.
+Start with `allowed_updates=["message"]` so the production webhook receives only the update family that the conversational handler intentionally processes. On first production registration, also use `drop_pending_updates=true` so messages accumulated before Ishikeit's launch are not replayed into the processor; inspect `getWebhookInfo` after registration. Ishikeit verifies `X-Telegram-Bot-Api-Secret-Token` before parsing the update, persists the canonical event before acknowledging it, and resolves inbound provider `file_id` media only after the webhook ACK through Telegram's `getFile` path. A controlled end-to-end canary is required before Telegram is considered production-active.
 
 Access tokens and bridge credentials are secrets. Keep raw values in hosting/runtime secret storage only and never commit them.

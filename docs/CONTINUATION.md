@@ -546,9 +546,9 @@ The Business Verification result conflicts with the earlier verified project sta
 
 Meta's current Instagram API with Instagram Login review guidance confirms that the intended Advanced Access request remains `instagram_business_basic` plus the dependent `instagram_business_manage_messages` permission, and that the review evidence must demonstrate the real login/authorization and messaging flow. Do not fabricate reviewer evidence.
 
-## Telegram adapter implementation — branch state
+## Telegram adapter implementation — PR #24
 
-The first non-Meta messaging adapter is implemented on `telegram-messaging-adapter` without changing the durable processor or database schema.
+The first non-Meta messaging adapter is implemented on `telegram-messaging-adapter` without changing the durable processor or database schema. GitHub PR #24 targets `main`.
 
 Implemented boundaries:
 
@@ -561,6 +561,15 @@ Implemented boundaries:
 - bot-token/account consistency enforcement
 - runtime credential redaction and paired token/secret configuration
 - focused unit/integration tests for normalization, ingress authentication, media resolution, send behavior, environment validation, and the action adapter
+
+Validation on PR #24:
+
+- the first CI run correctly failed only on four ESLint `no-base-to-string` assertions in the newly added tests
+- those test assertions were corrected without changing runtime behavior
+- the subsequent CI run passed Node, PHP lint, and context-continuity
+- `npm run check` passed lint, typecheck, tests, and build
+- 18 test files passed
+- 96 tests passed
 
 Production activation is deliberately not part of the code change. Keep Telegram runtime credentials unset until a real bot token and dedicated high-entropy webhook secret are stored in production secret storage. Then register `https://apps.ishinaillab.com/ishikeit/webhooks/telegram` with `allowed_updates=["message"]` and run a controlled end-to-end canary before declaring Telegram active.
 
@@ -693,7 +702,7 @@ Continue building on the adapter/registry boundaries rather than redesigning the
 3. after approval, repeat the fresh ordinary non-role account DM test and verify normal `message.received` ingestion plus successful reply before declaring Instagram public-user messaging production-complete
 4. do not add Conversation Routing write/control APIs to the current `graph.instagram.com` path until Meta's supported authorization model for this specific app setup is proven
 5. activate and perform a real provider-backed video interpretation smoke test only after a paid Gemini API project/key is securely configured; until then retain the verified no-inspection safeguard
-6. finish Telegram adapter CI/review, merge it, then configure production secrets, register the Telegram webhook, and run a controlled end-to-end canary before activation
+6. merge the CI-validated Telegram adapter PR, then configure production secrets, register the Telegram webhook, and run a controlled end-to-end canary before activation
 7. add Meta lead-management capability as a separate capability/operation family
 8. add Meta Marketing API operations behind their own authorization/policy layer
 9. version and test each future provider adapter and media-capability contract independently

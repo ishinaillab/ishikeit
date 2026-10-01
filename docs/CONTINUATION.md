@@ -34,13 +34,13 @@ Hostinger is connected to:
 - entry file: `dist/processes/http.js`
 - package manager: npm
 
-Verified deployed Git revision:
+Verified application-code revision used for Telegram production activation:
 
 ```text
-14e1bd30bbe699992bf2c8479f3cf6e6571ceaa5
+dbb69c079b59dd2daff5f1fab2fd2ba594426faf
 ```
 
-That revision completed GitHub Actions successfully and Hostinger completed the corresponding Git-based Node.js build. It contains the previously deployed opt-in provider-neutral video-interpreter architecture plus safe Instagram routing observability for standby and conversation-handover events. Production keeps video interpretation disabled until a verified paid Gemini credential is configured.
+That revision completed GitHub Actions successfully and was rebuilt on Hostinger during the Telegram production cutover. It contains the provider-neutral Telegram messaging adapter in addition to the previously deployed video-interpreter architecture and Instagram routing observability. Production keeps video interpretation disabled until a verified paid Gemini credential is configured.
 
 Hostinger's official MCP is authenticated on the authorized desktop through OAuth and can inspect builds, runtime logs, Node.js settings, and environment-variable key state without exposing stored values.
 
@@ -93,8 +93,10 @@ Production now contains the runtime keys required for:
 - action dispatcher enablement
 - Meta outbound compatibility flag
 - Meta outbound request timeout
+- Telegram bot credential and webhook secret
+- Telegram outbound request timeout
 
-Raw values are secret and must stay in Hostinger/runtime secret storage.
+Raw values are secret and must stay in Hostinger/runtime secret storage. The local production recovery `.env` also contains the complete production key set; temporary one-off credential handoff files must be cleared after promotion.
 
 Current control state:
 
@@ -310,10 +312,11 @@ provider / capability / operation
 
 through `ActionDispatcher`.
 
-Current concrete adapter:
+Current concrete adapters:
 
 ```text
 meta / messaging / message.send
+telegram / messaging / message.send
 ```
 
 Future examples may include:
@@ -579,7 +582,45 @@ Validation on PR #24 and merged `main`:
 - 96 tests passed
 - no Telegram credential, provider webhook, or production activation was performed as part of the merge
 
-Production activation is deliberately not part of the code change. Keep Telegram runtime credentials unset until a real bot token and dedicated high-entropy webhook secret are stored in production secret storage. Then register `https://apps.ishinaillab.com/ishikeit/webhooks/telegram` with `allowed_updates=["message"]` and `drop_pending_updates=true`, verify `getWebhookInfo`, and run a controlled end-to-end canary before declaring Telegram active. The drop step is intentional: Telegram documents that changing `allowed_updates` does not remove updates already created before `setWebhook`.
+Telegram production activation completed on 2026-10-01.
+
+Production bot:
+
+- name: `Ishi Nail Lab`
+- username: `@ishinailbot`
+- bot ID: `8985271003`
+- webhook: `https://apps.ishinaillab.com/ishikeit/webhooks/telegram`
+
+Activation controls and provider verification:
+
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and `TELEGRAM_OUTBOUND_REQUEST_TIMEOUT_MS` are present in Hostinger production
+- the webhook rejects requests without the Telegram secret-token header with HTTP 401
+- initial `setWebhook` used `allowed_updates=["message"]` and `drop_pending_updates=true`
+- post-registration and post-canary `getWebhookInfo` both reported the expected URL, `pending_update_count=0`, no last error, and only `message` updates
+- `GET /health/ready` returned `{"status":"ready"}`
+
+Controlled human-originated canary proof:
+
+- exact Telegram inbound event persisted once as `provider=telegram`, `channel=bot`, `capability=messaging`, `event_type=message.received`
+- source inbound event ID: `1d608d83-85c7-450a-bf42-7d33dd0773e1`
+- provider inbound message ID: `14`
+- event processed on attempt 1 with `last_error=NULL`
+- exactly one `telegram / messaging / message.send` action was created
+- action published on attempt 1
+- Telegram returned provider message ID `15`
+- outbound attempt duration was 682 ms
+- recent `action.dispatch` audit showed 0 pending and 0 dead-lettered actions
+
+Telegram is therefore production-active.
+
+Hostinger operational guardrails proven during this cutover:
+
+- `hosting_nodejs_replace-environment-variables` is a **full replacement**, not a patch. Never reconstruct values from `hosting_nodejs_list-environment-variables`; its values are masked/non-reusable. Build the full desired set from a trusted secret source.
+- For a manual `hosting_nodejs_start-build` of this repository through Hostinger MCP, use repository-root output (`root_directory="."`, `output_directory="."`) with entry `dist/processes/http.js`. Using `output_directory="dist"` publishes the contents of `dist` as the runtime root and makes `dist/processes/http.js` unavailable.
+- Hostinger normalizes repository-root `root_directory="."` to `null` in returned build metadata; that is expected.
+- The production readiness body is `{"status":"ready"}`; do not gate on a nonexistent `ready:true` field.
+
+The temporary Telegram credential handoff file was cleared after the credential pair was promoted into the existing local production recovery `.env`. Secrets remain excluded from Git.
 
 ## Context engineering and durable continuity
 

@@ -44,7 +44,15 @@ const schema = z.object({
 
   TELEGRAM_BOT_TOKEN: z.string().min(20).regex(/^[0-9]+:[A-Za-z0-9_-]+$/).optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(32).max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),
-  TELEGRAM_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
+  TELEGRAM_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
+
+  TIKTOK_BUSINESS_APP_ID: z.string().min(1).max(256).optional(),
+  TIKTOK_BUSINESS_APP_SECRET: z.string().min(16).max(512).optional(),
+  TIKTOK_BUSINESS_ID: z.string().min(1).max(256).optional(),
+  TIKTOK_BUSINESS_ACCESS_TOKEN: z.string().min(16).max(4096).optional(),
+  TIKTOK_BUSINESS_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default("v1.3"),
+  TIKTOK_WEBHOOK_MAX_AGE_SECONDS: z.coerce.number().int().min(30).max(900).default(300),
+  TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
 }).superRefine((value, ctx) => {
   if ((value.TELEGRAM_BOT_TOKEN === undefined) !== (value.TELEGRAM_WEBHOOK_SECRET === undefined)) {
     ctx.addIssue({
@@ -52,6 +60,25 @@ const schema = z.object({
       path: [value.TELEGRAM_BOT_TOKEN === undefined ? "TELEGRAM_BOT_TOKEN" : "TELEGRAM_WEBHOOK_SECRET"],
       message: "TELEGRAM_BOT_TOKEN and TELEGRAM_WEBHOOK_SECRET must be configured together"
     });
+  }
+
+  const tiktokKeys = [
+    "TIKTOK_BUSINESS_APP_ID",
+    "TIKTOK_BUSINESS_APP_SECRET",
+    "TIKTOK_BUSINESS_ID",
+    "TIKTOK_BUSINESS_ACCESS_TOKEN"
+  ] as const;
+  const configuredTikTokKeys = tiktokKeys.filter((key) => value[key] !== undefined);
+  if (configuredTikTokKeys.length !== 0 && configuredTikTokKeys.length !== tiktokKeys.length) {
+    for (const key of tiktokKeys) {
+      if (value[key] === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: [key],
+          message: "TikTok Business Messaging credentials must be configured together"
+        });
+      }
+    }
   }
 
   if (value.VIDEO_INTERPRETER_PROVIDER === "gemini" && value.GEMINI_API_KEY === undefined) {

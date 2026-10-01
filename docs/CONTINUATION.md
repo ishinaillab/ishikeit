@@ -622,6 +622,67 @@ Hostinger operational guardrails proven during this cutover:
 
 The temporary Telegram credential handoff file was cleared after the credential pair was promoted into the existing local production recovery `.env`. Secrets remain excluded from Git.
 
+## TikTok Business Messaging adapter — implementation milestone 2026-10-02
+
+TikTok for Business Business Messaging is now implemented through the existing provider-neutral event/action boundaries. No database migration was required.
+
+Implemented runtime boundary:
+
+- optional authenticated `POST /ishikeit/webhooks/tiktok`
+- raw-body `TikTok-Signature` HMAC-SHA256 verification before JSON parsing
+- bounded signature timestamp age to reduce replay risk
+- canonical route: `provider=tiktok`, `channel=business`, `capability=messaging`
+- `im_receive_msg` -> `message.received`
+- `im_send_msg` -> `message.sent` so send echoes do not re-enter the AI conversation handler
+- deterministic event deduplication and per-conversation durable partitioning
+- signed events for another authorized Business Account are acknowledged as ignored without persistence
+- inbound text/image/video/share-post/structured message normalization
+- inbound image/video provider-media resolver after durable webhook ACK
+- `tiktok / messaging / message.send` action adapter
+- generic TikTok outbound intentionally restricted to text in this milestone
+- target Business Account validation
+- provider-specific transport/rate-limit failure classification
+- TikTok signature/app-secret/access-token log redaction
+- TikTok credentials must be configured as one complete set
+
+Configuration contract:
+
+```text
+TIKTOK_BUSINESS_APP_ID
+TIKTOK_BUSINESS_APP_SECRET
+TIKTOK_BUSINESS_ID
+TIKTOK_BUSINESS_ACCESS_TOKEN
+TIKTOK_BUSINESS_API_VERSION=v1.3
+TIKTOK_WEBHOOK_MAX_AGE_SECONDS=300
+TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS=10000
+```
+
+Current official TikTok API for Business documentation treats Business Messaging, Marketing, Organic, and other API product families separately. Keep that separation in Ishikeit. Automatic messages, templates, Comment-to-Message, image upload/send, conversation unlock, lead operations, Organic API actions, Marketing API actions, and future TikTok surfaces must be explicit operations/capabilities rather than hidden behind generic conversational `message.send`.
+
+Repository validation for this milestone:
+
+- lint: passed
+- typecheck: passed
+- test files: 23 passed
+- tests: 120 passed
+- build: passed
+- `git diff --check`: passed
+
+TikTok is **not production-active yet**. No real TikTok credential has been added to Hostinger and no TikTok Business Messaging webhook has been registered. Before activation:
+
+1. create/use the real TikTok for Business developer app
+2. obtain Business Messaging API access and complete TikTok's applicable data-security/privacy review
+3. authorize the target TikTok Business Account
+4. prove the production access-token/refresh lifecycle rather than relying on a manually copied short-lived token
+5. verify the Business Account's messaging capability/limits through TikTok's supported API
+6. configure the complete TikTok credential set in the trusted production secret source and Hostinger without round-tripping masked values
+7. register the Business Messaging webhook to `https://apps.ishinaillab.com/ishikeit/webhooks/tiktok`
+8. verify signed webhook delivery and durable-before-ACK persistence
+9. run one controlled human-originated direct-message canary through webhook -> PostgreSQL -> AI bridge -> `action.dispatch` -> TikTok reply
+10. audit provider resource identity, attempts, pending queue, dead letters, and runtime warnings/errors before calling TikTok production-active
+
+Do not claim TikTok production activation until those provider-backed checks have succeeded.
+
 ## Context engineering and durable continuity
 
 Durable project context is change-coupled rather than primarily timer-coupled.
@@ -733,8 +794,8 @@ Latest full repository validation:
 
 - lint: passed
 - typecheck: passed
-- test files: 14 passed
-- tests: 80 passed
+- test files: 23 passed
+- tests: 120 passed
 - build: passed
 - `git diff --check`: passed
 
@@ -746,14 +807,15 @@ The durable messaging processor is now a production system, not a scaffold. Oper
 
 Continue building on the adapter/registry boundaries rather than redesigning the core. Recommended sequence:
 
-1. complete and submit Meta App Review for the Instagram Login permissions `instagram_business_basic` and `instagram_business_manage_messages`; the app currently passes the basic submission prerequisites and Meta reports `can_submit=true`
-2. prepare the required real screencast/reviewer evidence showing Instagram authorization, an external-user DM, Ishikeit handling, API send, and receipt in Instagram; do not fabricate review evidence
-3. after approval, repeat the fresh ordinary non-role account DM test and verify normal `message.received` ingestion plus successful reply before declaring Instagram public-user messaging production-complete
-4. do not add Conversation Routing write/control APIs to the current `graph.instagram.com` path until Meta's supported authorization model for this specific app setup is proven
-5. activate and perform a real provider-backed video interpretation smoke test only after a paid Gemini API project/key is securely configured; until then retain the verified no-inspection safeguard
-6. configure Telegram production secrets, register the webhook with `allowed_updates=["message"]` and `drop_pending_updates=true`, verify `getWebhookInfo`, and run a controlled end-to-end canary before activation
+1. complete TikTok for Business onboarding for the newly implemented Business Messaging adapter: obtain Business Messaging API access, complete applicable security/privacy review, authorize the target Business Account, prove the production token lifecycle, configure the webhook, and run a controlled human-originated end-to-end canary before declaring TikTok production-active
+2. complete and submit Meta App Review for the Instagram Login permissions `instagram_business_basic` and `instagram_business_manage_messages`; reconcile the current Business Verification discrepancy before submission
+3. prepare the required real screencast/reviewer evidence showing Instagram authorization, an external-user DM, Ishikeit handling, API send, and receipt in Instagram; do not fabricate review evidence
+4. after approval, repeat the fresh ordinary non-role account DM test and verify normal `message.received` ingestion plus successful reply before declaring Instagram public-user messaging production-complete
+5. do not add Conversation Routing write/control APIs to the current `graph.instagram.com` path until Meta's supported authorization model for this specific app setup is proven
+6. activate and perform a real provider-backed video interpretation smoke test only after a paid Gemini API project/key is securely configured; until then retain the verified no-inspection safeguard
 7. add Meta lead-management capability as a separate capability/operation family
 8. add Meta Marketing API operations behind their own authorization/policy layer
-9. version and test each future provider adapter and media-capability contract independently
+9. add TikTok automatic messaging, image upload/send, Comment-to-Message, Organic, Leads, and Marketing operations only as separate typed capabilities after the base TikTok Business Messaging path is provider-verified
+10. version and test each future provider adapter and media-capability contract independently
 
 Marketing API, lead management, and future providers must not be routed through the conversational message handler merely because they originate from Meta.

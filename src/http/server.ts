@@ -6,6 +6,8 @@ import { metaIngressIdentity, normalizeMetaEnvelope } from "../channels/meta-nor
 import { verifyMetaChallenge, verifyMetaSignature } from "../security/meta.js";
 import { normalizeTelegramUpdate, telegramIngressIdentity } from "../channels/telegram-normalizer.js";
 import { verifyTelegramWebhookSecret } from "../security/telegram.js";
+import { normalizeTikTokBusinessWebhook, tiktokBusinessIngressIdentity } from "../channels/tiktok-normalizer.js";
+import { verifyTikTokSignature } from "../security/tiktok.js";
 import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
 import { verifyBearerAuthorization } from "../security/bearer.js";
@@ -19,6 +21,12 @@ export interface ServerDeps {
   telegram?: {
     botId: string;
     webhookSecret: string;
+  };
+  tiktok?: {
+    appId: string;
+    clientSecret: string;
+    businessId: string;
+    maxSignatureAgeSeconds: number;
   };
   webhookBodyLimit?: number;
   metrics?: OperationalMetricsReader;
@@ -187,6 +195,73 @@ export function buildServer(deps: ServerDeps) {
         let created = 0;
         for (const event of events) {
           if (await deps.inbound.ingest(event, telegramIngressIdentity(event), rawHash) === "created") {
+            created++;
+          }
+        }
+
+        return reply.code(200).send({ status: created > 0 ? "accepted" : "duplicate" });
+      });
+
+      done();
+    });
+  }
+
+  if (deps.tiktok !== undefined) {
+    const tiktok = deps.tiktok;
+    server.register((scope, _opts, done) => {
+      scope.removeContentTypeParser("application/json");
+      scope.addContentTypeParser(
+        "application/json",
+        { parseAs: "buffer", bodyLimit: deps.webhookBodyLimit ?? 1_048_576 },
+        (_req, body, cb) => cb(null, body)
+      );
+
+      scope.post<{ Body: Buffer }>("/ishikeit/webhooks/tiktok", async (req, reply) => {
+        if (!Buffer.isBuffer(req.body)) {
+          return reply.code(415).send({ status: "unsupported_body" });
+        }
+
+        const rawSignature = Array.isArray(req.headers["tiktok-signature"])
+          ? req.headers["tiktok-signature"][0]
+          : req.headers["tiktok-signature"];
+        if (!verifyTikTokSignature(req.body, rawSignature, tiktok.clientSecret, {
+          maxAgeSeconds: tiktok.maxSignatureAgeSeconds
+        })) {
+          return reply.code(401).send({ status: "rejected" });
+        }
+
+        let payload: unknown;
+        try {
+          payload = JSON.parse(req.body.toString("utf8")) as unknown;
+        } catch {
+          return reply.code(422).send({ status: "invalid_payload" });
+        }
+
+        if (
+          typeof payload === "object"
+          && payload !== null
+          && "user_openid" in payload
+          && typeof payload.user_openid === "string"
+          && payload.user_openid !== tiktok.businessId
+        ) {
+          return reply.code(200).send({ status: "ignored" });
+        }
+
+        let events;
+        try {
+          events = normalizeTikTokBusinessWebhook(
+            payload,
+            tiktok.appId,
+            tiktok.businessId
+          );
+        } catch {
+          return reply.code(422).send({ status: "invalid_payload" });
+        }
+
+        const rawHash = sha256Hex(req.body);
+        let created = 0;
+        for (const event of events) {
+          if (await deps.inbound.ingest(event, tiktokBusinessIngressIdentity(event), rawHash) === "created") {
             created++;
           }
         }

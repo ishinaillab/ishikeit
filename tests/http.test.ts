@@ -22,6 +22,16 @@ function signedHeaders(raw: string) {
   };
 }
 
+function tiktokSignedHeaders(raw: string, secret: string, timestamp = Math.floor(Date.now() / 1000)) {
+  const signature = createHmac("sha256", secret)
+    .update(String(timestamp) + "." + raw)
+    .digest("hex");
+  return {
+    "content-type": "application/json",
+    "tiktok-signature": `t=${timestamp},s=${signature}`
+  };
+}
+
 describe("webhook routes", () => {
   it("exposes runtime contract metadata without secrets", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
@@ -291,6 +301,82 @@ describe("webhook routes", () => {
       accountId: "123456789",
       eventType: "message.received",
       identityId: "639123456789"
+    });
+    await server.close();
+  });
+
+  it("authenticates and durably accepts a TikTok Business Messaging webhook", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>().mockResolvedValue("created");
+    const clientSecret = "tiktok-client-secret-123456789";
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      tiktok: {
+        appId: "app-123",
+        clientSecret,
+        businessId: "business-1",
+        maxSignatureAgeSeconds: 300
+      }
+    });
+    const raw = JSON.stringify({
+      event: "im_receive_msg",
+      client_key: "app-123",
+      user_openid: "business-1",
+      create_time: 1790000000,
+      content: JSON.stringify({
+        conversation_id: "conv-1",
+        message_id: "msg-1",
+        timestamp: 1790000000123,
+        type: "text",
+        text: { body: "hello TikTok" }
+      })
+    });
+
+    const rejected = await server.inject({
+      method: "POST",
+      url: "/ishikeit/webhooks/tiktok",
+      headers: {
+        "content-type": "application/json",
+        "tiktok-signature": "t=1,s=" + "0".repeat(64)
+      },
+      payload: raw
+    });
+    expect(rejected.statusCode).toBe(401);
+    expect(ingest).not.toHaveBeenCalled();
+
+    const otherBusinessRaw = raw.replace(
+      '"user_openid":"business-1"',
+      '"user_openid":"business-other"'
+    );
+    const ignored = await server.inject({
+      method: "POST",
+      url: "/ishikeit/webhooks/tiktok",
+      headers: tiktokSignedHeaders(otherBusinessRaw, clientSecret),
+      payload: otherBusinessRaw
+    });
+    expect(ignored.statusCode).toBe(200);
+    expect(ignored.json()).toEqual({ status: "ignored" });
+    expect(ingest).not.toHaveBeenCalled();
+
+    const accepted = await server.inject({
+      method: "POST",
+      url: "/ishikeit/webhooks/tiktok",
+      headers: tiktokSignedHeaders(raw, clientSecret),
+      payload: raw
+    });
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.json()).toEqual({ status: "accepted" });
+    expect(ingest).toHaveBeenCalledTimes(1);
+    expect(ingest.mock.calls[0]?.[0]).toMatchObject({
+      provider: "tiktok",
+      channel: "business",
+      accountId: "business-1",
+      eventType: "message.received",
+      identityId: "conv-1",
+      content: [{ kind: "text", text: "hello TikTok" }]
     });
     await server.close();
   });

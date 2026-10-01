@@ -42,6 +42,24 @@ describe("environment", () => {
     expect(env.TELEGRAM_WEBHOOK_SECRET).toBe("s".repeat(32));
   });
 
+  it("requires TikTok Business Messaging credentials to be configured as one set", () => {
+    expect(() => loadEnvironment({
+      ...productionBase,
+      TIKTOK_BUSINESS_APP_ID: "app-123"
+    })).toThrow();
+
+    const env = loadEnvironment({
+      ...productionBase,
+      TIKTOK_BUSINESS_APP_ID: "app-123",
+      TIKTOK_BUSINESS_APP_SECRET: "s".repeat(32),
+      TIKTOK_BUSINESS_ID: "business-1",
+      TIKTOK_BUSINESS_ACCESS_TOKEN: "a".repeat(32)
+    });
+    expect(env.TIKTOK_BUSINESS_API_VERSION).toBe("v1.3");
+    expect(env.TIKTOK_WEBHOOK_MAX_AGE_SECONDS).toBe(300);
+    expect(env.TIKTOK_BUSINESS_ID).toBe("business-1");
+  });
+
   it("keeps action dispatch disabled for literal false values", () => {
     const env = loadEnvironment({
       ...productionBase,

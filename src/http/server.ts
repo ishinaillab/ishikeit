@@ -4,6 +4,8 @@ import type { InboundStore } from "../persistence/inbound.js";
 import { sha256Hex } from "../persistence/inbound.js";
 import { metaIngressIdentity, normalizeMetaEnvelope } from "../channels/meta-normalizer.js";
 import { verifyMetaChallenge, verifyMetaSignature } from "../security/meta.js";
+import { normalizeTelegramUpdate, telegramIngressIdentity } from "../channels/telegram-normalizer.js";
+import { verifyTelegramWebhookSecret } from "../security/telegram.js";
 import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
 import { verifyBearerAuthorization } from "../security/bearer.js";
@@ -14,6 +16,10 @@ export interface ServerDeps {
   inbound: InboundStore;
   appSecret: string;
   verifyToken: string;
+  telegram?: {
+    botId: string;
+    webhookSecret: string;
+  };
   webhookBodyLimit?: number;
   metrics?: OperationalMetricsReader;
   opsMetricsToken?: string;
@@ -144,6 +150,53 @@ export function buildServer(deps: ServerDeps) {
 
     done();
   });
+
+  if (deps.telegram !== undefined) {
+    const telegram = deps.telegram;
+    server.register((scope, _opts, done) => {
+      scope.removeContentTypeParser("application/json");
+      scope.addContentTypeParser(
+        "application/json",
+        { parseAs: "buffer", bodyLimit: deps.webhookBodyLimit ?? 1_048_576 },
+        (_req, body, cb) => cb(null, body)
+      );
+
+      scope.post<{ Body: Buffer }>("/ishikeit/webhooks/telegram", async (req, reply) => {
+        if (!Buffer.isBuffer(req.body)) {
+          return reply.code(415).send({ status: "unsupported_body" });
+        }
+
+        const suppliedSecret = Array.isArray(req.headers["x-telegram-bot-api-secret-token"])
+          ? req.headers["x-telegram-bot-api-secret-token"][0]
+          : req.headers["x-telegram-bot-api-secret-token"];
+        if (!verifyTelegramWebhookSecret(suppliedSecret, telegram.webhookSecret)) {
+          return reply.code(401).send({ status: "rejected" });
+        }
+
+        let events;
+        try {
+          events = normalizeTelegramUpdate(
+            JSON.parse(req.body.toString("utf8")) as unknown,
+            telegram.botId
+          );
+        } catch {
+          return reply.code(422).send({ status: "invalid_payload" });
+        }
+
+        const rawHash = sha256Hex(req.body);
+        let created = 0;
+        for (const event of events) {
+          if (await deps.inbound.ingest(event, telegramIngressIdentity(event), rawHash) === "created") {
+            created++;
+          }
+        }
+
+        return reply.code(200).send({ status: created > 0 ? "accepted" : "duplicate" });
+      });
+
+      done();
+    });
+  }
 
   return server;
 }

@@ -22,7 +22,7 @@ function signedHeaders(raw: string) {
   };
 }
 
-describe("Meta webhook route", () => {
+describe("webhook routes", () => {
   it("exposes runtime contract metadata without secrets", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
     const server = makeServer({ ingest });
@@ -234,6 +234,64 @@ describe("Meta webhook route", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ status: "accepted" });
     expect(ingest).toHaveBeenCalledTimes(1);
+    await server.close();
+  });
+
+  it("authenticates and durably accepts a Telegram update", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>().mockResolvedValue("created");
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      telegram: {
+        botId: "123456789",
+        webhookSecret: "t".repeat(32)
+      }
+    });
+    const raw = JSON.stringify({
+      update_id: 7001,
+      message: {
+        message_id: 91,
+        date: 1790000000,
+        chat: { id: 639123456789, type: "private" },
+        from: { id: 639123456789, is_bot: false, first_name: "Test" },
+        text: "hello telegram"
+      }
+    });
+
+    const rejected = await server.inject({
+      method: "POST",
+      url: "/ishikeit/webhooks/telegram",
+      headers: {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "wrong"
+      },
+      payload: raw
+    });
+    expect(rejected.statusCode).toBe(401);
+    expect(ingest).not.toHaveBeenCalled();
+
+    const accepted = await server.inject({
+      method: "POST",
+      url: "/ishikeit/webhooks/telegram",
+      headers: {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": "t".repeat(32)
+      },
+      payload: raw
+    });
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.json()).toEqual({ status: "accepted" });
+    expect(ingest).toHaveBeenCalledTimes(1);
+    expect(ingest.mock.calls[0]?.[0]).toMatchObject({
+      provider: "telegram",
+      channel: "bot",
+      accountId: "123456789",
+      eventType: "message.received",
+      identityId: "639123456789"
+    });
     await server.close();
   });
 

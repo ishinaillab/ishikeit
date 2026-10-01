@@ -40,8 +40,20 @@ const schema = z.object({
   META_INSTAGRAM_ACCESS_TOKEN: z.string().min(1).optional(),
   META_WHATSAPP_ACCESS_TOKEN: z.string().min(1).optional(),
   META_INSTAGRAM_GRAPH_HOST: z.enum(["graph.instagram.com", "graph.facebook.com"]).default("graph.instagram.com"),
-  META_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
+  META_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
+
+  TELEGRAM_BOT_TOKEN: z.string().min(20).regex(/^[0-9]+:[A-Za-z0-9_-]+$/).optional(),
+  TELEGRAM_WEBHOOK_SECRET: z.string().min(32).max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  TELEGRAM_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
 }).superRefine((value, ctx) => {
+  if ((value.TELEGRAM_BOT_TOKEN === undefined) !== (value.TELEGRAM_WEBHOOK_SECRET === undefined)) {
+    ctx.addIssue({
+      code: "custom",
+      path: [value.TELEGRAM_BOT_TOKEN === undefined ? "TELEGRAM_BOT_TOKEN" : "TELEGRAM_WEBHOOK_SECRET"],
+      message: "TELEGRAM_BOT_TOKEN and TELEGRAM_WEBHOOK_SECRET must be configured together"
+    });
+  }
+
   if (value.VIDEO_INTERPRETER_PROVIDER === "gemini" && value.GEMINI_API_KEY === undefined) {
     ctx.addIssue({
       code: "custom",

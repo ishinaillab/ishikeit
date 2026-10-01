@@ -22,6 +22,26 @@ describe("environment", () => {
     }).OPS_METRICS_TOKEN).toBe(token);
   });
 
+  it("requires Telegram bot token and webhook secret to be configured together", () => {
+    expect(() => loadEnvironment({
+      ...productionBase,
+      TELEGRAM_BOT_TOKEN: "123456789:abcdefghijklmnopqrstuvwxyzABCDE"
+    })).toThrow();
+
+    expect(() => loadEnvironment({
+      ...productionBase,
+      TELEGRAM_WEBHOOK_SECRET: "s".repeat(32)
+    })).toThrow();
+
+    const env = loadEnvironment({
+      ...productionBase,
+      TELEGRAM_BOT_TOKEN: "123456789:abcdefghijklmnopqrstuvwxyzABCDE",
+      TELEGRAM_WEBHOOK_SECRET: "s".repeat(32)
+    });
+    expect(env.TELEGRAM_BOT_TOKEN).toContain(":");
+    expect(env.TELEGRAM_WEBHOOK_SECRET).toBe("s".repeat(32));
+  });
+
   it("keeps action dispatch disabled for literal false values", () => {
     const env = loadEnvironment({
       ...productionBase,

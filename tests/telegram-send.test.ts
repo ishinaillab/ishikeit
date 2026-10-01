@@ -20,7 +20,7 @@ describe("TelegramSender", () => {
       .resolves.toEqual({ providerMessageId: "42" });
 
     const [url, init] = fetchImpl.mock.calls[0]!;
-    expect(String(url)).toContain("/sendMessage");
+    expect(url).toBe("https://api.telegram.org/bot" + token + "/sendMessage");
     expect(bodyAsJson(init?.body)).toEqual({ chat_id: "7001", text: "hello" });
   });
 
@@ -37,7 +37,7 @@ describe("TelegramSender", () => {
     });
 
     const [url, init] = fetchImpl.mock.calls[0]!;
-    expect(String(url)).toContain("/sendPhoto");
+    expect(url).toBe("https://api.telegram.org/bot" + token + "/sendPhoto");
     expect(bodyAsJson(init?.body)).toEqual({
       chat_id: "7001",
       photo: "https://example.test/photo.jpg",

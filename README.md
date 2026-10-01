@@ -152,24 +152,37 @@ The required staged procedure is documented in [`docs/production-rollout.md`](do
 
 ## TikTok Business Messaging
 
-TikTok for Business Business Messaging is implemented behind configuration and TikTok access/authorization gates. It is **not production-active yet**.
+TikTok for Business Business Messaging is implemented behind provider-access, OAuth, and Business Account activation gates. It is **not production-active yet**.
 
-Implemented contract:
+Implemented messaging contract:
 
 - `POST /ishikeit/webhooks/tiktok`
 - exact raw-body `TikTok-Signature` HMAC-SHA256 verification with a bounded timestamp age
 - `provider=tiktok`, `channel=business`, `capability=messaging`
 - deterministic provider-event deduplication and per-conversation partitioning
-- inbound text, image, video, share-post, and other structured message normalization
+- inbound text, image, video, share-post, and structured-message normalization
 - inbound image/video provider-media resolution only after webhook ACK
 - `tiktok / messaging / message.send` with generic outbound text replies
 - provider-specific throttling/transport failure classification
-- business-account target validation
-- credential/signature log redaction
+- Business Account target validation and cross-account webhook isolation
 
-TikTok's Business Messaging API is a distinct product family from its Marketing, Organic, and Lead APIs. Templates, automatic messages, Comment-to-Message, image upload/send, lead operations, and advertising operations should therefore be added as explicit future operations rather than hidden inside generic `message.send`.
+TikTok's Business Account access token is short-lived, so Ishikeit does not use a manually copied production access token. The production OAuth lifecycle is durable:
 
-Production activation requires a real TikTok for Business developer app with Business Messaging API access, completion of TikTok's applicable security/privacy review, authorization of the target Business Account, a production token lifecycle, Business Messaging webhook configuration pointing to Ishikeit, and a controlled human-originated end-to-end canary. No TikTok credentials are committed to this repository.
+- `POST /ops/tiktok/oauth/start` is protected by the operational bearer credential and creates a one-time authorization state
+- `GET /ishikeit/oauth/tiktok/callback/` validates and consumes that state, exchanges TikTok's authorization code, and never returns tokens to the browser
+- `GET /ops/tiktok/oauth/status` exposes only safe account/scope/expiry metadata
+- access and refresh tokens are AES-256-GCM encrypted before PostgreSQL storage
+- the database stores only a SHA-256 hash of each temporary OAuth state
+- TikTok access tokens are refreshed before expiry and replacement refresh credentials are persisted atomically
+- concurrent requests in one process share one refresh; cross-process refreshes are serialized with a PostgreSQL advisory lock and a re-read-after-lock avoids duplicate provider refreshes
+- sender and media adapters resolve their access token through the refresh-capable token provider at request time
+- setting `TIKTOK_BUSINESS_ID` makes startup/readiness require the matching durable credential and a usable refresh token; missing/expired authorization requires reauthorization rather than endless retry
+
+OAuth application configuration requires the TikTok app ID/secret, TikTok-generated Business Account authorization URL, the exact registered HTTPS callback, the operational bearer token, and a dedicated 32-byte encryption key. `TIKTOK_BUSINESS_ID` is set only after successful authorization using TikTok's returned Business Account `open_id`; that setting activates the webhook/sender/media adapter for the authorized account.
+
+TikTok's Business Messaging API remains distinct from its Marketing, Organic, and Lead APIs. Templates, automatic messages, Comment-to-Message, image upload/send, lead operations, and advertising operations should therefore be added as explicit future operations rather than hidden inside generic `message.send`.
+
+Production activation still requires TikTok Business Messaging API access/review, real Business Account authorization, provider webhook configuration pointing to Ishikeit, capability/permission verification, and a controlled human-originated end-to-end canary. No TikTok credentials are committed to this repository.
 
 ## Telegram production
 

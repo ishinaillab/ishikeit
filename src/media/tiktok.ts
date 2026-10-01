@@ -1,4 +1,9 @@
 import { isIP } from "node:net";
+import {
+  AccessTokenError,
+  StaticAccessTokenProvider,
+  type AccessTokenProvider
+} from "../auth/token-provider.js";
 import type { MediaContentPart } from "../domain/content.js";
 import type { CanonicalEvent } from "../domain/events.js";
 import { ProcessingFailure } from "../processing/failure.js";
@@ -6,7 +11,8 @@ import type { MediaResolver, ResolvedMedia } from "./resolver.js";
 
 interface TikTokMediaResolverOptions {
   businessId: string;
-  accessToken: string;
+  accessToken?: string;
+  accessTokenProvider?: AccessTokenProvider;
   apiVersion?: string;
   maxBytes: number;
   requestTimeoutMs?: number;
@@ -61,7 +67,7 @@ function extension(mimeType: string): string {
 export class TikTokMediaResolver implements MediaResolver {
   readonly provider = "tiktok";
   readonly #businessId: string;
-  readonly #accessToken: string;
+  readonly #accessTokenProvider: AccessTokenProvider;
   readonly #apiVersion: string;
   readonly #maxBytes: number;
   readonly #requestTimeoutMs: number;
@@ -69,7 +75,11 @@ export class TikTokMediaResolver implements MediaResolver {
 
   constructor(options: TikTokMediaResolverOptions) {
     this.#businessId = options.businessId;
-    this.#accessToken = options.accessToken;
+    if ((options.accessToken === undefined) === (options.accessTokenProvider === undefined)) {
+      throw new Error("TikTok media resolver requires exactly one access-token source");
+    }
+    this.#accessTokenProvider = options.accessTokenProvider
+      ?? new StaticAccessTokenProvider(options.accessToken!);
     this.#apiVersion = options.apiVersion ?? "v1.3";
     this.#maxBytes = options.maxBytes;
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 15_000;
@@ -103,13 +113,23 @@ export class TikTokMediaResolver implements MediaResolver {
       });
     }
 
+    let accessToken: string;
+    try {
+      accessToken = await this.#accessTokenProvider.getAccessToken();
+    } catch (error) {
+      throw new ProcessingFailure("TikTok OAuth access token is unavailable", {
+        retryable: error instanceof AccessTokenError ? error.retryable : true,
+        cause: error
+      });
+    }
+
     const metadata = await this.#metadata({
       business_id: this.#businessId,
       conversation_id: event.identityId,
       message_id: event.providerMessageId,
       media_id: part.source.value,
       media_type: part.kind.toUpperCase()
-    });
+    }, accessToken);
 
     const rawUrl = metadata.download_url;
     if (typeof rawUrl !== "string") {
@@ -118,10 +138,13 @@ export class TikTokMediaResolver implements MediaResolver {
       });
     }
 
-    return this.#download(new URL(rawUrl), part, event.providerMessageId);
+    return this.#download(new URL(rawUrl), part, event.providerMessageId, accessToken);
   }
 
-  async #metadata(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  async #metadata(
+    payload: Record<string, unknown>,
+    accessToken: string
+  ): Promise<Record<string, unknown>> {
     let response: Response;
     try {
       response = await this.#fetch(
@@ -131,7 +154,7 @@ export class TikTokMediaResolver implements MediaResolver {
           headers: {
             "content-type": "application/json",
             accept: "application/json",
-            "Access-Token": this.#accessToken
+            "Access-Token": accessToken
           },
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(this.#requestTimeoutMs)
@@ -163,7 +186,8 @@ export class TikTokMediaResolver implements MediaResolver {
   async #download(
     initialUrl: URL,
     part: MediaContentPart,
-    messageId: string
+    messageId: string,
+    accessToken: string
   ): Promise<ResolvedMedia> {
     let url = initialUrl;
     const initialHost = initialUrl.hostname.toLowerCase();
@@ -175,7 +199,7 @@ export class TikTokMediaResolver implements MediaResolver {
         response = await this.#fetch(url, {
           method: "GET",
           redirect: "manual",
-          headers: { "x-user": this.#accessToken },
+          headers: { "x-user": accessToken },
           signal: AbortSignal.timeout(this.#requestTimeoutMs)
         });
       } catch (error) {

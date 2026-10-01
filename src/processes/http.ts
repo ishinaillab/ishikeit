@@ -24,6 +24,10 @@ import { OutboxWorker } from "../workers/outbox-worker.js";
 import { TelegramSender } from "../channels/telegram-send.js";
 import { TikTokBusinessSender } from "../channels/tiktok-send.js";
 import { telegramBotIdFromToken } from "../security/telegram.js";
+import { CredentialCipher } from "../auth/credential-cipher.js";
+import { PostgresOAuthCredentialStore } from "../auth/oauth-store.js";
+import { TikTokOAuthClient, TikTokOAuthService } from "../auth/tiktok-oauth.js";
+import { TikTokAccessTokenManager, tiktokCredentialCanRefresh } from "../auth/tiktok-token-manager.js";
 
 const env = loadEnvironment();
 const logger = createLogger(env);
@@ -40,11 +44,55 @@ const telegram = env.TELEGRAM_BOT_TOKEN === undefined || env.TELEGRAM_WEBHOOK_SE
       botId: telegramBotIdFromToken(env.TELEGRAM_BOT_TOKEN),
       webhookSecret: env.TELEGRAM_WEBHOOK_SECRET
     };
+const tiktokOAuthConfigured = (
+  env.TIKTOK_BUSINESS_APP_ID !== undefined
+  && env.TIKTOK_BUSINESS_APP_SECRET !== undefined
+  && env.TIKTOK_BUSINESS_AUTHORIZATION_URL !== undefined
+  && env.TIKTOK_BUSINESS_REDIRECT_URI !== undefined
+  && env.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined
+);
+const oauthStore = !tiktokOAuthConfigured
+  ? undefined
+  : new PostgresOAuthCredentialStore(
+      db,
+      CredentialCipher.fromBase64(env.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64!)
+    );
+const tiktokOAuthClient = !tiktokOAuthConfigured
+  ? undefined
+  : new TikTokOAuthClient({
+      appId: env.TIKTOK_BUSINESS_APP_ID!,
+      appSecret: env.TIKTOK_BUSINESS_APP_SECRET!,
+      apiVersion: env.TIKTOK_BUSINESS_API_VERSION,
+      requestTimeoutMs: env.TIKTOK_OAUTH_REQUEST_TIMEOUT_MS
+    });
+const tiktokOAuthService = (
+  oauthStore === undefined
+  || tiktokOAuthClient === undefined
+)
+  ? undefined
+  : new TikTokOAuthService({
+      authorizationUrl: env.TIKTOK_BUSINESS_AUTHORIZATION_URL!,
+      redirectUri: env.TIKTOK_BUSINESS_REDIRECT_URI!,
+      store: oauthStore,
+      client: tiktokOAuthClient,
+      stateTtlSeconds: env.TIKTOK_OAUTH_STATE_TTL_SECONDS
+    });
+const tiktokAccessTokenManager = (
+  oauthStore === undefined
+  || tiktokOAuthClient === undefined
+  || env.TIKTOK_BUSINESS_ID === undefined
+)
+  ? undefined
+  : new TikTokAccessTokenManager({
+      businessId: env.TIKTOK_BUSINESS_ID,
+      store: oauthStore,
+      client: tiktokOAuthClient,
+      refreshSkewSeconds: env.TIKTOK_TOKEN_REFRESH_SKEW_SECONDS
+    });
 const tiktok = (
   env.TIKTOK_BUSINESS_APP_ID === undefined
   || env.TIKTOK_BUSINESS_APP_SECRET === undefined
   || env.TIKTOK_BUSINESS_ID === undefined
-  || env.TIKTOK_BUSINESS_ACCESS_TOKEN === undefined
 )
   ? undefined
   : {
@@ -53,14 +101,40 @@ const tiktok = (
       businessId: env.TIKTOK_BUSINESS_ID,
       maxSignatureAgeSeconds: env.TIKTOK_WEBHOOK_MAX_AGE_SECONDS
     };
+
+async function tiktokAuthorizationReady(): Promise<boolean> {
+  if (env.TIKTOK_BUSINESS_ID === undefined) return true;
+  if (oauthStore === undefined) return false;
+
+  try {
+    const credential = await oauthStore.get("tiktok", env.TIKTOK_BUSINESS_ID);
+    return tiktokCredentialCanRefresh(credential);
+  } catch {
+    return false;
+  }
+}
+
 const server = buildServer({
   logger,
-  ready: () => db.ready(),
+  ready: async () =>
+    await db.ready()
+    && (oauthStore === undefined || await oauthStore.ready())
+    && await tiktokAuthorizationReady(),
   inbound: new PostgresInboundStore(db),
   appSecret: env.META_APP_SECRET,
   verifyToken: env.META_WEBHOOK_VERIFY_TOKEN,
   ...(telegram === undefined ? {} : { telegram }),
   ...(tiktok === undefined ? {} : { tiktok }),
+  ...(tiktokOAuthService === undefined
+    ? {}
+    : {
+        tiktokOAuth: {
+          service: tiktokOAuthService,
+          ...(env.TIKTOK_BUSINESS_ID === undefined
+            ? {}
+            : { configuredBusinessId: env.TIKTOK_BUSINESS_ID })
+        }
+      }),
   ...(env.OPS_METRICS_TOKEN === undefined
     ? {}
     : {
@@ -95,11 +169,11 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
   }
   if (
     env.TIKTOK_BUSINESS_ID !== undefined
-    && env.TIKTOK_BUSINESS_ACCESS_TOKEN !== undefined
+    && tiktokAccessTokenManager !== undefined
   ) {
     dispatcher.register(new TikTokBusinessMessagingAdapter(new TikTokBusinessSender({
       businessId: env.TIKTOK_BUSINESS_ID,
-      accessToken: env.TIKTOK_BUSINESS_ACCESS_TOKEN,
+      accessTokenProvider: tiktokAccessTokenManager,
       apiVersion: env.TIKTOK_BUSINESS_API_VERSION,
       requestTimeoutMs: env.TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS
     })));
@@ -133,11 +207,11 @@ if (env.PROCESSOR_ENABLED) {
   }
   if (
     env.TIKTOK_BUSINESS_ID !== undefined
-    && env.TIKTOK_BUSINESS_ACCESS_TOKEN !== undefined
+    && tiktokAccessTokenManager !== undefined
   ) {
     mediaResolvers.register(new TikTokMediaResolver({
       businessId: env.TIKTOK_BUSINESS_ID,
-      accessToken: env.TIKTOK_BUSINESS_ACCESS_TOKEN,
+      accessTokenProvider: tiktokAccessTokenManager,
       apiVersion: env.TIKTOK_BUSINESS_API_VERSION,
       maxBytes: env.MEDIA_MAX_BYTES,
       requestTimeoutMs: env.MEDIA_REQUEST_TIMEOUT_MS
@@ -199,6 +273,12 @@ process.once("SIGTERM", () => { void shutdown("SIGTERM"); });
 async function main(): Promise<void> {
   try {
     await db.assertReady();
+    if (oauthStore !== undefined && !await oauthStore.ready()) {
+      throw new Error("OAuth credential schema is not ready for configured TikTok OAuth");
+    }
+    if (!await tiktokAuthorizationReady()) {
+      throw new Error("TikTok Business Account activation requires a usable durable OAuth credential");
+    }
     await server.listen({ host: env.HTTP_HOST, port: env.HTTP_PORT_EFFECTIVE });
     if (processorWorker !== undefined) {
       processorWorker.start();

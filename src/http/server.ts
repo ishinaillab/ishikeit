@@ -11,6 +11,7 @@ import { verifyTikTokSignature } from "../security/tiktok.js";
 import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
 import { verifyBearerAuthorization } from "../security/bearer.js";
+import type { TikTokOAuthController } from "../auth/tiktok-oauth.js";
 
 export interface ServerDeps {
   logger: Logger;
@@ -27,6 +28,10 @@ export interface ServerDeps {
     clientSecret: string;
     businessId: string;
     maxSignatureAgeSeconds: number;
+  };
+  tiktokOAuth?: {
+    service: TikTokOAuthController;
+    configuredBusinessId?: string;
   };
   webhookBodyLimit?: number;
   metrics?: OperationalMetricsReader;
@@ -63,8 +68,11 @@ export function buildServer(deps: ServerDeps) {
       : reply.code(503).send({ status: "not_ready" })
   );
 
-  if ((deps.metrics === undefined) !== (deps.opsMetricsToken === undefined)) {
-    throw new Error("operational metrics require both a reader and a bearer token");
+  if (deps.metrics !== undefined && deps.opsMetricsToken === undefined) {
+    throw new Error("operational metrics require a bearer token");
+  }
+  if (deps.tiktokOAuth !== undefined && deps.opsMetricsToken === undefined) {
+    throw new Error("TikTok OAuth operations require an operational bearer token");
   }
 
   if (deps.metrics !== undefined && deps.opsMetricsToken !== undefined) {
@@ -93,6 +101,76 @@ export function buildServer(deps: ServerDeps) {
       } catch (error) {
         deps.logger.error({ err: error }, "operational metrics snapshot failed");
         return reply.code(503).send({ status: "metrics_unavailable" });
+      }
+    });
+  }
+
+  if (deps.tiktokOAuth !== undefined && deps.opsMetricsToken !== undefined) {
+    const tiktokOAuth = deps.tiktokOAuth;
+    const opsToken = deps.opsMetricsToken;
+
+    server.post("/ops/tiktok/oauth/start", async (req, reply) => {
+      if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+        return reply
+          .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401)
+          .send({ status: "unauthorized" });
+      }
+      reply.header("cache-control", "private, no-store");
+      try {
+        return {
+          status: "authorization_required",
+          ...await tiktokOAuth.service.beginAuthorization()
+        };
+      } catch (error) {
+        deps.logger.error({ err: error }, "TikTok OAuth authorization start failed");
+        return reply.code(503).send({ status: "oauth_unavailable" });
+      }
+    });
+
+    server.get("/ops/tiktok/oauth/status", async (req, reply) => {
+      if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+        return reply
+          .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401)
+          .send({ status: "unauthorized" });
+      }
+      reply.header("cache-control", "private, no-store");
+      try {
+        return await tiktokOAuth.service.status(tiktokOAuth.configuredBusinessId);
+      } catch (error) {
+        deps.logger.error({ err: error }, "TikTok OAuth status failed");
+        return reply.code(503).send({ status: "oauth_unavailable" });
+      }
+    });
+
+    server.get<{
+      Querystring: { state?: string; auth_code?: string; code?: string };
+    }>("/ishikeit/oauth/tiktok/callback/", async (req, reply) => {
+      reply.header("cache-control", "no-store");
+      const state = req.query.state;
+      const authCode = req.query.auth_code ?? req.query.code;
+      if (state === undefined || authCode === undefined) {
+        return reply
+          .code(400)
+          .type("text/plain; charset=utf-8")
+          .send("TikTok authorization could not be completed.");
+      }
+
+      try {
+        const result = await tiktokOAuth.service.completeAuthorization(state, authCode);
+        return reply
+          .code(200)
+          .type("text/plain; charset=utf-8")
+          .send(
+            `TikTok authorization completed for Business Account ${result.businessId}. You may close this window.`
+          );
+      } catch (error) {
+        deps.logger.warn({ err: error }, "TikTok OAuth callback failed");
+        return reply
+          .code(400)
+          .type("text/plain; charset=utf-8")
+          .send("TikTok authorization could not be completed. Start a new authorization request.");
       }
     });
   }

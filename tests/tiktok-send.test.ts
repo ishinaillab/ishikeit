@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { AccessTokenError } from "../src/auth/token-provider.js";
 import { TikTokBusinessSender } from "../src/channels/tiktok-send.js";
 
 function bodyAsJson(body: BodyInit | null | undefined): Record<string, unknown> {
@@ -76,6 +77,24 @@ describe("TikTokBusinessSender", () => {
       kind: "text",
       text: "x".repeat(6001)
     })).rejects.toMatchObject({ retryable: false });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("does not retry an authorization-required token failure before provider I/O", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const sender = new TikTokBusinessSender({
+      businessId: "business-1",
+      accessTokenProvider: {
+        getAccessToken: () => Promise.reject(new AccessTokenError(
+          "reauthorization required",
+          { retryable: false }
+        ))
+      },
+      fetchImpl
+    });
+
+    await expect(sender.send("conv-1", { kind: "text", text: "hello" }))
+      .rejects.toMatchObject({ retryable: false, ambiguous: false });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 

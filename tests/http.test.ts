@@ -162,6 +162,83 @@ describe("webhook routes", () => {
     await server.close();
   });
 
+  it("protects TikTok OAuth operations and accepts a state-validated callback", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const beginAuthorization = vi.fn().mockResolvedValue({
+      authorizationUrl: "https://business-api.tiktok.com/portal/auth?state=opaque",
+      expiresAt: "2026-10-02T02:10:00.000Z"
+    });
+    const status = vi.fn().mockResolvedValue({
+      authorized: true,
+      businessId: "business-1",
+      accessExpiresAt: "2026-10-03T00:00:00.000Z",
+      refreshAvailable: true
+    });
+    const completeAuthorization = vi.fn().mockResolvedValue({
+      businessId: "business-1",
+      scopes: ["business.messaging"],
+      accessExpiresAt: "2026-10-03T00:00:00.000Z",
+      refreshExpiresAt: "2027-10-02T00:00:00.000Z"
+    });
+    const token = "o".repeat(32);
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokOAuth: {
+        service: { beginAuthorization, status, completeAuthorization },
+        configuredBusinessId: "business-1"
+      }
+    });
+
+    const unauthorized = await server.inject({
+      method: "POST",
+      url: "/ops/tiktok/oauth/start"
+    });
+    expect(unauthorized.statusCode).toBe(401);
+    expect(beginAuthorization).not.toHaveBeenCalled();
+
+    const started = await server.inject({
+      method: "POST",
+      url: "/ops/tiktok/oauth/start",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(started.statusCode).toBe(200);
+    expect(started.headers["cache-control"]).toBe("private, no-store");
+    const startedBody = started.json<{
+      status: string;
+      authorizationUrl: string;
+    }>();
+    expect(startedBody.status).toBe("authorization_required");
+    expect(startedBody.authorizationUrl).toContain("tiktok.com");
+
+    const statusResult = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/oauth/status",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(statusResult.statusCode).toBe(200);
+    expect(status).toHaveBeenCalledWith("business-1");
+    expect(statusResult.body).not.toContain("token");
+
+    const callback = await server.inject({
+      method: "GET",
+      url: "/ishikeit/oauth/tiktok/callback/?state=opaque_state_1234567890&auth_code=auth-code-123"
+    });
+    expect(callback.statusCode).toBe(200);
+    expect(callback.body).toContain("business-1");
+    expect(callback.body).not.toContain("access");
+    expect(completeAuthorization).toHaveBeenCalledWith(
+      "opaque_state_1234567890",
+      "auth-code-123"
+    );
+
+    await server.close();
+  });
+
   it("answers the GET challenge", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
     const store = { ingest } satisfies InboundStore;

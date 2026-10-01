@@ -42,22 +42,54 @@ describe("environment", () => {
     expect(env.TELEGRAM_WEBHOOK_SECRET).toBe("s".repeat(32));
   });
 
-  it("requires TikTok Business Messaging credentials to be configured as one set", () => {
+  it("requires TikTok OAuth application settings as one protected set", () => {
     expect(() => loadEnvironment({
       ...productionBase,
       TIKTOK_BUSINESS_APP_ID: "app-123"
     })).toThrow();
 
+    const encryptionKey = Buffer.alloc(32, 5).toString("base64");
     const env = loadEnvironment({
       ...productionBase,
+      OPS_METRICS_TOKEN: "o".repeat(32),
       TIKTOK_BUSINESS_APP_ID: "app-123",
       TIKTOK_BUSINESS_APP_SECRET: "s".repeat(32),
-      TIKTOK_BUSINESS_ID: "business-1",
-      TIKTOK_BUSINESS_ACCESS_TOKEN: "a".repeat(32)
+      TIKTOK_BUSINESS_AUTHORIZATION_URL:
+        "https://business-api.tiktok.com/portal/auth?app=123",
+      TIKTOK_BUSINESS_REDIRECT_URI:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/callback/",
+      OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: encryptionKey,
+      TIKTOK_BUSINESS_ID: "business-1"
     });
     expect(env.TIKTOK_BUSINESS_API_VERSION).toBe("v1.3");
-    expect(env.TIKTOK_WEBHOOK_MAX_AGE_SECONDS).toBe(300);
+    expect(env.TIKTOK_OAUTH_STATE_TTL_SECONDS).toBe(600);
+    expect(env.TIKTOK_TOKEN_REFRESH_SKEW_SECONDS).toBe(300);
     expect(env.TIKTOK_BUSINESS_ID).toBe("business-1");
+  });
+
+  it("rejects unsafe TikTok OAuth configuration", () => {
+    const base = {
+      ...productionBase,
+      OPS_METRICS_TOKEN: "o".repeat(32),
+      TIKTOK_BUSINESS_APP_ID: "app-123",
+      TIKTOK_BUSINESS_APP_SECRET: "s".repeat(32),
+      TIKTOK_BUSINESS_AUTHORIZATION_URL:
+        "https://business-api.tiktok.com/portal/auth?app=123",
+      TIKTOK_BUSINESS_REDIRECT_URI:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/callback/"
+    };
+
+    expect(() => loadEnvironment({
+      ...base,
+      OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: Buffer.alloc(31).toString("base64")
+    })).toThrow(/32 bytes/i);
+
+    expect(() => loadEnvironment({
+      ...base,
+      OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: Buffer.alloc(32).toString("base64"),
+      TIKTOK_BUSINESS_REDIRECT_URI:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/callback/?x=1"
+    })).toThrow(/query string/i);
   });
 
   it("keeps action dispatch disabled for literal false values", () => {

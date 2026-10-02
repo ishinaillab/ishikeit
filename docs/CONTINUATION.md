@@ -1186,6 +1186,41 @@ The feature is therefore **configured and externally launchable, but no Instagra
 
 A submission-ready review package now lives at `docs/meta-instagram-app-review.md`. It reconciles Meta's access-level guidance: Standard Access can serve an owned/managed professional account, but customer messaging webhooks include data from ordinary people without app roles; Meta's current webhook guidance requires App Review / Advanced Access for those notifications.
 
+## Instagram OAuth callback and data-lifecycle hardening - 2026-10-02
+
+The first interactive Instagram authorization reached Ishikeit's callback with both `state` and `code`, but the durable authorization-state row remained unconsumed. This proved the failure occurred before token exchange. The OAuth implementation was reconciled against current Meta Business Login documentation before retrying authorization.
+
+Current implementation changes:
+
+- Business Login now starts at `https://api.instagram.com/oauth/authorize` rather than the older `www.instagram.com` authorization URL.
+- Authorization requests include `force_reauth=true`, preserve exact redirect URI matching, and retain cryptographically random one-time CSRF state.
+- Callback failures log only a short SHA-256 state fingerprint plus state/code lengths; raw state, authorization code, and tokens remain secret.
+- dedicated Meta signed-request verification uses HMAC-SHA256 plus timing-safe comparison.
+- deauthorization callback: `https://apps.ishinaillab.com/ishikeit/oauth/instagram/deauthorize/`
+- data-deletion callback: `https://apps.ishinaillab.com/ishikeit/oauth/instagram/data-deletion/`
+- human-readable deletion status route: `/ishikeit/privacy/data-deletion/status/:confirmationCode`
+- deauthorization creates a durable revocation tombstone and deletes the encrypted Instagram OAuth credential.
+- successful reauthorization atomically clears the revocation tombstone.
+- a revoked/deleted account cannot silently fall back to the legacy static Instagram token; static fallback remains available only for accounts that have never entered the durable OAuth lifecycle.
+- a verified data-deletion request durably records status, revokes the OAuth credential, and removes matching Instagram inbound events, outbound actions, and related delivery-attempt rows before returning Meta's required status URL and confirmation code.
+
+Database migration:
+
+`supabase/migrations/20261002090000_instagram_data_lifecycle.sql`
+
+It adds RLS-protected `oauth_revocations` and `oauth_data_deletion_requests` tables and revokes access from `anon` and `authenticated`. Database PR #6 was squash-merged as `506f17228cc58d50bc26d066ca4dc4924adfd231`; the exact migration was then applied to the linked production Supabase project. `supabase migration list` now shows `20261002090000` synchronized locally and remotely, and linked schema lint reports no errors.
+
+Application validation after the hardening change:
+
+- lint: passed
+- typecheck: passed
+- test files: 29 passed
+- tests: 153 passed
+- production build: passed
+- `git diff --check`: passed
+
+Do not retry Instagram authorization until the hardened application revision is merged/deployed and the three Business Login URLs above are registered in the Meta dashboard. After deployment, first verify the login redirect host, `force_reauth=true`, callback rejection behavior, protected OAuth status, and clean runtime logs.
+
 ## Current next work
 
 The durable messaging processor is now a production system, not a scaffold. Operational metrics, audio transcription adaptation, durable handoff/outcome observability, Telegram, the TikTok adapter, and the TikTok OAuth lifecycle are already implemented; do not redo those phases.

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import Fastify from "fastify";
 import type { Logger } from "pino";
 import type { InboundStore } from "../persistence/inbound.js";
@@ -13,6 +14,8 @@ import type { OperationalMetricsReader } from "../observability/operational-metr
 import { verifyBearerAuthorization } from "../security/bearer.js";
 import type { TikTokOAuthController } from "../auth/tiktok-oauth.js";
 import type { InstagramOAuthController } from "../auth/instagram-oauth.js";
+import type { InstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
+import { verifyMetaSignedRequest } from "../security/meta-signed-request.js";
 
 export interface ServerDeps {
   logger: Logger;
@@ -36,6 +39,11 @@ export interface ServerDeps {
   };
   instagramOAuth?: {
     service: InstagramOAuthController;
+    compliance?: {
+      appSecret: string;
+      dataLifecycle: InstagramDataLifecycle;
+      statusBaseUrl: string;
+    };
   };
   webhookBodyLimit?: number;
   metrics?: OperationalMetricsReader;
@@ -216,11 +224,107 @@ export function buildServer(deps: ServerDeps) {
         return reply.code(200).type("text/plain; charset=utf-8")
           .send("Instagram authorization completed for account " + result.accountId + ". You may close this window.");
       } catch (error) {
-        deps.logger.warn({ err: error }, "Instagram OAuth callback failed");
+        const stateFingerprint = createHash("sha256")
+          .update(state)
+          .digest("hex")
+          .slice(0, 12);
+        deps.logger.warn({
+          err: error,
+          stateFingerprint,
+          stateLength: state.length,
+          codeLength: code.length
+        }, "Instagram OAuth callback failed");
         return reply.code(400).type("text/plain; charset=utf-8")
           .send("Instagram authorization could not be completed. Start a new authorization request.");
       }
     });
+
+    if (instagramOAuth.compliance !== undefined) {
+      const compliance = instagramOAuth.compliance;
+
+      server.register((scope, _opts, done) => {
+        scope.addContentTypeParser(
+          "application/x-www-form-urlencoded",
+          { parseAs: "string", bodyLimit: 65_536 },
+          (_req, body, cb) => cb(null, body)
+        );
+
+        scope.post<{ Body: string }>(
+          "/ishikeit/oauth/instagram/deauthorize/",
+          async (req, reply) => {
+            const signedRequest = new URLSearchParams(req.body).get("signed_request");
+            const payload = signedRequest === null
+              ? undefined
+              : verifyMetaSignedRequest(signedRequest, compliance.appSecret);
+            if (payload === undefined) {
+              return reply.code(401).send({ status: "rejected" });
+            }
+
+            try {
+              await compliance.dataLifecycle.deauthorize(payload.userId);
+              return reply.code(200).send({ status: "deauthorized" });
+            } catch (error) {
+              deps.logger.error({ err: error }, "Instagram deauthorization callback failed");
+              return reply.code(503).send({ status: "temporarily_unavailable" });
+            }
+          }
+        );
+
+        scope.post<{ Body: string }>(
+          "/ishikeit/oauth/instagram/data-deletion/",
+          async (req, reply) => {
+            const signedRequest = new URLSearchParams(req.body).get("signed_request");
+            const payload = signedRequest === null
+              ? undefined
+              : verifyMetaSignedRequest(signedRequest, compliance.appSecret);
+            if (payload === undefined) {
+              return reply.code(401).send({ status: "rejected" });
+            }
+
+            try {
+              const result = await compliance.dataLifecycle.requestDeletion(
+                payload.userId,
+                compliance.statusBaseUrl
+              );
+              return reply.code(200).send({
+                url: result.statusUrl,
+                confirmation_code: result.confirmationCode
+              });
+            } catch (error) {
+              deps.logger.error({ err: error }, "Instagram data deletion callback failed");
+              return reply.code(503).send({ status: "temporarily_unavailable" });
+            }
+          }
+        );
+
+        done();
+      });
+
+      server.get<{ Params: { confirmationCode: string } }>(
+        "/ishikeit/privacy/data-deletion/status/:confirmationCode",
+        async (req, reply) => {
+          reply.header("cache-control", "no-store");
+          const code = req.params.confirmationCode;
+          if (!/^[A-Za-z0-9]{16,64}$/u.test(code)) {
+            return reply.code(404).type("text/plain; charset=utf-8")
+              .send("Data deletion request not found.");
+          }
+
+          const status = await compliance.dataLifecycle.deletionStatus(code);
+          if (status === undefined) {
+            return reply.code(404).type("text/plain; charset=utf-8")
+              .send("Data deletion request not found.");
+          }
+          const completed = status.completedAt === undefined
+            ? ""
+            : ` Completed at ${status.completedAt}.`;
+          return reply.code(200).type("text/plain; charset=utf-8")
+            .send(
+              `Data deletion request ${code}: ${status.status}. Requested at ${status.requestedAt}.${completed}`
+            );
+        }
+      );
+    }
 
     if (deps.opsMetricsToken !== undefined) {
       const opsToken = deps.opsMetricsToken;

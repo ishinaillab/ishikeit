@@ -30,6 +30,7 @@ import { TikTokOAuthClient, TikTokOAuthService } from "../auth/tiktok-oauth.js";
 import { TikTokAccessTokenManager, tiktokCredentialCanRefresh } from "../auth/tiktok-token-manager.js";
 import { InstagramOAuthClient, InstagramOAuthService } from "../auth/instagram-oauth.js";
 import { InstagramAccessTokenManager } from "../auth/instagram-token-manager.js";
+import { PostgresInstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 
 const env = loadEnvironment();
 const logger = createLogger(env);
@@ -104,6 +105,12 @@ const instagramOAuthService = (
       client: instagramOAuthClient,
       stateTtlSeconds: env.META_INSTAGRAM_OAUTH_STATE_TTL_SECONDS
     });
+const instagramDataLifecycle = (
+  oauthStore === undefined
+  || instagramOAuthService === undefined
+)
+  ? undefined
+  : new PostgresInstagramDataLifecycle(db, oauthStore);
 const instagramAccessTokenManager = (
   oauthStore === undefined
   || instagramOAuthClient === undefined
@@ -157,6 +164,7 @@ const server = buildServer({
   ready: async () =>
     await db.ready()
     && (oauthStore === undefined || await oauthStore.ready())
+    && (instagramDataLifecycle === undefined || await instagramDataLifecycle.ready())
     && await tiktokAuthorizationReady(),
   inbound: new PostgresInboundStore(db),
   appSecret: env.META_APP_SECRET,
@@ -177,7 +185,16 @@ const server = buildServer({
     ? {}
     : {
         instagramOAuth: {
-          service: instagramOAuthService
+          service: instagramOAuthService,
+          ...(instagramDataLifecycle === undefined
+            ? {}
+            : {
+                compliance: {
+                  appSecret: env.META_INSTAGRAM_OAUTH_APP_SECRET!,
+                  dataLifecycle: instagramDataLifecycle,
+                  statusBaseUrl: new URL(env.META_INSTAGRAM_OAUTH_REDIRECT_URI!).origin
+                }
+              })
         }
       }),
   ...(env.OPS_METRICS_TOKEN === undefined
@@ -321,6 +338,9 @@ async function main(): Promise<void> {
     await db.assertReady();
     if (oauthStore !== undefined && !await oauthStore.ready()) {
       throw new Error("OAuth credential schema is not ready for configured OAuth providers");
+    }
+    if (instagramDataLifecycle !== undefined && !await instagramDataLifecycle.ready()) {
+      throw new Error("Instagram data lifecycle schema is not ready");
     }
     if (!await tiktokAuthorizationReady()) {
       throw new Error("TikTok Business Account activation requires a usable durable OAuth credential");

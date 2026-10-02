@@ -1163,6 +1163,29 @@ Validation and deployment evidence:
 
 Therefore the OAuth **code is deployed**, but the Instagram OAuth **feature remains intentionally inactive/configuration-gated**. Current production Instagram messaging continues to use the established static Ishi token path. Do not mark the OAuth feature active until the secured product-specific Instagram App ID/App Secret are supplied, the redirect URI is registered, and a real authorization/canary succeeds.
 
+## Instagram review activation checkpoint - 2026-10-02
+
+The secured Instagram handoff now contains non-placeholder product credentials. The values themselves must remain outside Git/chat.
+
+The local promotion helper `C:\\Users\\MBDS\\Downloads\\hostinger-mcp-client\\activate_instagram_oauth_env.mjs` validated and promoted the Instagram OAuth configuration to Hostinger while preserving the existing production environment. The live environment now includes the seven configuration keys required by the deployed Instagram OAuth lifecycle.
+
+Post-activation verification:
+
+- `GET /health/ready` returned HTTP 200 with `{"status":"ready"}`
+- `GET /ishikeit/oauth/instagram/login/` returned HTTP 302
+- redirect host is `www.instagram.com`
+- redirect path is `/oauth/authorize`
+- redirect `client_id` matches the product Instagram App ID in the secured handoff
+- redirect URI is exactly `https://apps.ishinaillab.com/ishikeit/oauth/instagram/callback/`
+- response type is `code`
+- requested scope is exactly `instagram_business_basic,instagram_business_manage_messages`
+- cryptographically random OAuth state is present
+- protected `GET /ops/instagram/oauth/status` returned HTTP 200 with `{"authorized":false}`
+
+The feature is therefore **configured and externally launchable, but no Instagram Professional account has completed authorization yet**. Do not mark the Instagram OAuth rollout complete until a real controlled account finishes consent, the durable OAuth status shows that account authorized with the intended granted scopes, and a controlled customer-DM canary succeeds.
+
+A submission-ready review package now lives at `docs/meta-instagram-app-review.md`. It reconciles Meta's access-level guidance: Standard Access can serve an owned/managed professional account, but customer messaging webhooks include data from ordinary people without app roles; Meta's current webhook guidance requires App Review / Advanced Access for those notifications.
+
 ## Current next work
 
 The durable messaging processor is now a production system, not a scaffold. Operational metrics, audio transcription adaptation, durable handoff/outcome observability, Telegram, the TikTok adapter, and the TikTok OAuth lifecycle are already implemented; do not redo those phases.
@@ -1170,7 +1193,7 @@ The durable messaging processor is now a production system, not a scaffold. Oper
 Immediate continuity tasks after the website-domain migration:
 
 1. if direct `AI_Engine` connector tools are needed, refresh/reconnect that ChatGPT connector against `https://www.ishinaillab.com`; do not revert WordPress to the old domain to restore a stale connector
-2. Meta Business Verification now passes. Finish the Instagram Login review activation: securely configure the product-specific Instagram App ID/secret and exact callback URI, deploy the new OAuth flow, prove a real controlled professional-account authorization/message canary, publish the reviewer login link, then submit `instagram_business_basic` and `instagram_business_manage_messages` with authentic evidence
+2. Instagram OAuth product credentials are now configured and the public login redirect is verified. Complete a real controlled Instagram Professional account authorization, verify durable status/scopes, run the customer-DM canary, publish the reviewer-visible login page/link, then submit `instagram_business_basic` and `instagram_business_manage_messages` with authentic evidence
 3. wait for TikTok's **TikTok accounts** permission-scope review; after approval, continue the secured OAuth activation workflow from `ishikeit-tiktok-app.env`
 4. keep the `zdm1002_*` WordPress rollback tables until the new canonical site has remained stable through the next operational window
 5. do not change Hostinger's internal shared-hosting primary-domain label from `povnailstudio.com` until a complete file-level rollback/archive has been created and the current Hostinger change-domain side effects have been re-verified; public old-domain web DNS is already detached

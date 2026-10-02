@@ -71,6 +71,27 @@ describe("InstagramOAuthClient", () => {
     expect(longUrl.searchParams.get("access_token")).toBe("short-access");
   });
 
+  it("preserves a bare numeric Instagram user_id without JavaScript precision loss", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      '{"data":[{"access_token":"short-access","user_id":17841430000000001,"permissions":"instagram_business_basic,instagram_business_manage_messages"}]}',
+      { status: 200 }
+    ));
+    const client = new InstagramOAuthClient({
+      appId: "123456789012345",
+      appSecret: "instagram-secret-123456",
+      fetchImpl
+    });
+
+    await expect(client.exchangeAuthorizationCode(
+      "authorization-code",
+      "https://apps.example.test/ishikeit/oauth/instagram/callback/"
+    )).resolves.toEqual({
+      accessToken: "short-access",
+      userId: "17841430000000001",
+      scopes: [...INSTAGRAM_REVIEW_SCOPES]
+    });
+  });
+
   it("uses the current refresh endpoint and classifies provider failures", async () => {
     const refreshFetch = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       access_token: "refreshed-access",

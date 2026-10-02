@@ -6,6 +6,7 @@ import type {
 
 export class MemoryOAuthStore implements OAuthCredentialStore {
   readonly credentials = new Map<string, OAuthCredential>();
+  readonly aliases = new Map<string, string>();
   readonly revocations = new Set<string>();
   readonly states = new Map<string, {
     provider: string;
@@ -39,12 +40,46 @@ export class MemoryOAuthStore implements OAuthCredentialStore {
     return Promise.resolve();
   }
 
-  revoke(provider: string, accountId: string, reason: string): Promise<void> {
-    void reason;
+  putAccountAlias(
+    provider: string,
+    aliasAccountId: string,
+    credentialAccountId: string,
+    aliasKind: string
+  ): Promise<void> {
+    void aliasKind;
+    this.aliases.set(provider + ":" + aliasAccountId, credentialAccountId);
+    return Promise.resolve();
+  }
+
+  resolveCredentialAccountId(
+    provider: string,
+    accountId: string
+  ): Promise<string | undefined> {
     const key = provider + ":" + accountId;
+    if (this.credentials.has(key)) return Promise.resolve(accountId);
+    return Promise.resolve(this.aliases.get(key));
+  }
+
+  aliasesForCredential(
+    provider: string,
+    credentialAccountId: string
+  ): Promise<readonly string[]> {
+    const prefix = provider + ":";
+    return Promise.resolve(
+      [...this.aliases.entries()]
+        .filter(([, target]) => target === credentialAccountId)
+        .map(([key]) => key.slice(prefix.length))
+        .sort()
+    );
+  }
+
+  async revoke(provider: string, accountId: string, reason: string): Promise<void> {
+    void reason;
+    const credentialAccountId = await this.resolveCredentialAccountId(provider, accountId)
+      ?? accountId;
+    const key = provider + ":" + credentialAccountId;
     this.revocations.add(key);
     this.credentials.delete(key);
-    return Promise.resolve();
   }
 
   isRevoked(provider: string, accountId: string): Promise<boolean> {

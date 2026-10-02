@@ -1224,6 +1224,35 @@ Application validation after the hardening change:
 
 After the stage-diagnostic revision is merged and deployed, run one fresh controlled Instagram authorization from the production login route. Immediately inspect the callback log for its safe stage/reason classification and the database for state consumption plus OAuth credential persistence before attempting the customer-DM canary.
 
+## Instagram OAuth activation and routing-identity reconciliation - 2026-10-03
+
+A controlled Instagram Professional account authorization now completes successfully. The durable credential is AES-256-GCM encrypted at rest, includes `instagram_business_basic` and `instagram_business_manage_messages`, has the expected approximately 60-day expiry, and has no revocation tombstone. The successful callback produced no warning/error logs. Meta's Instagram `messages` webhook subscription remains enabled.
+
+The successful flow exposed an important identity distinction that must be preserved:
+
+- Business Login's token exchange returns an app-scoped OAuth subject ID.
+- Instagram messaging webhooks and the `/<IG_ID>/messages` endpoint route by the Instagram Professional account ID.
+- These IDs are not interchangeable and must not be used as a single credential key.
+
+The application now keeps the encrypted credential under its OAuth subject ID and resolves provider-routing IDs through a durable alias. The token manager is alias-aware, refresh locks remain keyed to the credential identity, revocation through either identity resolves to the same credential, and data deletion removes retained Instagram rows for both the OAuth subject and all known routing aliases. Startup reconciliation calls Instagram `/me?fields=user_id` for already-authorized credentials so the successful production authorization does not need to be repeated.
+
+Database migration:
+
+`supabase/migrations/20261003020000_oauth_account_aliases.sql`
+
+It adds the RLS-protected `oauth_account_aliases` table without coupling alias lifetime to credential lifetime, so a revocation can continue blocking legacy static-token fallback. Database commit `94babed` is on `ishikeit-db/main`, and the linked Supabase CLI applied the migration after a dry run confirmed it was the only pending migration.
+
+Application validation for the alias change:
+
+- lint: passed
+- typecheck: passed
+- test files: 29 passed
+- tests: 158 passed
+- production build: passed
+- `git diff --check`: passed
+
+Next Instagram execution order: deploy the alias-aware application, verify startup reconciliation populated the Professional-account alias for the existing credential, then run a controlled outbound/self-message canary through the OAuth token path and trace any resulting webhook/outbox activity. Do not reauthorize merely to create the alias.
+
 ## Current next work
 
 The durable messaging processor is now a production system, not a scaffold. Operational metrics, audio transcription adaptation, durable handoff/outcome observability, Telegram, the TikTok adapter, and the TikTok OAuth lifecycle are already implemented; do not redo those phases.

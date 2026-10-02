@@ -31,9 +31,13 @@ export class InstagramAccessTokenManager implements AccountAccessTokenProvider {
   }
 
   async getAccessToken(accountId: string): Promise<string | undefined> {
-    const credential = await this.#store.get("instagram", accountId);
+    const credentialAccountId = await this.#store.resolveCredentialAccountId(
+      "instagram",
+      accountId
+    ) ?? accountId;
+    const credential = await this.#store.get("instagram", credentialAccountId);
     if (credential === undefined) {
-      if (await this.#store.isRevoked("instagram", accountId)) {
+      if (await this.#store.isRevoked("instagram", credentialAccountId)) {
         throw new AccessTokenError(
           "Instagram account authorization has been revoked; reauthorization is required",
           { retryable: false }
@@ -54,7 +58,7 @@ export class InstagramAccessTokenManager implements AccountAccessTokenProvider {
       return credential.accessToken;
     }
 
-    return (await this.#refresh(accountId)).accessToken;
+    return (await this.#refresh(credentialAccountId)).accessToken;
   }
 
   async #refresh(accountId: string): Promise<OAuthCredential> {

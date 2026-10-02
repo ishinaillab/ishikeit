@@ -92,6 +92,26 @@ describe("InstagramOAuthClient", () => {
     });
   });
 
+  it("resolves the Instagram Professional account ID from /me", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      data: [{ user_id: "17841438662359631" }]
+    }), { status: 200 }));
+    const client = new InstagramOAuthClient({
+      appId: "123456789012345",
+      appSecret: "instagram-secret-123456",
+      graphApiVersion: "v25.0",
+      fetchImpl
+    });
+
+    await expect(client.resolveProfessionalAccountId("long-access"))
+      .resolves.toBe("17841438662359631");
+    const profileUrl = new URL(requestUrl(fetchImpl.mock.calls[0]![0]));
+    expect(profileUrl.origin + profileUrl.pathname)
+      .toBe("https://graph.instagram.com/v25.0/me");
+    expect(profileUrl.searchParams.get("fields")).toBe("user_id");
+    expect(profileUrl.searchParams.get("access_token")).toBe("long-access");
+  });
+
   it("uses the current refresh endpoint and classifies provider failures", async () => {
     const refreshFetch = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       access_token: "refreshed-access",
@@ -181,7 +201,8 @@ describe("InstagramOAuthService", () => {
         accessToken: "long-secret",
         accessExpiresInSeconds: 5_184_000
       }),
-      refresh: vi.fn()
+      refresh: vi.fn(),
+      resolveProfessionalAccountId: vi.fn().mockResolvedValue("17841499999999999")
     };
     const service = new InstagramOAuthService({
       appId: "123456789012345",
@@ -205,7 +226,7 @@ describe("InstagramOAuthService", () => {
 
     const result = await service.completeAuthorization(state!, "authorization-code");
     expect(result).toEqual({
-      accountId: "17841430000000000",
+      accountId: "17841499999999999",
       scopes: [...INSTAGRAM_REVIEW_SCOPES],
       accessExpiresAt: new Date(now.getTime() + 5_184_000_000).toISOString()
     });
@@ -217,6 +238,9 @@ describe("InstagramOAuthService", () => {
       accountId: "17841430000000000",
       tokenVersion: 1
     });
+    await expect(
+      store.resolveCredentialAccountId("instagram", "17841499999999999")
+    ).resolves.toBe("17841430000000000");
 
     await expect(service.completeAuthorization(state!, "authorization-code"))
       .rejects.toThrow(/already consumed|invalid|expired/i);
@@ -234,7 +258,8 @@ describe("InstagramOAuthService", () => {
         })
       ),
       exchangeLongLived: vi.fn(),
-      refresh: vi.fn()
+      refresh: vi.fn(),
+      resolveProfessionalAccountId: vi.fn()
     };
     const service = new InstagramOAuthService({
       appId: "123456789012345",

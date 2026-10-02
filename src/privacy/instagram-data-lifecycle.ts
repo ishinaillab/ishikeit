@@ -62,7 +62,25 @@ export class PostgresInstagramDataLifecycle implements InstagramDataLifecycle {
       [confirmationCode, accountId]
     );
     try {
-      await this.oauthStore.revoke("instagram", accountId, "data_deletion");
+      const credentialAccountId = await this.oauthStore.resolveCredentialAccountId(
+        "instagram",
+        accountId
+      ) ?? accountId;
+      const aliases = await this.oauthStore.aliasesForCredential(
+        "instagram",
+        credentialAccountId
+      );
+      const accountIds = [...new Set([
+        credentialAccountId,
+        accountId,
+        ...aliases
+      ])];
+
+      await this.oauthStore.revoke(
+        "instagram",
+        credentialAccountId,
+        "data_deletion"
+      );
       const details = await this.db.transaction(async (tx) => {
         const attempts = await tx.query(
           `DELETE FROM outbox_attempts
@@ -70,38 +88,38 @@ export class PostgresInstagramDataLifecycle implements InstagramDataLifecycle {
              SELECT o.id
              FROM outbox o
              WHERE (o.payload->'target'->>'channel'='instagram'
-                    AND o.payload->'target'->>'accountId'=$1)
+                    AND (o.payload->'target'->>'accountId')=ANY($1::text[]))
                 OR EXISTS (
                   SELECT 1 FROM inbound_events i
                   WHERE i.id::text=o.payload->>'eventId'
                     AND i.provider='meta'
                     AND i.channel='instagram'
-                    AND i.account_id=$1
+                    AND i.account_id=ANY($1::text[])
                 )
            )`,
-          [accountId]
+          [accountIds]
         );
 
         const outbox = await tx.query(
           `DELETE FROM outbox o
            WHERE (o.payload->'target'->>'channel'='instagram'
-                  AND o.payload->'target'->>'accountId'=$1)
+                  AND (o.payload->'target'->>'accountId')=ANY($1::text[]))
               OR EXISTS (
                 SELECT 1 FROM inbound_events i
                 WHERE i.id::text=o.payload->>'eventId'
                   AND i.provider='meta'
                   AND i.channel='instagram'
-                  AND i.account_id=$1
+                  AND i.account_id=ANY($1::text[])
               )`,
-          [accountId]
+          [accountIds]
         );
 
         const inbound = await tx.query(
           `DELETE FROM inbound_events
            WHERE provider='meta'
              AND channel='instagram'
-             AND account_id=$1`,
-          [accountId]
+             AND account_id=ANY($1::text[])`,
+          [accountIds]
         );
 
         return {

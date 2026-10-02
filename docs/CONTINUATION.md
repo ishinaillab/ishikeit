@@ -1196,6 +1196,8 @@ Current implementation changes:
 - Authorization requests include `force_reauth=true`, preserve exact redirect URI matching, and retain cryptographically random one-time CSRF state.
 - Callback failures log only a short SHA-256 state fingerprint plus state/code lengths; raw state, authorization code, and tokens remain secret.
 - stage-aware diagnostics classify failures as `short_token_exchange`, `long_token_exchange`, or `credential_persistence`; provider failures expose only safe HTTP/provider codes and a normalized reason such as `redirect_uri_mismatch` or `client_secret_invalid`, never raw credentials or authorization codes.
+- a post-deploy controlled authorization produced `stage=short_token_exchange class=InstagramOAuthRequestError retryable=false` with no HTTP/provider error fields. Because request transport failures are retryable and provider rejections include an HTTP status/reason, this isolates the failure to validation of a nominally successful short-token payload.
+- the short-token JSON parser now preserves a bare numeric `user_id` as its exact decimal string before normal JSON parsing. This prevents precision loss for Instagram IDs beyond JavaScript's safe integer range while remaining compatible with Meta's documented quoted numeric-string response. Missing token/user-id fields now emit separate safe diagnostic reasons.
 - dedicated Meta signed-request verification uses HMAC-SHA256 plus timing-safe comparison.
 - deauthorization callback: `https://apps.ishinaillab.com/ishikeit/oauth/instagram/deauthorize/`
 - data-deletion callback: `https://apps.ishinaillab.com/ishikeit/oauth/instagram/data-deletion/`
@@ -1216,7 +1218,7 @@ Application validation after the hardening change:
 - lint: passed
 - typecheck: passed
 - test files: 29 passed
-- tests: 155 passed
+- tests: 156 passed
 - production build: passed
 - `git diff --check`: passed
 

@@ -131,6 +131,20 @@ function scopesValue(value: unknown): readonly string[] {
   return [];
 }
 
+function parseInstagramJson(rawText: string): Record<string, unknown> {
+  if (rawText.length === 0) return {};
+  const normalized = rawText.replace(
+    /("user_id"\s*:\s*)(\d+)(?=\s*[,}])/gu,
+    '$1"$2"'
+  );
+  try {
+    const parsed: unknown = JSON.parse(normalized);
+    return record(parsed) ?? {};
+  } catch {
+    return {};
+  }
+}
+
 function providerError(body: Record<string, unknown> | undefined): {
   message: string;
   code?: string;
@@ -217,9 +231,12 @@ export class InstagramOAuthClient implements InstagramOAuthClientLike {
     const accessToken = stringValue(source.access_token);
     const userId = stringValue(source.user_id);
     if (accessToken === undefined || userId === undefined) {
+      const reason = accessToken === undefined
+        ? "success_payload_missing_access_token"
+        : "success_payload_missing_user_id";
       throw new InstagramOAuthRequestError(
-        "Instagram OAuth response did not contain a valid access token and user ID",
-        { retryable: false }
+        "Instagram OAuth response did not contain the required short-lived token fields",
+        { retryable: false, reason }
       );
     }
 
@@ -276,8 +293,8 @@ export class InstagramOAuthClient implements InstagramOAuthClientLike {
       );
     }
 
-    const raw: unknown = await response.json().catch(() => ({}));
-    const body = record(raw) ?? {};
+    const rawText = await response.text().catch(() => "");
+    const body = parseInstagramJson(rawText);
     if (!response.ok) {
       const error = providerError(body);
       throw new InstagramOAuthRequestError(

@@ -23,6 +23,9 @@ export interface OAuthCredentialStore {
   get(provider: string, accountId: string): Promise<OAuthCredential | undefined>;
   latest(provider: string): Promise<OAuthCredential | undefined>;
   put(credential: Omit<OAuthCredential, "tokenVersion">): Promise<void>;
+  putAccountAlias(provider: string, aliasAccountId: string, credentialAccountId: string, aliasKind: string): Promise<void>;
+  resolveCredentialAccountId(provider: string, accountId: string): Promise<string | undefined>;
+  aliasesForCredential(provider: string, credentialAccountId: string): Promise<readonly string[]>;
   revoke(provider: string, accountId: string, reason: string): Promise<void>;
   isRevoked(provider: string, accountId: string): Promise<boolean>;
   withRefreshLock<T>(
@@ -86,15 +89,18 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
         credentials: boolean;
         states: boolean;
         revocations: boolean;
+        aliases: boolean;
       } & pg.QueryResultRow>(
         `SELECT
            to_regclass('public.oauth_credentials') IS NOT NULL AS credentials,
            to_regclass('public.oauth_authorization_states') IS NOT NULL AS states,
-           to_regclass('public.oauth_revocations') IS NOT NULL AS revocations`
+           to_regclass('public.oauth_revocations') IS NOT NULL AS revocations,
+           to_regclass('public.oauth_account_aliases') IS NOT NULL AS aliases`
       );
       return result.rows[0]?.credentials === true
         && result.rows[0]?.states === true
-        && result.rows[0]?.revocations === true;
+        && result.rows[0]?.revocations === true
+        && result.rows[0]?.aliases === true;
     } catch {
       return false;
     }
@@ -183,18 +189,75 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
     });
   }
 
+  async putAccountAlias(
+    provider: string,
+    aliasAccountId: string,
+    credentialAccountId: string,
+    aliasKind: string
+  ): Promise<void> {
+    await this.db.query(
+      `INSERT INTO oauth_account_aliases
+       (provider,alias_account_id,credential_account_id,alias_kind)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (provider,alias_account_id) DO UPDATE SET
+         credential_account_id=EXCLUDED.credential_account_id,
+         alias_kind=EXCLUDED.alias_kind,
+         updated_at=now()`,
+      [provider, aliasAccountId, credentialAccountId, aliasKind]
+    );
+  }
+
+  async resolveCredentialAccountId(
+    provider: string,
+    accountId: string
+  ): Promise<string | undefined> {
+    const direct = await this.db.query(
+      `SELECT account_id
+       FROM oauth_credentials
+       WHERE provider=$1 AND account_id=$2
+       LIMIT 1`,
+      [provider, accountId]
+    );
+    if (direct.rowCount === 1) return accountId;
+
+    const alias = await this.db.query<{ credential_account_id: string } & pg.QueryResultRow>(
+      `SELECT credential_account_id
+       FROM oauth_account_aliases
+       WHERE provider=$1 AND alias_account_id=$2
+       LIMIT 1`,
+      [provider, accountId]
+    );
+    return alias.rows[0]?.credential_account_id;
+  }
+
+  async aliasesForCredential(
+    provider: string,
+    credentialAccountId: string
+  ): Promise<readonly string[]> {
+    const result = await this.db.query<{ alias_account_id: string } & pg.QueryResultRow>(
+      `SELECT alias_account_id
+       FROM oauth_account_aliases
+       WHERE provider=$1 AND credential_account_id=$2
+       ORDER BY alias_account_id`,
+      [provider, credentialAccountId]
+    );
+    return result.rows.map((row) => row.alias_account_id);
+  }
+
   async revoke(provider: string, accountId: string, reason: string): Promise<void> {
+    const credentialAccountId = await this.resolveCredentialAccountId(provider, accountId)
+      ?? accountId;
     await this.db.transaction(async (tx) => {
       await tx.query(
         `INSERT INTO oauth_revocations (provider,account_id,reason)
          VALUES ($1,$2,$3)
          ON CONFLICT (provider,account_id) DO UPDATE SET
            reason=EXCLUDED.reason, revoked_at=now()`,
-        [provider, accountId, reason]
+        [provider, credentialAccountId, reason]
       );
       await tx.query(
         `DELETE FROM oauth_credentials WHERE provider=$1 AND account_id=$2`,
-        [provider, accountId]
+        [provider, credentialAccountId]
       );
     });
   }

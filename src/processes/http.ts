@@ -91,6 +91,7 @@ const instagramOAuthClient = !instagramOAuthConfigured
   : new InstagramOAuthClient({
       appId: env.META_INSTAGRAM_OAUTH_APP_ID!,
       appSecret: env.META_INSTAGRAM_OAUTH_APP_SECRET!,
+      graphApiVersion: env.META_GRAPH_API_VERSION,
       requestTimeoutMs: env.META_INSTAGRAM_OAUTH_REQUEST_TIMEOUT_MS
     });
 const instagramOAuthService = (
@@ -156,6 +157,31 @@ async function tiktokAuthorizationReady(): Promise<boolean> {
     return tiktokCredentialCanRefresh(credential);
   } catch {
     return false;
+  }
+}
+
+async function reconcileInstagramAccountAlias(): Promise<void> {
+  if (oauthStore === undefined || instagramOAuthClient === undefined) return;
+  const credential = await oauthStore.latest("instagram");
+  if (credential === undefined) return;
+  const aliases = await oauthStore.aliasesForCredential(
+    "instagram",
+    credential.accountId
+  );
+  if (aliases.length > 0) return;
+
+  try {
+    const professionalAccountId = await instagramOAuthClient
+      .resolveProfessionalAccountId(credential.accessToken);
+    await oauthStore.putAccountAlias(
+      "instagram",
+      professionalAccountId,
+      credential.accountId,
+      "instagram_professional_account"
+    );
+    logger.info("Instagram OAuth account alias reconciled");
+  } catch (error) {
+    logger.warn({ err: error }, "Instagram OAuth account alias reconciliation failed");
   }
 }
 
@@ -342,6 +368,7 @@ async function main(): Promise<void> {
     if (instagramDataLifecycle !== undefined && !await instagramDataLifecycle.ready()) {
       throw new Error("Instagram data lifecycle schema is not ready");
     }
+    await reconcileInstagramAccountAlias();
     if (!await tiktokAuthorizationReady()) {
       throw new Error("TikTok Business Account activation requires a usable durable OAuth credential");
     }

@@ -9,7 +9,8 @@ describe("InstagramAccessTokenManager", () => {
     const client: InstagramOAuthClientLike = {
       exchangeAuthorizationCode: vi.fn(),
       exchangeLongLived: vi.fn(),
-      refresh: vi.fn()
+      refresh: vi.fn(),
+      resolveProfessionalAccountId: vi.fn()
     };
     const manager = new InstagramAccessTokenManager({ store, client });
     await expect(manager.getAccessToken("missing")).resolves.toBeUndefined();
@@ -29,7 +30,8 @@ describe("InstagramAccessTokenManager", () => {
     const client: InstagramOAuthClientLike = {
       exchangeAuthorizationCode: vi.fn(),
       exchangeLongLived: vi.fn(),
-      refresh
+      refresh,
+      resolveProfessionalAccountId: vi.fn()
     };
     const manager = new InstagramAccessTokenManager({
       store,
@@ -39,6 +41,42 @@ describe("InstagramAccessTokenManager", () => {
 
     await expect(manager.getAccessToken("ig-1")).resolves.toBe("healthy-token");
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("resolves a professional-account webhook ID to its OAuth credential", async () => {
+    const store = new MemoryOAuthStore();
+    const now = new Date("2026-10-02T05:00:00.000Z");
+    await store.put({
+      provider: "instagram",
+      accountId: "oauth-subject",
+      accessToken: "mapped-token",
+      scopes: ["instagram_business_basic", "instagram_business_manage_messages"],
+      accessExpiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+    });
+    await store.putAccountAlias(
+      "instagram",
+      "professional-account",
+      "oauth-subject",
+      "instagram_professional_account"
+    );
+    const client: InstagramOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn(),
+      exchangeLongLived: vi.fn(),
+      refresh: vi.fn(),
+      resolveProfessionalAccountId: vi.fn()
+    };
+    const manager = new InstagramAccessTokenManager({
+      store,
+      client,
+      now: () => now
+    });
+
+    await expect(manager.getAccessToken("professional-account"))
+      .resolves.toBe("mapped-token");
+
+    await store.revoke("instagram", "professional-account", "deauthorized");
+    await expect(manager.getAccessToken("professional-account"))
+      .rejects.toMatchObject({ retryable: false });
   });
 
   it("refreshes a valid long-lived token near expiry and persists the replacement", async () => {
@@ -58,7 +96,8 @@ describe("InstagramAccessTokenManager", () => {
     const client: InstagramOAuthClientLike = {
       exchangeAuthorizationCode: vi.fn(),
       exchangeLongLived: vi.fn(),
-      refresh
+      refresh,
+      resolveProfessionalAccountId: vi.fn()
     };
     const manager = new InstagramAccessTokenManager({
       store,
@@ -89,7 +128,8 @@ describe("InstagramAccessTokenManager", () => {
     const client: InstagramOAuthClientLike = {
       exchangeAuthorizationCode: vi.fn(),
       exchangeLongLived: vi.fn(),
-      refresh
+      refresh,
+      resolveProfessionalAccountId: vi.fn()
     };
     const manager = new InstagramAccessTokenManager({
       store,
@@ -109,7 +149,8 @@ describe("InstagramAccessTokenManager", () => {
     const client: InstagramOAuthClientLike = {
       exchangeAuthorizationCode: vi.fn(),
       exchangeLongLived: vi.fn(),
-      refresh: vi.fn()
+      refresh: vi.fn(),
+      resolveProfessionalAccountId: vi.fn()
     };
     const manager = new InstagramAccessTokenManager({ store, client });
 

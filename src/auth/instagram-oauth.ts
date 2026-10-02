@@ -14,6 +14,7 @@ export const INSTAGRAM_REVIEW_SCOPES = [
 interface InstagramOAuthClientOptions {
   appId: string;
   appSecret: string;
+  graphApiVersion?: string;
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
 }
@@ -36,6 +37,7 @@ export interface InstagramOAuthClientLike {
   ): Promise<InstagramShortLivedTokenResult>;
   exchangeLongLived(accessToken: string): Promise<InstagramLongLivedTokenResult>;
   refresh(accessToken: string): Promise<InstagramLongLivedTokenResult>;
+  resolveProfessionalAccountId(accessToken: string): Promise<string>;
 }
 
 export interface InstagramOAuthStatus {
@@ -86,6 +88,7 @@ export class InstagramOAuthRequestError extends Error {
 export type InstagramOAuthFlowStage =
   | "short_token_exchange"
   | "long_token_exchange"
+  | "account_resolution"
   | "credential_persistence";
 
 export class InstagramOAuthFlowError extends Error {
@@ -200,12 +203,14 @@ export function instagramOAuthFailureDiagnostic(error: unknown): string {
 export class InstagramOAuthClient implements InstagramOAuthClientLike {
   readonly #appId: string;
   readonly #appSecret: string;
+  readonly #graphApiVersion: string;
   readonly #requestTimeoutMs: number;
   readonly #fetch: typeof fetch;
 
   constructor(options: InstagramOAuthClientOptions) {
     this.#appId = options.appId;
     this.#appSecret = options.appSecret;
+    this.#graphApiVersion = options.graphApiVersion ?? "v25.0";
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
     this.#fetch = options.fetchImpl ?? fetch;
   }
@@ -260,6 +265,25 @@ export class InstagramOAuthClient implements InstagramOAuthClientLike {
     url.searchParams.set("grant_type", "ig_refresh_token");
     url.searchParams.set("access_token", accessToken);
     return this.#longLivedRequest(url);
+  }
+
+  async resolveProfessionalAccountId(accessToken: string): Promise<string> {
+    const url = new URL(
+      `https://graph.instagram.com/${this.#graphApiVersion}/me`
+    );
+    url.searchParams.set("fields", "user_id");
+    url.searchParams.set("access_token", accessToken);
+    const body = await this.#request(url.toString(), { method: "GET" });
+    const first = Array.isArray(body.data) ? record(body.data[0]) : undefined;
+    const source = first ?? body;
+    const professionalAccountId = stringValue(source.user_id);
+    if (professionalAccountId === undefined) {
+      throw new InstagramOAuthRequestError(
+        "Instagram profile response did not contain a professional account user_id",
+        { retryable: false, reason: "professional_account_id_missing" }
+      );
+    }
+    return professionalAccountId;
   }
 
   async #longLivedRequest(url: URL): Promise<InstagramLongLivedTokenResult> {
@@ -405,6 +429,15 @@ export class InstagramOAuthService implements InstagramOAuthController {
       throw new InstagramOAuthFlowError("long_token_exchange", error);
     }
 
+    let professionalAccountId: string;
+    try {
+      professionalAccountId = await this.#client.resolveProfessionalAccountId(
+        long.accessToken
+      );
+    } catch (error) {
+      throw new InstagramOAuthFlowError("account_resolution", error);
+    }
+
     const accessExpiresAt = new Date(
       this.#now().getTime() + long.accessExpiresInSeconds * 1000
     );
@@ -417,25 +450,45 @@ export class InstagramOAuthService implements InstagramOAuthController {
         scopes: short.scopes,
         accessExpiresAt
       });
+      await this.#store.putAccountAlias(
+        "instagram",
+        professionalAccountId,
+        short.userId,
+        "instagram_professional_account"
+      );
     } catch (error) {
       throw new InstagramOAuthFlowError("credential_persistence", error);
     }
 
     return {
-      accountId: short.userId,
+      accountId: professionalAccountId,
       scopes: short.scopes,
       accessExpiresAt: accessExpiresAt.toISOString()
     };
   }
 
   async status(accountId?: string): Promise<InstagramOAuthStatus> {
-    const credential = accountId === undefined
+    let credential = accountId === undefined
       ? await this.#store.latest("instagram")
-      : await this.#store.get("instagram", accountId);
+      : undefined;
+    if (accountId !== undefined) {
+      const credentialAccountId = await this.#store.resolveCredentialAccountId(
+        "instagram",
+        accountId
+      );
+      credential = credentialAccountId === undefined
+        ? undefined
+        : await this.#store.get("instagram", credentialAccountId);
+    }
     if (credential === undefined) return { authorized: false };
+
+    const aliases = await this.#store.aliasesForCredential(
+      "instagram",
+      credential.accountId
+    );
     return {
       authorized: true,
-      accountId: credential.accountId,
+      accountId: aliases[0] ?? credential.accountId,
       scopes: credential.scopes,
       accessExpiresAt: credential.accessExpiresAt.toISOString()
     };

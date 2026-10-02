@@ -6,6 +6,7 @@ import type {
 
 export class MemoryOAuthStore implements OAuthCredentialStore {
   readonly credentials = new Map<string, OAuthCredential>();
+  readonly revocations = new Set<string>();
   readonly states = new Map<string, {
     provider: string;
     redirectUri: string;
@@ -34,7 +35,20 @@ export class MemoryOAuthStore implements OAuthCredentialStore {
       ...credential,
       tokenVersion: (previous?.tokenVersion ?? 0) + 1
     });
+    this.revocations.delete(key);
     return Promise.resolve();
+  }
+
+  revoke(provider: string, accountId: string, reason: string): Promise<void> {
+    void reason;
+    const key = provider + ":" + accountId;
+    this.revocations.add(key);
+    this.credentials.delete(key);
+    return Promise.resolve();
+  }
+
+  isRevoked(provider: string, accountId: string): Promise<boolean> {
+    return Promise.resolve(this.revocations.has(provider + ":" + accountId));
   }
 
   async withRefreshLock<T>(

@@ -102,4 +102,19 @@ describe("InstagramAccessTokenManager", () => {
     });
     expect(refresh).not.toHaveBeenCalled();
   });
+
+  it("does not fall back after an account has been revoked", async () => {
+    const store = new MemoryOAuthStore();
+    await store.revoke("instagram", "ig-revoked", "deauthorized");
+    const client: InstagramOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn(),
+      exchangeLongLived: vi.fn(),
+      refresh: vi.fn()
+    };
+    const manager = new InstagramAccessTokenManager({ store, client });
+
+    await expect(manager.getAccessToken("ig-revoked")).rejects.toMatchObject({
+      retryable: false
+    });
+  });
 });

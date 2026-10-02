@@ -22,6 +22,16 @@ function signedHeaders(raw: string) {
   };
 }
 
+function metaSignedRequest(userId: string, secret: string): string {
+  const payload = Buffer.from(JSON.stringify({
+    algorithm: "HMAC-SHA256",
+    issued_at: 1790928000,
+    user_id: userId
+  })).toString("base64url");
+  const signature = createHmac("sha256", secret).update(payload).digest("base64url");
+  return signature + "." + payload;
+}
+
 function tiktokSignedHeaders(raw: string, secret: string, timestamp = Math.floor(Date.now() / 1000)) {
   const signature = createHmac("sha256", secret)
     .update(String(timestamp) + "." + raw)
@@ -243,7 +253,7 @@ describe("webhook routes", () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
     const beginAuthorization = vi.fn().mockResolvedValue({
       authorizationUrl:
-        "https://www.instagram.com/oauth/authorize?client_id=123&state=opaque",
+        "https://api.instagram.com/oauth/authorize?client_id=123&state=opaque",
       expiresAt: "2026-10-02T06:10:00.000Z"
     });
     const completeAuthorization = vi.fn().mockResolvedValue({
@@ -257,6 +267,16 @@ describe("webhook routes", () => {
       scopes: ["instagram_business_basic", "instagram_business_manage_messages"],
       accessExpiresAt: "2026-12-01T06:00:00.000Z"
     });
+    const deauthorize = vi.fn().mockResolvedValue(undefined);
+    const requestDeletion = vi.fn().mockResolvedValue({
+      confirmationCode: "abcdef0123456789abcdef0123456789",
+      statusUrl: "https://apps.example.test/ishikeit/privacy/data-deletion/status/abcdef0123456789abcdef0123456789"
+    });
+    const deletionStatus = vi.fn().mockResolvedValue({
+      status: "completed",
+      requestedAt: "2026-10-02T08:00:00.000Z",
+      completedAt: "2026-10-02T08:00:01.000Z"
+    });
     const opsToken = "o".repeat(32);
     const server = buildServer({
       logger: pino({ level: "silent" }),
@@ -266,7 +286,17 @@ describe("webhook routes", () => {
       verifyToken: "verify-token-1234",
       opsMetricsToken: opsToken,
       instagramOAuth: {
-        service: { beginAuthorization, completeAuthorization, status }
+        service: { beginAuthorization, completeAuthorization, status },
+        compliance: {
+          appSecret: "instagram-secret",
+          dataLifecycle: {
+            ready: vi.fn().mockResolvedValue(true),
+            deauthorize,
+            requestDeletion,
+            deletionStatus
+          },
+          statusBaseUrl: "https://apps.example.test"
+        }
       }
     });
 
@@ -310,6 +340,42 @@ describe("webhook routes", () => {
     expect(authorized.statusCode).toBe(200);
     expect(status).toHaveBeenCalledWith("17841430000000000");
     expect(authorized.body).not.toContain("accessToken");
+
+    const signed = metaSignedRequest("17841430000000000", "instagram-secret");
+    const form = "signed_request=" + encodeURIComponent(signed);
+
+    const deauthorized = await server.inject({
+      method: "POST",
+      url: "/ishikeit/oauth/instagram/deauthorize/",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: form
+    });
+    expect(deauthorized.statusCode).toBe(200);
+    expect(deauthorize).toHaveBeenCalledWith("17841430000000000");
+
+    const deletion = await server.inject({
+      method: "POST",
+      url: "/ishikeit/oauth/instagram/data-deletion/",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: form
+    });
+    expect(deletion.statusCode).toBe(200);
+    expect(deletion.json()).toEqual({
+      url: "https://apps.example.test/ishikeit/privacy/data-deletion/status/abcdef0123456789abcdef0123456789",
+      confirmation_code: "abcdef0123456789abcdef0123456789"
+    });
+    expect(requestDeletion).toHaveBeenCalledWith(
+      "17841430000000000",
+      "https://apps.example.test"
+    );
+
+    const deletionPage = await server.inject({
+      method: "GET",
+      url: "/ishikeit/privacy/data-deletion/status/abcdef0123456789abcdef0123456789"
+    });
+    expect(deletionPage.statusCode).toBe(200);
+    expect(deletionPage.body).toContain("completed");
+    expect(deletionPage.headers["cache-control"]).toBe("no-store");
 
     await server.close();
   });

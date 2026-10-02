@@ -23,6 +23,8 @@ export interface OAuthCredentialStore {
   get(provider: string, accountId: string): Promise<OAuthCredential | undefined>;
   latest(provider: string): Promise<OAuthCredential | undefined>;
   put(credential: Omit<OAuthCredential, "tokenVersion">): Promise<void>;
+  revoke(provider: string, accountId: string, reason: string): Promise<void>;
+  isRevoked(provider: string, accountId: string): Promise<boolean>;
   withRefreshLock<T>(
     provider: string,
     accountId: string,
@@ -83,12 +85,16 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
       const result = await this.db.query<{
         credentials: boolean;
         states: boolean;
+        revocations: boolean;
       } & pg.QueryResultRow>(
         `SELECT
            to_regclass('public.oauth_credentials') IS NOT NULL AS credentials,
-           to_regclass('public.oauth_authorization_states') IS NOT NULL AS states`
+           to_regclass('public.oauth_authorization_states') IS NOT NULL AS states,
+           to_regclass('public.oauth_revocations') IS NOT NULL AS revocations`
       );
-      return result.rows[0]?.credentials === true && result.rows[0]?.states === true;
+      return result.rows[0]?.credentials === true
+        && result.rows[0]?.states === true
+        && result.rows[0]?.revocations === true;
     } catch {
       return false;
     }
@@ -136,39 +142,69 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
           aad(credential.provider, credential.accountId, "refresh")
         );
 
-    await this.db.query(
-      `INSERT INTO oauth_credentials
-       (provider,account_id,
-        access_token_ciphertext,access_token_iv,access_token_tag,
-        refresh_token_ciphertext,refresh_token_iv,refresh_token_tag,
-        scopes,access_expires_at,refresh_expires_at,token_version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1)
-       ON CONFLICT (provider,account_id) DO UPDATE SET
-         access_token_ciphertext=EXCLUDED.access_token_ciphertext,
-         access_token_iv=EXCLUDED.access_token_iv,
-         access_token_tag=EXCLUDED.access_token_tag,
-         refresh_token_ciphertext=EXCLUDED.refresh_token_ciphertext,
-         refresh_token_iv=EXCLUDED.refresh_token_iv,
-         refresh_token_tag=EXCLUDED.refresh_token_tag,
-         scopes=EXCLUDED.scopes,
-         access_expires_at=EXCLUDED.access_expires_at,
-         refresh_expires_at=EXCLUDED.refresh_expires_at,
-         token_version=oauth_credentials.token_version + 1,
-         updated_at=now()`,
-      [
-        credential.provider,
-        credential.accountId,
-        access.ciphertext,
-        access.iv,
-        access.tag,
-        refresh?.ciphertext ?? null,
-        refresh?.iv ?? null,
-        refresh?.tag ?? null,
-        [...credential.scopes],
-        credential.accessExpiresAt,
-        credential.refreshExpiresAt ?? null
-      ]
+    await this.db.transaction(async (tx) => {
+      await tx.query(
+        `INSERT INTO oauth_credentials
+         (provider,account_id,
+          access_token_ciphertext,access_token_iv,access_token_tag,
+          refresh_token_ciphertext,refresh_token_iv,refresh_token_tag,
+          scopes,access_expires_at,refresh_expires_at,token_version)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1)
+         ON CONFLICT (provider,account_id) DO UPDATE SET
+           access_token_ciphertext=EXCLUDED.access_token_ciphertext,
+           access_token_iv=EXCLUDED.access_token_iv,
+           access_token_tag=EXCLUDED.access_token_tag,
+           refresh_token_ciphertext=EXCLUDED.refresh_token_ciphertext,
+           refresh_token_iv=EXCLUDED.refresh_token_iv,
+           refresh_token_tag=EXCLUDED.refresh_token_tag,
+           scopes=EXCLUDED.scopes,
+           access_expires_at=EXCLUDED.access_expires_at,
+           refresh_expires_at=EXCLUDED.refresh_expires_at,
+           token_version=oauth_credentials.token_version + 1,
+           updated_at=now()`,
+        [
+          credential.provider,
+          credential.accountId,
+          access.ciphertext,
+          access.iv,
+          access.tag,
+          refresh?.ciphertext ?? null,
+          refresh?.iv ?? null,
+          refresh?.tag ?? null,
+          [...credential.scopes],
+          credential.accessExpiresAt,
+          credential.refreshExpiresAt ?? null
+        ]
+      );
+      await tx.query(
+        `DELETE FROM oauth_revocations WHERE provider=$1 AND account_id=$2`,
+        [credential.provider, credential.accountId]
+      );
+    });
+  }
+
+  async revoke(provider: string, accountId: string, reason: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.query(
+        `INSERT INTO oauth_revocations (provider,account_id,reason)
+         VALUES ($1,$2,$3)
+         ON CONFLICT (provider,account_id) DO UPDATE SET
+           reason=EXCLUDED.reason, revoked_at=now()`,
+        [provider, accountId, reason]
+      );
+      await tx.query(
+        `DELETE FROM oauth_credentials WHERE provider=$1 AND account_id=$2`,
+        [provider, accountId]
+      );
+    });
+  }
+
+  async isRevoked(provider: string, accountId: string): Promise<boolean> {
+    const result = await this.db.query(
+      `SELECT 1 FROM oauth_revocations WHERE provider=$1 AND account_id=$2 LIMIT 1`,
+      [provider, accountId]
     );
+    return result.rowCount === 1;
   }
 
   withRefreshLock<T>(

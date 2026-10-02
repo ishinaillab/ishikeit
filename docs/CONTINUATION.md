@@ -931,6 +931,21 @@ After TikTok account-scope approval:
 - Telegram remains production-active and was not changed by the website-domain migration
 - Meta/Telegram/TikTok provider architecture remains provider-neutral; do not redesign the core because of the website hostname change
 
+### Continuity checkpoint persistence/deployment verification
+
+The migration/context checkpoint above was persisted by GitHub PR #32 and then verified in the deployed environment:
+
+- PR #32, **Record canonical website migration checkpoint**, squash-merged as `3c1abb4820fb8870fac026ad022983f8ff67b933`
+- merged-main CI run `36960211692` passed `node`, `php-lint`, and `context-continuity`
+- Hostinger automatic build `01a0faa6-abfe-734f-ae0a-761a99904322` completed for `3c1abb4820fb8870fac026ad022983f8ff67b933`
+- `https://apps.ishinaillab.com/health/ready` returned `{"status":"ready"}`
+- public `https://ishinaillab.com/` returned one Cloudflare HTTP 301 to `https://www.ishinaillab.com/`
+- public `https://www.ishinaillab.com/` returned HTTP 200
+- public `https://www.ishinaillab.com/nail-appointment-reservation/` returned HTTP 200
+- public `https://www.ishinaillab.com/wp-json/` returned HTTP 200
+
+These are post-merge/post-deploy checks. The remaining unresolved items are operational/provider-side, not a pending website cutover.
+
 ## Context engineering and durable continuity
 
 Durable project context is change-coupled rather than primarily timer-coupled.

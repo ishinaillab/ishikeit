@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { OAuthCredentialStore } from "./oauth-store.js";
 
-const DEFAULT_AUTHORIZATION_URL = "https://api.instagram.com/oauth/authorize";
+const DEFAULT_AUTHORIZATION_URL = "https://www.instagram.com/oauth/authorize";
 const TOKEN_EXCHANGE_URL = "https://api.instagram.com/oauth/access_token";
 const LONG_LIVED_TOKEN_URL = "https://graph.instagram.com/access_token";
 const REFRESH_TOKEN_URL = "https://graph.instagram.com/refresh_access_token";

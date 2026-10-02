@@ -70,7 +70,7 @@ Business Login must also register:
 - Deauthorize callback URL: `https://apps.ishinaillab.com/ishikeit/oauth/instagram/deauthorize/`
 - Data deletion request URL: `https://apps.ishinaillab.com/ishikeit/oauth/instagram/data-deletion/`
 
-The production login route uses Meta's current `https://api.instagram.com/oauth/authorize` endpoint, includes one-time CSRF `state`, and sends `force_reauth=true` as recommended for Business Login.
+The production login route uses Meta's current Business Login endpoint, `https://www.instagram.com/oauth/authorize`, includes one-time CSRF `state`, and sends `force_reauth=true` as recommended for Business Login.
 
 Before submission, expose a clearly visible **Connect Instagram** link/button on a public reviewer-accessible web page. The link must launch the production login route above and must be visible in the submitted screencast.
 ## Reviewer verification instructions
@@ -150,7 +150,7 @@ The helper must not run until the product App ID and App Secret placeholders hav
 After activation, verify all of the following before recording any screencast:
 
 - `GET /health/ready` returns 200
-- `GET /ishikeit/oauth/instagram/login/` redirects to `api.instagram.com/oauth/authorize` with `force_reauth=true`
+- `GET /ishikeit/oauth/instagram/login/` redirects to `www.instagram.com/oauth/authorize` with `force_reauth=true`
 - the redirect contains the configured Instagram product App ID
 - the redirect URI exactly matches the registered callback including trailing slash
 - requested scopes are exactly `instagram_business_basic,instagram_business_manage_messages`

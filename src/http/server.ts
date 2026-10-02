@@ -13,7 +13,7 @@ import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
 import { verifyBearerAuthorization } from "../security/bearer.js";
 import type { TikTokOAuthController } from "../auth/tiktok-oauth.js";
-import type { InstagramOAuthController } from "../auth/instagram-oauth.js";
+import { instagramOAuthFailureDiagnostic, type InstagramOAuthController } from "../auth/instagram-oauth.js";
 import type { InstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 import { verifyMetaSignedRequest } from "../security/meta-signed-request.js";
 
@@ -228,12 +228,10 @@ export function buildServer(deps: ServerDeps) {
           .update(state)
           .digest("hex")
           .slice(0, 12);
-        deps.logger.warn({
-          err: error,
-          stateFingerprint,
-          stateLength: state.length,
-          codeLength: code.length
-        }, "Instagram OAuth callback failed");
+        const diagnostic = instagramOAuthFailureDiagnostic(error);
+        deps.logger.warn(
+          `Instagram OAuth callback failed ${diagnostic} state_fp=${stateFingerprint} state_len=${state.length} code_len=${code.length}`
+        );
         return reply.code(400).type("text/plain; charset=utf-8")
           .send("Instagram authorization could not be completed. Start a new authorization request.");
       }

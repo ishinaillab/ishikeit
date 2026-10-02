@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   INSTAGRAM_REVIEW_SCOPES,
   InstagramOAuthClient,
+  InstagramOAuthFlowError,
   InstagramOAuthRequestError,
   InstagramOAuthService,
+  instagramOAuthFailureDiagnostic,
   type InstagramOAuthClientLike
 } from "../src/auth/instagram-oauth.js";
 import { MemoryOAuthStore } from "./support/memory-oauth-store.js";
@@ -102,8 +104,45 @@ describe("InstagramOAuthClient", () => {
     await expect(result).rejects.toMatchObject({
       retryable: true,
       status: 503,
-      providerCode: "2"
+      providerCode: "2",
+      reason: "provider_rejected"
     });
+  });
+
+  it("classifies provider rejection reasons without exposing credentials", async () => {
+    const client = new InstagramOAuthClient({
+      appId: "123456789012345",
+      appSecret: "instagram-secret-123456",
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+        error_type: "OAuthException",
+        code: 400,
+        error_message: "Invalid client secret"
+      }), { status: 400 }))
+    });
+
+    let failure: unknown;
+    try {
+      await client.exchangeAuthorizationCode(
+        "authorization-code",
+        "https://apps.example.test/ishikeit/oauth/instagram/callback/"
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      status: 400,
+      providerCode: "400",
+      reason: "client_secret_invalid",
+      retryable: false
+    });
+    const diagnostic = instagramOAuthFailureDiagnostic(
+      new InstagramOAuthFlowError("short_token_exchange", failure)
+    );
+    expect(diagnostic).toBe(
+      "stage=short_token_exchange class=InstagramOAuthRequestError status=400 provider_code=400 reason=client_secret_invalid retryable=false"
+    );
+    expect(diagnostic).not.toContain("instagram-secret-123456");
   });
 });
 
@@ -160,5 +199,43 @@ describe("InstagramOAuthService", () => {
 
     await expect(service.completeAuthorization(state!, "authorization-code"))
       .rejects.toThrow(/already consumed|invalid|expired/i);
+  });
+
+  it("identifies the exact failing OAuth stage after state validation", async () => {
+    const store = new MemoryOAuthStore();
+    const client: InstagramOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn().mockRejectedValue(
+        new InstagramOAuthRequestError("provider rejected request", {
+          retryable: false,
+          status: 400,
+          providerCode: "OAuthException",
+          reason: "redirect_uri_mismatch"
+        })
+      ),
+      exchangeLongLived: vi.fn(),
+      refresh: vi.fn()
+    };
+    const service = new InstagramOAuthService({
+      appId: "123456789012345",
+      redirectUri: "https://apps.example.test/ishikeit/oauth/instagram/callback/",
+      store,
+      client
+    });
+
+    const started = await service.beginAuthorization();
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+
+    let failure: unknown;
+    try {
+      await service.completeAuthorization(state, "authorization-code");
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(InstagramOAuthFlowError);
+    expect(failure).toMatchObject({ stage: "short_token_exchange" });
+    expect(instagramOAuthFailureDiagnostic(failure)).toBe(
+      "stage=short_token_exchange class=InstagramOAuthRequestError status=400 provider_code=OAuthException reason=redirect_uri_mismatch retryable=false"
+    );
   });
 });

@@ -62,6 +62,7 @@ export class InstagramOAuthRequestError extends Error {
   readonly retryable: boolean;
   readonly status?: number;
   readonly providerCode?: string;
+  readonly reason?: string;
 
   constructor(
     message: string,
@@ -69,6 +70,7 @@ export class InstagramOAuthRequestError extends Error {
       retryable: boolean;
       status?: number;
       providerCode?: string;
+      reason?: string;
       cause?: unknown;
     }
   ) {
@@ -77,6 +79,22 @@ export class InstagramOAuthRequestError extends Error {
     this.retryable = options.retryable;
     if (options.status !== undefined) this.status = options.status;
     if (options.providerCode !== undefined) this.providerCode = options.providerCode;
+    if (options.reason !== undefined) this.reason = options.reason;
+  }
+}
+
+export type InstagramOAuthFlowStage =
+  | "short_token_exchange"
+  | "long_token_exchange"
+  | "credential_persistence";
+
+export class InstagramOAuthFlowError extends Error {
+  readonly stage: InstagramOAuthFlowStage;
+
+  constructor(stage: InstagramOAuthFlowStage, cause: unknown) {
+    super(`Instagram OAuth flow failed at ${stage}`, { cause });
+    this.name = "InstagramOAuthFlowError";
+    this.stage = stage;
   }
 }
 
@@ -129,6 +147,40 @@ function providerError(body: Record<string, unknown> | undefined): {
     message,
     ...(code === undefined ? {} : { code })
   };
+}
+
+function classifyProviderReason(message: string): string {
+  if (/matching code was not found|already used|authorization code/i.test(message)) {
+    return "authorization_code_invalid_or_used";
+  }
+  if (/client secret|app secret/i.test(message)) {
+    return "client_secret_invalid";
+  }
+  if (/redirect[_ ]?uri|redirect uri/i.test(message)) {
+    return "redirect_uri_mismatch";
+  }
+  if (/client[_ ]?id|app id/i.test(message)) {
+    return "client_id_invalid";
+  }
+  if (/permission|scope/i.test(message)) {
+    return "scope_or_permission_rejected";
+  }
+  return "provider_rejected";
+}
+
+export function instagramOAuthFailureDiagnostic(error: unknown): string {
+  const flow = error instanceof InstagramOAuthFlowError ? error : undefined;
+  const cause = flow?.cause ?? error;
+  const request = cause instanceof InstagramOAuthRequestError ? cause : undefined;
+  const parts = [
+    `stage=${flow?.stage ?? "unknown"}`,
+    `class=${cause instanceof Error ? cause.name : typeof cause}`
+  ];
+  if (request?.status !== undefined) parts.push(`status=${request.status}`);
+  if (request?.providerCode !== undefined) parts.push(`provider_code=${request.providerCode}`);
+  if (request?.reason !== undefined) parts.push(`reason=${request.reason}`);
+  if (request !== undefined) parts.push(`retryable=${request.retryable}`);
+  return parts.join(" ");
 }
 
 export class InstagramOAuthClient implements InstagramOAuthClientLike {
@@ -233,7 +285,8 @@ export class InstagramOAuthClient implements InstagramOAuthClientLike {
         {
           retryable: response.status === 429 || response.status >= 500,
           status: response.status,
-          ...(error.code === undefined ? {} : { providerCode: error.code })
+          ...(error.code === undefined ? {} : { providerCode: error.code }),
+          reason: classifyProviderReason(error.message)
         }
       );
     }
@@ -318,19 +371,38 @@ export class InstagramOAuthService implements InstagramOAuthController {
       throw new Error("Instagram OAuth state is expired, invalid, or already consumed");
     }
 
-    const short = await this.#client.exchangeAuthorizationCode(code.replace(/#_$/u, ""), this.#redirectUri);
-    const long = await this.#client.exchangeLongLived(short.accessToken);
+    let short: InstagramShortLivedTokenResult;
+    try {
+      short = await this.#client.exchangeAuthorizationCode(
+        code.replace(/#_$/u, ""),
+        this.#redirectUri
+      );
+    } catch (error) {
+      throw new InstagramOAuthFlowError("short_token_exchange", error);
+    }
+
+    let long: InstagramLongLivedTokenResult;
+    try {
+      long = await this.#client.exchangeLongLived(short.accessToken);
+    } catch (error) {
+      throw new InstagramOAuthFlowError("long_token_exchange", error);
+    }
+
     const accessExpiresAt = new Date(
       this.#now().getTime() + long.accessExpiresInSeconds * 1000
     );
 
-    await this.#store.put({
-      provider: "instagram",
-      accountId: short.userId,
-      accessToken: long.accessToken,
-      scopes: short.scopes,
-      accessExpiresAt
-    });
+    try {
+      await this.#store.put({
+        provider: "instagram",
+        accountId: short.userId,
+        accessToken: long.accessToken,
+        scopes: short.scopes,
+        accessExpiresAt
+      });
+    } catch (error) {
+      throw new InstagramOAuthFlowError("credential_persistence", error);
+    }
 
     return {
       accountId: short.userId,

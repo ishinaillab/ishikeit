@@ -1188,13 +1188,14 @@ A submission-ready review package now lives at `docs/meta-instagram-app-review.m
 
 ## Instagram OAuth callback and data-lifecycle hardening - 2026-10-02
 
-The first interactive Instagram authorization reached Ishikeit's callback with both `state` and `code`, but the durable authorization-state row remained unconsumed. This proved the failure occurred before token exchange. The OAuth implementation was reconciled against current Meta Business Login documentation before retrying authorization.
+The first interactive Instagram authorization reached Ishikeit's callback with both `state` and `code`, but the durable authorization-state row remained unconsumed. After the initial hardening deployment, later controlled attempts did consume the matching one-time state but still stored no Instagram OAuth credential. The active failure is therefore post-state-validation: short-token exchange, long-token exchange, or credential persistence. The OAuth implementation was reconciled against current Meta Business Login documentation before retrying authorization.
 
 Current implementation changes:
 
 - Business Login starts at `https://www.instagram.com/oauth/authorize`, which is the endpoint specified by Meta’s current Business Login for Instagram guide. The token exchange remains `https://api.instagram.com/oauth/access_token`.
 - Authorization requests include `force_reauth=true`, preserve exact redirect URI matching, and retain cryptographically random one-time CSRF state.
 - Callback failures log only a short SHA-256 state fingerprint plus state/code lengths; raw state, authorization code, and tokens remain secret.
+- stage-aware diagnostics classify failures as `short_token_exchange`, `long_token_exchange`, or `credential_persistence`; provider failures expose only safe HTTP/provider codes and a normalized reason such as `redirect_uri_mismatch` or `client_secret_invalid`, never raw credentials or authorization codes.
 - dedicated Meta signed-request verification uses HMAC-SHA256 plus timing-safe comparison.
 - deauthorization callback: `https://apps.ishinaillab.com/ishikeit/oauth/instagram/deauthorize/`
 - data-deletion callback: `https://apps.ishinaillab.com/ishikeit/oauth/instagram/data-deletion/`
@@ -1215,11 +1216,11 @@ Application validation after the hardening change:
 - lint: passed
 - typecheck: passed
 - test files: 29 passed
-- tests: 153 passed
+- tests: 155 passed
 - production build: passed
 - `git diff --check`: passed
 
-Do not retry Instagram authorization until the hardened application revision is merged/deployed and the three Business Login URLs above are registered in the Meta dashboard. After deployment, first verify the login redirect host, `force_reauth=true`, callback rejection behavior, protected OAuth status, and clean runtime logs.
+After the stage-diagnostic revision is merged and deployed, run one fresh controlled Instagram authorization from the production login route. Immediately inspect the callback log for its safe stage/reason classification and the database for state consumption plus OAuth credential persistence before attempting the customer-DM canary.
 
 ## Current next work
 

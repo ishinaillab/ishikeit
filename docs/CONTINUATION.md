@@ -255,7 +255,7 @@ Current bridge/runtime contract:
 Current WordPress REST base:
 
 ```text
-https://povnailstudio.com/wp-json/ishi-ai/v1
+https://www.ishinaillab.com/wp-json/ishi-ai/v1
 ```
 
 The bridge is responsible for:
@@ -767,6 +767,170 @@ TikTok is **not production-active yet**. No real TikTok credential has been adde
 
 Do not claim TikTok production activation until those provider-backed checks have succeeded.
 
+## 2026-10-02 canonical website/domain migration checkpoint
+
+The production WordPress site has been migrated from `povnailstudio.com` to the canonical website:
+
+```text
+https://www.ishinaillab.com
+```
+
+This was a runtime/hosting migration outside the Ishikeit application repository, so this section is the durable handoff for future sessions.
+
+### WordPress canonical state
+
+Verified after cutover:
+
+- WordPress `home` = `https://www.ishinaillab.com`
+- WordPress `siteurl` = `https://www.ishinaillab.com`
+- no `WP_HOME` or `WP_SITEURL` constants override the database values
+- the new apex `https://ishinaillab.com` performs one 301 to `https://www.ishinaillab.com` while preserving path and query
+- `www.ishinaillab.com` is the only canonical website hostname and does not redirect away
+- homepage returns HTTP 200 with canonical `https://www.ishinaillab.com/`
+- `/nail-appointment-reservation/` returns HTTP 200
+- `/my-dashboard/` returns HTTP 200
+- `/shop/` returns HTTP 200
+- `/my-account/` redirects to the login flow on the new canonical hostname
+- `/studio-policies/`, `/privacy-policy/`, and `/meta-data-deletion/` return HTTP 200
+- `/wp-json/` returns HTTP 200
+- `/appointment/` is not the real booking-page slug; its earlier 404 was not a migration failure
+
+The one-shot serialization-safe migration helper:
+
+- dry-run before cutover: 213 distinct stored values would change, 0 errors
+- execute: 402 database rows updated, 0 errors
+- post-migration dry-run: 0 URL-shaped `povnailstudio.com` values remaining, 0 errors
+- intentionally did **not** rewrite WordPress GUIDs
+- intentionally preserved old-domain email/login/history identities and physical filesystem paths
+- flushed rewrite rules, WordPress object cache, Elementor file cache, and LiteSpeed purge hooks after execution
+- was deactivated and removed after the cutover
+
+Rollback:
+
+- 19 database rollback tables with prefix `zdm1002_` remain temporarily in the production database
+- exact row-count parity was verified for the URL-bearing source/backup tables before cutover
+- do not drop those rollback tables until the new domain has remained stable through the next operational window
+
+### Hostinger/origin state
+
+The shared CloudLinux WordPress document root is still physically under the historical Hostinger website path:
+
+```text
+/home/u328762438/domains/povnailstudio.com/public_html
+```
+
+Current hosting facts:
+
+- `ishinaillab.com` is attached to that existing WordPress vhost as a parked hostname
+- Hostinger ZeroSSL is active and valid for both `ishinaillab.com` and `www.ishinaillab.com`
+- the certificate chain and SANs were independently validated against the Hostinger origin
+- `apps.ishinaillab.com` remains the separate Ishikeit Node.js application and was not moved
+- the shared-hosting MCP surface does not expose the Hostinger primary-domain change operation; Hostinger exposes the equivalent API only for Agency Plan websites
+- the Hostinger internal primary website label/path therefore still references `povnailstudio.com`
+- do **not** claim that the old domain is fully detached from the Hostinger vhost yet
+
+A manual Hostinger **Change domain** operation was deliberately deferred because Hostinger documents that changing a shared-hosting domain can remove Hostinger-managed email data and website backups, and the available MCP surface does not provide a file-level shared-hosting backup/archive operation. Public detachment was completed at DNS instead. Before changing the internal Hostinger primary-domain label later, create/verify a full file-level rollback and re-check the current Hostinger behavior.
+
+### Cloudflare and old-domain detachment
+
+For `ishinaillab.com`:
+
+- apex and `www` are proxied through Cloudflare after origin SSL was issued
+- the apex redirect is a single 301 to `https://www.ishinaillab.com`
+- path and query are preserved
+- no redirect rule is applied to `www.ishinaillab.com`
+
+For `povnailstudio.com`:
+
+- public web A/AAAA/CNAME records for the apex were removed
+- public web A/AAAA/CNAME records for `www` were removed
+- the old Cloudflare redirect rule was disabled/removed
+- 1.1.1.1 and 8.8.8.8 both returned no old-domain web A/AAAA/CNAME records after the change
+- Zoho MX records were preserved
+- SPF, Zoho verification, and Facebook domain-verification TXT records were preserved
+- local resolver/browser caches may temporarily retain a historical old-domain response until TTL/cache expiry; do not treat that as authoritative if public resolvers are clean
+
+The intended state is: the old domain no longer routes public web traffic to WordPress and does not intentionally redirect users to the new site, while unrelated mail and verification records remain intact.
+
+### Ishikeit / WordPress bridge continuity
+
+The WordPress AI bridge canonical base is now:
+
+```text
+https://www.ishinaillab.com/wp-json/ishi-ai/v1
+```
+
+Repository examples and the local recovery `.env` must use that canonical hostname.
+
+Verified during the migration:
+
+- the live Hostinger environment-variable inventory for `apps.ishinaillab.com` contained no `povnailstudio.com` value
+- the local recovery `C:\\Users\\MBDS\\Downloads\\.env` had one stale `WORDPRESS_AI_BRIDGE_URL` and was corrected to the new canonical `www` hostname
+- the legacy/direct `AI_Engine` connector in this ChatGPT session became unavailable after the site-domain migration
+- the separate Easy MCP WordPress connector remained available enough to verify installed plugins after migration
+- if a future session needs the direct `AI_Engine` connector, refresh/reconnect its endpoint against the new canonical WordPress URL rather than reverting WordPress
+
+Do not infer an Ishikeit production outage from the ChatGPT connector failure: the live Ishikeit environment itself did not contain the old domain when audited.
+
+### Meta verification/app-review consequence
+
+The earlier Meta business verification for **ISHI NAIL SERVICES** was rejected because the submitted website `https://ishinaillab.com/` redirected to a different website/domain.
+
+That condition has been removed. For the next Meta verification attempt, submit the direct canonical URL:
+
+```text
+https://www.ishinaillab.com/
+```
+
+It serves the site directly with HTTP 200 and avoids Meta's rejection reason for a submitted URL that redirects to another website.
+
+This domain fix is separate from the existing Meta App Review work for Instagram permissions. Continue to reconcile the fresh Business Verification discrepancy before the Instagram permission submission and do not fabricate reviewer evidence.
+
+### TikTok onboarding state
+
+TikTok code/runtime status remains as documented above:
+
+- base Business Messaging adapter is implemented and deployed
+- durable encrypted OAuth/token-refresh lifecycle is implemented and deployed
+- `ishikeit-db` OAuth migration is applied in production and synchronized with the Supabase migration ledger
+- Business Messaging and TikTok account OAuth remain on provider API `v1.3`; the live `v2.0` paths were previously verified unusable for these endpoints
+- TikTok is still **not production-active**
+
+Provider-side progress as of this checkpoint:
+
+- the TikTok for Business application has been filled out far enough for the **TikTok accounts** permission scope to be under review
+- wait for that approval before supplying real TikTok credentials to Ishikeit
+- a secured local handoff file `C:\\Users\\MBDS\\Downloads\\ishikeit-tiktok-app.env` exists; it contains the generated OAuth encryption key and placeholders for the TikTok app values
+- do not paste the TikTok app secret into chat
+
+Registered/intended redirect URLs:
+
+```text
+TikTok account holder:
+https://apps.ishinaillab.com/ishikeit/oauth/tiktok/callback/
+
+Advertiser:
+https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/
+```
+
+Important: the account-holder OAuth callback is implemented. The advertiser callback was supplied for the TikTok application form but the corresponding advertiser/Marketing-API OAuth route must be implemented and verified **before** performing any advertiser authorization.
+
+After TikTok account-scope approval:
+
+1. fill the secured local handoff file with the approved app ID, app secret, and TikTok-generated account-holder authorization URL
+2. validate those values locally without printing them
+3. add the complete OAuth app settings to the trusted Hostinger environment while leaving `TIKTOK_BUSINESS_ID` unset
+4. complete Business Account authorization and verify the returned `open_id`, scopes, token expiry, and refresh availability
+5. set `TIKTOK_BUSINESS_ID` only after the verified `open_id` is known
+6. register/verify the Business Messaging webhook and run a real human-originated end-to-end canary before declaring TikTok production-active
+
+### Canonical repository checkpoint before this continuity update
+
+- `ishinaillab/ishikeit` main: `28ab3323c259c3154988315aaf32e174441952b9`
+- `ishinaillab/ishikeit-db` main: `952cd7894230f9ed69397922a7c3da2fa47f1777`
+- Telegram remains production-active and was not changed by the website-domain migration
+- Meta/Telegram/TikTok provider architecture remains provider-neutral; do not redesign the core because of the website hostname change
+
 ## Context engineering and durable continuity
 
 Durable project context is change-coupled rather than primarily timer-coupled.
@@ -887,19 +1051,28 @@ GitHub PR #21 CI passed before squash merge. Hostinger then built `14e1bd30bbe69
 
 ## Current next work
 
-The durable messaging processor is now a production system, not a scaffold. Operational metrics, audio transcription adaptation, and durable handoff/outcome observability are live; do not redo those phases.
+The durable messaging processor is now a production system, not a scaffold. Operational metrics, audio transcription adaptation, durable handoff/outcome observability, Telegram, the TikTok adapter, and the TikTok OAuth lifecycle are already implemented; do not redo those phases.
 
-Continue building on the adapter/registry boundaries rather than redesigning the core. Recommended sequence:
+Immediate continuity tasks after the website-domain migration:
 
-1. complete TikTok for Business onboarding for the newly implemented Business Messaging adapter: obtain Business Messaging API access, complete applicable security/privacy review, authorize the target Business Account, prove the production token lifecycle, configure the webhook, and run a controlled human-originated end-to-end canary before declaring TikTok production-active
-2. complete and submit Meta App Review for the Instagram Login permissions `instagram_business_basic` and `instagram_business_manage_messages`; reconcile the current Business Verification discrepancy before submission
-3. prepare the required real screencast/reviewer evidence showing Instagram authorization, an external-user DM, Ishikeit handling, API send, and receipt in Instagram; do not fabricate review evidence
-4. after approval, repeat the fresh ordinary non-role account DM test and verify normal `message.received` ingestion plus successful reply before declaring Instagram public-user messaging production-complete
-5. do not add Conversation Routing write/control APIs to the current `graph.instagram.com` path until Meta's supported authorization model for this specific app setup is proven
-6. activate and perform a real provider-backed video interpretation smoke test only after a paid Gemini API project/key is securely configured; until then retain the verified no-inspection safeguard
-7. add Meta lead-management capability as a separate capability/operation family
-8. add Meta Marketing API operations behind their own authorization/policy layer
-9. add TikTok automatic messaging, image upload/send, Comment-to-Message, Organic, Leads, and Marketing operations only as separate typed capabilities after the base TikTok Business Messaging path is provider-verified
-10. version and test each future provider adapter and media-capability contract independently
+1. if direct `AI_Engine` connector tools are needed, refresh/reconnect that ChatGPT connector against `https://www.ishinaillab.com`; do not revert WordPress to the old domain to restore a stale connector
+2. resubmit Meta business verification for **ISHI NAIL SERVICES** using the direct canonical website `https://www.ishinaillab.com/`, then re-check the authenticated Business Verification/App Review state before proceeding
+3. wait for TikTok's **TikTok accounts** permission-scope review; after approval, continue the secured OAuth activation workflow from `ishikeit-tiktok-app.env`
+4. keep the `zdm1002_*` WordPress rollback tables until the new canonical site has remained stable through the next operational window
+5. do not change Hostinger's internal shared-hosting primary-domain label from `povnailstudio.com` until a complete file-level rollback/archive has been created and the current Hostinger change-domain side effects have been re-verified; public old-domain web DNS is already detached
 
-Marketing API, lead management, and future providers must not be routed through the conversational message handler merely because they originate from Meta.
+Continue building on the adapter/registry boundaries rather than redesigning the core. Recommended product sequence after those operational tasks:
+
+6. complete TikTok for Business provider-backed activation: authorize the target Business Account, prove token refresh, configure the webhook, verify account capability/limits, and run a controlled human-originated end-to-end canary before declaring TikTok production-active
+7. complete and submit Meta App Review for the Instagram Login permissions `instagram_business_basic` and `instagram_business_manage_messages`; reconcile the fresh Business Verification state before submission
+8. prepare the required real screencast/reviewer evidence showing Instagram authorization, an external-user DM, Ishikeit handling, API send, and receipt in Instagram; do not fabricate review evidence
+9. after approval, repeat the fresh ordinary non-role account DM test and verify normal `message.received` ingestion plus successful reply before declaring Instagram public-user messaging production-complete
+10. do not add Conversation Routing write/control APIs to the current `graph.instagram.com` path until Meta's supported authorization model for this specific app setup is proven
+11. activate and perform a real provider-backed video interpretation smoke test only after a paid Gemini API project/key is securely configured; until then retain the verified no-inspection safeguard
+12. add Meta lead-management capability as a separate capability/operation family
+13. add Meta Marketing API operations behind their own authorization/policy layer
+14. implement and verify TikTok advertiser OAuth before performing any advertiser authorization, then add TikTok Marketing operations behind their own authorization/policy layer
+15. add TikTok automatic messaging, image upload/send, Comment-to-Message, Organic, Leads, and other future operations only as separate typed capabilities after the base TikTok Business Messaging path is provider-verified
+16. version and test each future provider adapter and media-capability contract independently
+
+Marketing API, lead management, and future providers must not be routed through the conversational message handler merely because they originate from Meta or TikTok.

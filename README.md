@@ -54,7 +54,7 @@ The inbound processor is controlled by:
 
 ```text
 PROCESSOR_ENABLED=false
-WORDPRESS_AI_BRIDGE_URL=https://ishinaillab.com/wp-json/ishi-ai/v1
+WORDPRESS_AI_BRIDGE_URL=https://www.ishinaillab.com/wp-json/ishi-ai/v1
 ISHI_AI_BRIDGE_TOKEN=<dedicated-high-entropy-token>
 ```
 

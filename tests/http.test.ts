@@ -253,7 +253,7 @@ describe("webhook routes", () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
     const beginAuthorization = vi.fn().mockResolvedValue({
       authorizationUrl:
-        "https://api.instagram.com/oauth/authorize?client_id=123&state=opaque",
+        "https://www.instagram.com/oauth/authorize?client_id=123&state=opaque",
       expiresAt: "2026-10-02T06:10:00.000Z"
     });
     const completeAuthorization = vi.fn().mockResolvedValue({

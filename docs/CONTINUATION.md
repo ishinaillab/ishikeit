@@ -1192,7 +1192,7 @@ The first interactive Instagram authorization reached Ishikeit's callback with b
 
 Current implementation changes:
 
-- Business Login now starts at `https://api.instagram.com/oauth/authorize` rather than the older `www.instagram.com` authorization URL.
+- Business Login starts at `https://www.instagram.com/oauth/authorize`, which is the endpoint specified by Meta’s current Business Login for Instagram guide. The token exchange remains `https://api.instagram.com/oauth/access_token`.
 - Authorization requests include `force_reauth=true`, preserve exact redirect URI matching, and retain cryptographically random one-time CSRF state.
 - Callback failures log only a short SHA-256 state fingerprint plus state/code lengths; raw state, authorization code, and tokens remain secret.
 - dedicated Meta signed-request verification uses HMAC-SHA256 plus timing-safe comparison.

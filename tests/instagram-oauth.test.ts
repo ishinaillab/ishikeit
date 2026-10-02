@@ -134,7 +134,7 @@ describe("InstagramOAuthService", () => {
     const start = await service.beginAuthorization();
     const url = new URL(start.authorizationUrl);
     const state = url.searchParams.get("state");
-    expect(url.origin + url.pathname).toBe("https://api.instagram.com/oauth/authorize");
+    expect(url.origin + url.pathname).toBe("https://www.instagram.com/oauth/authorize");
     expect(url.searchParams.get("client_id")).toBe("123456789012345");
     expect(url.searchParams.get("redirect_uri"))
       .toBe("https://apps.example.test/ishikeit/oauth/instagram/callback/");

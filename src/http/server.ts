@@ -12,6 +12,7 @@ import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
 import { verifyBearerAuthorization } from "../security/bearer.js";
 import type { TikTokOAuthController } from "../auth/tiktok-oauth.js";
+import type { InstagramOAuthController } from "../auth/instagram-oauth.js";
 
 export interface ServerDeps {
   logger: Logger;
@@ -32,6 +33,9 @@ export interface ServerDeps {
   tiktokOAuth?: {
     service: TikTokOAuthController;
     configuredBusinessId?: string;
+  };
+  instagramOAuth?: {
+    service: InstagramOAuthController;
   };
   webhookBodyLimit?: number;
   metrics?: OperationalMetricsReader;
@@ -173,6 +177,82 @@ export function buildServer(deps: ServerDeps) {
           .send("TikTok authorization could not be completed. Start a new authorization request.");
       }
     });
+  }
+
+  if (deps.instagramOAuth !== undefined) {
+    const instagramOAuth = deps.instagramOAuth;
+
+    server.get("/ishikeit/oauth/instagram/login/", async (_req, reply) => {
+      reply.header("cache-control", "no-store");
+      try {
+        const started = await instagramOAuth.service.beginAuthorization();
+        return reply.code(302).header("location", started.authorizationUrl).send();
+      } catch (error) {
+        deps.logger.error({ err: error }, "Instagram OAuth authorization start failed");
+        return reply.code(503).type("text/plain; charset=utf-8")
+          .send("Instagram authorization is temporarily unavailable.");
+      }
+    });
+
+    server.get<{
+      Querystring: {
+        state?: string;
+        code?: string;
+        error?: string;
+        error_reason?: string;
+        error_description?: string;
+      };
+    }>("/ishikeit/oauth/instagram/callback/", async (req, reply) => {
+      reply.header("cache-control", "no-store");
+      const state = req.query.state;
+      const code = req.query.code;
+      if (req.query.error !== undefined || state === undefined || code === undefined) {
+        return reply.code(400).type("text/plain; charset=utf-8")
+          .send("Instagram authorization was not completed.");
+      }
+
+      try {
+        const result = await instagramOAuth.service.completeAuthorization(state, code);
+        return reply.code(200).type("text/plain; charset=utf-8")
+          .send("Instagram authorization completed for account " + result.accountId + ". You may close this window.");
+      } catch (error) {
+        deps.logger.warn({ err: error }, "Instagram OAuth callback failed");
+        return reply.code(400).type("text/plain; charset=utf-8")
+          .send("Instagram authorization could not be completed. Start a new authorization request.");
+      }
+    });
+
+    if (deps.opsMetricsToken !== undefined) {
+      const opsToken = deps.opsMetricsToken;
+      server.post("/ops/instagram/oauth/start", async (req, reply) => {
+        if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+          return reply.header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+            .code(401).send({ status: "unauthorized" });
+        }
+        reply.header("cache-control", "private, no-store");
+        try {
+          return { status: "authorization_required", ...await instagramOAuth.service.beginAuthorization() };
+        } catch (error) {
+          deps.logger.error({ err: error }, "Instagram OAuth operational start failed");
+          return reply.code(503).send({ status: "oauth_unavailable" });
+        }
+      });
+
+      server.get<{ Querystring: { account_id?: string } }>
+      ("/ops/instagram/oauth/status", async (req, reply) => {
+        if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+          return reply.header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+            .code(401).send({ status: "unauthorized" });
+        }
+        reply.header("cache-control", "private, no-store");
+        try {
+          return await instagramOAuth.service.status(req.query.account_id);
+        } catch (error) {
+          deps.logger.error({ err: error }, "Instagram OAuth status failed");
+          return reply.code(503).send({ status: "oauth_unavailable" });
+        }
+      });
+    }
   }
 
   server.register((scope, _opts, done) => {

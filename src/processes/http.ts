@@ -28,6 +28,8 @@ import { CredentialCipher } from "../auth/credential-cipher.js";
 import { PostgresOAuthCredentialStore } from "../auth/oauth-store.js";
 import { TikTokOAuthClient, TikTokOAuthService } from "../auth/tiktok-oauth.js";
 import { TikTokAccessTokenManager, tiktokCredentialCanRefresh } from "../auth/tiktok-token-manager.js";
+import { InstagramOAuthClient, InstagramOAuthService } from "../auth/instagram-oauth.js";
+import { InstagramAccessTokenManager } from "../auth/instagram-token-manager.js";
 
 const env = loadEnvironment();
 const logger = createLogger(env);
@@ -51,7 +53,13 @@ const tiktokOAuthConfigured = (
   && env.TIKTOK_BUSINESS_REDIRECT_URI !== undefined
   && env.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined
 );
-const oauthStore = !tiktokOAuthConfigured
+const instagramOAuthConfigured = (
+  env.META_INSTAGRAM_OAUTH_APP_ID !== undefined
+  && env.META_INSTAGRAM_OAUTH_APP_SECRET !== undefined
+  && env.META_INSTAGRAM_OAUTH_REDIRECT_URI !== undefined
+  && env.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined
+);
+const oauthStore = !(tiktokOAuthConfigured || instagramOAuthConfigured)
   ? undefined
   : new PostgresOAuthCredentialStore(
       db,
@@ -77,6 +85,36 @@ const tiktokOAuthService = (
       client: tiktokOAuthClient,
       stateTtlSeconds: env.TIKTOK_OAUTH_STATE_TTL_SECONDS
     });
+const instagramOAuthClient = !instagramOAuthConfigured
+  ? undefined
+  : new InstagramOAuthClient({
+      appId: env.META_INSTAGRAM_OAUTH_APP_ID!,
+      appSecret: env.META_INSTAGRAM_OAUTH_APP_SECRET!,
+      requestTimeoutMs: env.META_INSTAGRAM_OAUTH_REQUEST_TIMEOUT_MS
+    });
+const instagramOAuthService = (
+  oauthStore === undefined
+  || instagramOAuthClient === undefined
+)
+  ? undefined
+  : new InstagramOAuthService({
+      appId: env.META_INSTAGRAM_OAUTH_APP_ID!,
+      redirectUri: env.META_INSTAGRAM_OAUTH_REDIRECT_URI!,
+      store: oauthStore,
+      client: instagramOAuthClient,
+      stateTtlSeconds: env.META_INSTAGRAM_OAUTH_STATE_TTL_SECONDS
+    });
+const instagramAccessTokenManager = (
+  oauthStore === undefined
+  || instagramOAuthClient === undefined
+)
+  ? undefined
+  : new InstagramAccessTokenManager({
+      store: oauthStore,
+      client: instagramOAuthClient,
+      refreshSkewSeconds: env.META_INSTAGRAM_TOKEN_REFRESH_SKEW_SECONDS
+    });
+
 const tiktokAccessTokenManager = (
   oauthStore === undefined
   || tiktokOAuthClient === undefined
@@ -135,6 +173,13 @@ const server = buildServer({
             : { configuredBusinessId: env.TIKTOK_BUSINESS_ID })
         }
       }),
+  ...(instagramOAuthService === undefined
+    ? {}
+    : {
+        instagramOAuth: {
+          service: instagramOAuthService
+        }
+      }),
   ...(env.OPS_METRICS_TOKEN === undefined
     ? {}
     : {
@@ -157,6 +202,7 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
     graphApiVersion: env.META_GRAPH_API_VERSION,
     messengerAccessToken: env.META_MESSENGER_ACCESS_TOKEN,
     instagramAccessToken: env.META_INSTAGRAM_ACCESS_TOKEN,
+    ...(instagramAccessTokenManager === undefined ? {} : { instagramAccessTokenProvider: instagramAccessTokenManager }),
     whatsappAccessToken: env.META_WHATSAPP_ACCESS_TOKEN,
     instagramGraphHost: env.META_INSTAGRAM_GRAPH_HOST,
     requestTimeoutMs: env.META_OUTBOUND_REQUEST_TIMEOUT_MS
@@ -274,7 +320,7 @@ async function main(): Promise<void> {
   try {
     await db.assertReady();
     if (oauthStore !== undefined && !await oauthStore.ready()) {
-      throw new Error("OAuth credential schema is not ready for configured TikTok OAuth");
+      throw new Error("OAuth credential schema is not ready for configured OAuth providers");
     }
     if (!await tiktokAuthorizationReady()) {
       throw new Error("TikTok Business Account activation requires a usable durable OAuth credential");

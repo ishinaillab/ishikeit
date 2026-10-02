@@ -92,6 +92,47 @@ describe("environment", () => {
     })).toThrow(/query string/i);
   });
 
+  it("requires Instagram OAuth product settings as one protected set", () => {
+    expect(() => loadEnvironment({
+      ...productionBase,
+      META_INSTAGRAM_OAUTH_APP_ID: "123456789012345"
+    })).toThrow();
+
+    const encryptionKey = Buffer.alloc(32, 7).toString("base64");
+    const env = loadEnvironment({
+      ...productionBase,
+      META_INSTAGRAM_OAUTH_APP_ID: "123456789012345",
+      META_INSTAGRAM_OAUTH_APP_SECRET: "i".repeat(32),
+      META_INSTAGRAM_OAUTH_REDIRECT_URI:
+        "https://apps.ishinaillab.com/ishikeit/oauth/instagram/callback/",
+      OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: encryptionKey
+    });
+    expect(env.META_INSTAGRAM_OAUTH_STATE_TTL_SECONDS).toBe(600);
+    expect(env.META_INSTAGRAM_TOKEN_REFRESH_SKEW_SECONDS).toBe(604800);
+    expect(env.META_INSTAGRAM_OAUTH_REQUEST_TIMEOUT_MS).toBe(10000);
+  });
+
+  it("rejects unsafe Instagram OAuth redirect configuration", () => {
+    const base = {
+      ...productionBase,
+      META_INSTAGRAM_OAUTH_APP_ID: "123456789012345",
+      META_INSTAGRAM_OAUTH_APP_SECRET: "i".repeat(32),
+      OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: Buffer.alloc(32, 7).toString("base64")
+    };
+
+    expect(() => loadEnvironment({
+      ...base,
+      META_INSTAGRAM_OAUTH_REDIRECT_URI:
+        "https://apps.ishinaillab.com/ishikeit/oauth/instagram/callback/?x=1"
+    })).toThrow(/query string/i);
+
+    expect(() => loadEnvironment({
+      ...base,
+      META_INSTAGRAM_OAUTH_REDIRECT_URI:
+        "http://apps.ishinaillab.com/ishikeit/oauth/instagram/callback/"
+    })).toThrow(/HTTPS/i);
+  });
+
   it("keeps action dispatch disabled for literal false values", () => {
     const env = loadEnvironment({
       ...productionBase,

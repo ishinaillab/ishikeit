@@ -78,6 +78,40 @@ describe("MetaSender", () => {
     });
   });
 
+  it("prefers a durable Instagram OAuth credential and preserves the static-token fallback", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ id: "ig-message-1" }), { status: 200 }
+    ));
+    const getAccessToken = vi.fn()
+      .mockResolvedValueOnce("oauth-token")
+      .mockResolvedValueOnce(undefined);
+    const sender = new MetaSender({
+      graphApiVersion: "v26.0",
+      instagramAccessToken: "static-token",
+      instagramAccessTokenProvider: { getAccessToken },
+      instagramGraphHost: "graph.instagram.com",
+      fetchImpl
+    });
+
+    await sender.send({
+      ...base,
+      channel: "instagram",
+      accountId: "reviewer-ig"
+    });
+    expect(getAccessToken).toHaveBeenNthCalledWith(1, "reviewer-ig");
+    expect((fetchImpl.mock.calls[0]?.[1]?.headers as Record<string, string>).authorization)
+      .toBe("Bearer oauth-token");
+
+    await sender.send({
+      ...base,
+      channel: "instagram",
+      accountId: "production-ig"
+    });
+    expect(getAccessToken).toHaveBeenNthCalledWith(2, "production-ig");
+    expect((fetchImpl.mock.calls[1]?.[1]?.headers as Record<string, string>).authorization)
+      .toBe("Bearer static-token");
+  });
+
   it("sends WhatsApp media using Cloud API media objects", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
       JSON.stringify({ messages: [{ id: "wamid.1" }] }), { status: 200 }

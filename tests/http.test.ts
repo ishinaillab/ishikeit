@@ -239,6 +239,81 @@ describe("webhook routes", () => {
     await server.close();
   });
 
+  it("exposes the Instagram review login, callback, and protected status without tokens", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const beginAuthorization = vi.fn().mockResolvedValue({
+      authorizationUrl:
+        "https://www.instagram.com/oauth/authorize?client_id=123&state=opaque",
+      expiresAt: "2026-10-02T06:10:00.000Z"
+    });
+    const completeAuthorization = vi.fn().mockResolvedValue({
+      accountId: "17841430000000000",
+      scopes: ["instagram_business_basic", "instagram_business_manage_messages"],
+      accessExpiresAt: "2026-12-01T06:00:00.000Z"
+    });
+    const status = vi.fn().mockResolvedValue({
+      authorized: true,
+      accountId: "17841430000000000",
+      scopes: ["instagram_business_basic", "instagram_business_manage_messages"],
+      accessExpiresAt: "2026-12-01T06:00:00.000Z"
+    });
+    const opsToken = "o".repeat(32);
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: opsToken,
+      instagramOAuth: {
+        service: { beginAuthorization, completeAuthorization, status }
+      }
+    });
+
+    const login = await server.inject({
+      method: "GET",
+      url: "/ishikeit/oauth/instagram/login/"
+    });
+    expect(login.statusCode).toBe(302);
+    expect(login.headers.location).toContain("instagram.com/oauth/authorize");
+    expect(login.headers["cache-control"]).toBe("no-store");
+
+    const callback = await server.inject({
+      method: "GET",
+      url: "/ishikeit/oauth/instagram/callback/?state=opaque_state_1234567890&code=auth-code-123"
+    });
+    expect(callback.statusCode).toBe(200);
+    expect(callback.body).toContain("17841430000000000");
+    expect(callback.body).not.toContain("token");
+    expect(completeAuthorization).toHaveBeenCalledWith(
+      "opaque_state_1234567890",
+      "auth-code-123"
+    );
+
+    const denied = await server.inject({
+      method: "GET",
+      url: "/ishikeit/oauth/instagram/callback/?state=opaque_state_1234567890&error=access_denied"
+    });
+    expect(denied.statusCode).toBe(400);
+
+    const unauthorized = await server.inject({
+      method: "GET",
+      url: "/ops/instagram/oauth/status?account_id=17841430000000000"
+    });
+    expect(unauthorized.statusCode).toBe(401);
+
+    const authorized = await server.inject({
+      method: "GET",
+      url: "/ops/instagram/oauth/status?account_id=17841430000000000",
+      headers: { authorization: "Bearer " + opsToken }
+    });
+    expect(authorized.statusCode).toBe(200);
+    expect(status).toHaveBeenCalledWith("17841430000000000");
+    expect(authorized.body).not.toContain("accessToken");
+
+    await server.close();
+  });
+
   it("answers the GET challenge", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
     const store = { ingest } satisfies InboundStore;

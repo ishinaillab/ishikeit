@@ -1051,19 +1051,28 @@ GitHub PR #21 CI passed before squash merge. Hostinger then built `14e1bd30bbe69
 
 ## Current next work
 
-The durable messaging processor is now a production system, not a scaffold. Operational metrics, audio transcription adaptation, and durable handoff/outcome observability are live; do not redo those phases.
+The durable messaging processor is now a production system, not a scaffold. Operational metrics, audio transcription adaptation, durable handoff/outcome observability, Telegram, the TikTok adapter, and the TikTok OAuth lifecycle are already implemented; do not redo those phases.
 
-Continue building on the adapter/registry boundaries rather than redesigning the core. Recommended sequence:
+Immediate continuity tasks after the website-domain migration:
 
-1. complete TikTok for Business onboarding for the newly implemented Business Messaging adapter: obtain Business Messaging API access, complete applicable security/privacy review, authorize the target Business Account, prove the production token lifecycle, configure the webhook, and run a controlled human-originated end-to-end canary before declaring TikTok production-active
-2. complete and submit Meta App Review for the Instagram Login permissions `instagram_business_basic` and `instagram_business_manage_messages`; reconcile the current Business Verification discrepancy before submission
-3. prepare the required real screencast/reviewer evidence showing Instagram authorization, an external-user DM, Ishikeit handling, API send, and receipt in Instagram; do not fabricate review evidence
-4. after approval, repeat the fresh ordinary non-role account DM test and verify normal `message.received` ingestion plus successful reply before declaring Instagram public-user messaging production-complete
-5. do not add Conversation Routing write/control APIs to the current `graph.instagram.com` path until Meta's supported authorization model for this specific app setup is proven
-6. activate and perform a real provider-backed video interpretation smoke test only after a paid Gemini API project/key is securely configured; until then retain the verified no-inspection safeguard
-7. add Meta lead-management capability as a separate capability/operation family
-8. add Meta Marketing API operations behind their own authorization/policy layer
-9. add TikTok automatic messaging, image upload/send, Comment-to-Message, Organic, Leads, and Marketing operations only as separate typed capabilities after the base TikTok Business Messaging path is provider-verified
-10. version and test each future provider adapter and media-capability contract independently
+1. if direct `AI_Engine` connector tools are needed, refresh/reconnect that ChatGPT connector against `https://www.ishinaillab.com`; do not revert WordPress to the old domain to restore a stale connector
+2. resubmit Meta business verification for **ISHI NAIL SERVICES** using the direct canonical website `https://www.ishinaillab.com/`, then re-check the authenticated Business Verification/App Review state before proceeding
+3. wait for TikTok's **TikTok accounts** permission-scope review; after approval, continue the secured OAuth activation workflow from `ishikeit-tiktok-app.env`
+4. keep the `zdm1002_*` WordPress rollback tables until the new canonical site has remained stable through the next operational window
+5. do not change Hostinger's internal shared-hosting primary-domain label from `povnailstudio.com` until a complete file-level rollback/archive has been created and the current Hostinger change-domain side effects have been re-verified; public old-domain web DNS is already detached
 
-Marketing API, lead management, and future providers must not be routed through the conversational message handler merely because they originate from Meta.
+Continue building on the adapter/registry boundaries rather than redesigning the core. Recommended product sequence after those operational tasks:
+
+6. complete TikTok for Business provider-backed activation: authorize the target Business Account, prove token refresh, configure the webhook, verify account capability/limits, and run a controlled human-originated end-to-end canary before declaring TikTok production-active
+7. complete and submit Meta App Review for the Instagram Login permissions `instagram_business_basic` and `instagram_business_manage_messages`; reconcile the fresh Business Verification state before submission
+8. prepare the required real screencast/reviewer evidence showing Instagram authorization, an external-user DM, Ishikeit handling, API send, and receipt in Instagram; do not fabricate review evidence
+9. after approval, repeat the fresh ordinary non-role account DM test and verify normal `message.received` ingestion plus successful reply before declaring Instagram public-user messaging production-complete
+10. do not add Conversation Routing write/control APIs to the current `graph.instagram.com` path until Meta's supported authorization model for this specific app setup is proven
+11. activate and perform a real provider-backed video interpretation smoke test only after a paid Gemini API project/key is securely configured; until then retain the verified no-inspection safeguard
+12. add Meta lead-management capability as a separate capability/operation family
+13. add Meta Marketing API operations behind their own authorization/policy layer
+14. implement and verify TikTok advertiser OAuth before performing any advertiser authorization, then add TikTok Marketing operations behind their own authorization/policy layer
+15. add TikTok automatic messaging, image upload/send, Comment-to-Message, Organic, Leads, and other future operations only as separate typed capabilities after the base TikTok Business Messaging path is provider-verified
+16. version and test each future provider adapter and media-capability contract independently
+
+Marketing API, lead management, and future providers must not be routed through the conversational message handler merely because they originate from Meta or TikTok.

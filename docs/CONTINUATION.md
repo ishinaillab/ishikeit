@@ -864,8 +864,8 @@ Repository examples and the local recovery `.env` must use that canonical hostna
 
 Verified during the migration:
 
-- the live Hostinger environment-variable inventory for `apps.ishinaillab.com` contained no `povnailstudio.com` value
-- the local recovery `C:\\Users\\MBDS\\Downloads\\.env` had one stale `WORDPRESS_AI_BRIDGE_URL` and was corrected to the new canonical `www` hostname
+- production `WORDPRESS_AI_BRIDGE_URL` was later found to be stale at the retired `povnailstudio.com` bridge hostname during the 2026-10-02 incident diagnosis and was corrected to `https://www.ishinaillab.com/wp-json/ishi-ai/v1` while preserving the complete Hostinger environment key set
+- the local recovery `C:\\Users\\MBDS\\Downloads\\.env` was also corrected to the same canonical `www` bridge hostname
 - the legacy/direct `AI_Engine` connector in this ChatGPT session became unavailable after the site-domain migration
 - the separate Easy MCP WordPress connector remained available enough to verify installed plugins after migration
 - if a future session needs the direct `AI_Engine` connector, refresh/reconnect its endpoint against the new canonical WordPress URL rather than reverting WordPress
@@ -1064,6 +1064,32 @@ Latest full repository validation:
 
 GitHub PR #21 CI passed before squash merge. Hostinger then built `14e1bd30bbe699992bf2c8479f3cf6e6571ceaa5` successfully. Post-deploy `/health/live`, `/health/ready`, and `/health/capabilities` all returned HTTP 200. Routing probes confirmed handover and standby events are stored durably and ignored by the AI handler.
 
+## Resolved messaging incident and Meta recheck - 2026-10-02
+
+A production messaging incident occurred after the WordPress domain migration. Diagnosis established two migration-sensitive dependencies:
+
+- Ishikeit's production `WORDPRESS_AI_BRIDGE_URL` was found pointing at the retired `povnailstudio.com` WordPress hostname and was corrected to the canonical bridge base `https://www.ishinaillab.com/wp-json/ishi-ai/v1` while preserving the complete Hostinger environment key set.
+- After the bridge hostname was corrected, Ishikeit reached WordPress but affected turns returned HTTP 502. The confirmed root cause was the token used by the AI Engine <-> LatePoint connection: it had originally been issued for `povnailstudio.com` and no longer matched the migrated site. The token/domain binding was corrected outside Ishikeit, and the messaging problem is now resolved.
+
+Do not attribute this incident to a defect in Ishikeit's provider-neutral ingress, processor, or dispatcher. The durable queues remained bounded; affected historical customer turns that exhausted retries remain audit history and must not be blindly replayed after a long delay because that could send stale replies.
+
+Post-incident PostgreSQL audit found no currently pending outbox records. Historical incident dead letters were retained for audit, and the temporary Hostinger diagnostic cron jobs used during investigation were removed.
+
+The direct ChatGPT `AI_Engine` connector is a separate convenience integration and may still need to be refreshed against the new canonical site if it is used in a future session. Do not use its connection state as proof of Ishikeit production health.
+
+A fresh authenticated Meta app-state read on 2026-10-02 for app `1042452472116584` now reports:
+
+- App Review submission status: `NO_SUBMISSION`
+- `can_submit=true`
+- privacy-policy requirement: passes
+- Business Verification: **passes**
+- Advanced Access privileges: none granted
+- compliance: `compliant`
+- required compliance actions: none
+- open violations: none
+
+This supersedes the 2026-10-01 transient App Review requirement snapshot that reported `business_verification_passes=false`. Business Verification is no longer the active Meta blocker. The remaining Meta work is to prepare and submit the real Instagram Login App Review package for `instagram_business_basic` and `instagram_business_manage_messages` with authentic reviewer evidence.
+
 ## Current next work
 
 The durable messaging processor is now a production system, not a scaffold. Operational metrics, audio transcription adaptation, durable handoff/outcome observability, Telegram, the TikTok adapter, and the TikTok OAuth lifecycle are already implemented; do not redo those phases.
@@ -1071,7 +1097,7 @@ The durable messaging processor is now a production system, not a scaffold. Oper
 Immediate continuity tasks after the website-domain migration:
 
 1. if direct `AI_Engine` connector tools are needed, refresh/reconnect that ChatGPT connector against `https://www.ishinaillab.com`; do not revert WordPress to the old domain to restore a stale connector
-2. resubmit Meta business verification for **ISHI NAIL SERVICES** using the direct canonical website `https://www.ishinaillab.com/`, then re-check the authenticated Business Verification/App Review state before proceeding
+2. Meta Business Verification now passes as of 2026-10-02. Prepare and submit the Instagram Login App Review package for `instagram_business_basic` and `instagram_business_manage_messages`, using only authentic authorization and messaging evidence
 3. wait for TikTok's **TikTok accounts** permission-scope review; after approval, continue the secured OAuth activation workflow from `ishikeit-tiktok-app.env`
 4. keep the `zdm1002_*` WordPress rollback tables until the new canonical site has remained stable through the next operational window
 5. do not change Hostinger's internal shared-hosting primary-domain label from `povnailstudio.com` until a complete file-level rollback/archive has been created and the current Hostinger change-domain side effects have been re-verified; public old-domain web DNS is already detached

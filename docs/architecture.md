@@ -285,6 +285,27 @@ Raw webhook bytes exist only long enough to authenticate and parse the request.
 
 PostgreSQL stores normalized events, hashes, durable actions, attempt state, and bounded error metadata. Logs avoid customer message bodies and redact provider/bridge credentials. HTTP request serialization strips query strings before logging so OAuth callback state and authorization codes cannot enter request logs.
 
+## Instagram Login OAuth and Advanced Access
+
+Instagram public-user messaging requires Meta Advanced Access. Standard Access remains role-limited for Instagram messaging webhooks, so the provider access boundary is not worked around in the messaging core.
+
+The Instagram API with Instagram Login authorization lifecycle reuses the same durable OAuth tables and application-level AES-256-GCM encryption used by TikTok. It is configuration-gated and uses the product-specific Instagram App ID and Instagram App Secret, which are distinct from Ishikeit's general Meta app credentials.
+
+The lifecycle exposes:
+
+- public `GET /ishikeit/oauth/instagram/login/`, which creates a cryptographically random one-time state and redirects to Instagram's authorization endpoint
+- public `GET /ishikeit/oauth/instagram/callback/`, which requires the returned state and one-time authorization code
+- protected `POST /ops/instagram/oauth/start` for operational inspection of the generated authorization URL
+- protected `GET /ops/instagram/oauth/status` for token-free authorization/scope/expiry metadata
+
+Only the SHA-256 state hash, provider, exact redirect URI, expiry, and consumption timestamp are persisted before callback. Authorization codes and raw state values are never stored. The callback atomically consumes state before exchanging the code.
+
+The provider exchange follows Meta's current Instagram Login flow: the authorization code is exchanged server-side at `api.instagram.com/oauth/access_token`, the returned short-lived token is exchanged server-side at `graph.instagram.com/access_token` for a long-lived token, and unexpired long-lived tokens are refreshed through `graph.instagram.com/refresh_access_token`. The requested review scopes are `instagram_business_basic` and `instagram_business_manage_messages`.
+
+Durable Instagram credentials are keyed by the Instagram account ID returned by authorization. `InstagramAccessTokenManager` selects the credential by outbound target account, refreshes during the configured final pre-expiry window under the same process-local and PostgreSQL advisory-lock discipline used by the TikTok manager, and requires reauthorization after expiry. For the existing Ishi production account, the current static `META_INSTAGRAM_ACCESS_TOKEN` remains a backward-compatible fallback until that account is deliberately migrated. An OAuth credential for a review/external account takes precedence over the static fallback, so App Review can exercise a real external professional account without replacing the production Ishi token.
+
+OAuth is not considered production-active merely because these routes exist. Activation requires the product-specific Instagram App ID/secret, exact registered HTTPS redirect URI, the shared OAuth encryption key, a real authorization, a verified callback/token exchange, an end-to-end messaging canary for the authorized account, and then Meta App Review/Advanced Access approval. No Instagram product secret is committed to the repository.
+
 ## Versioning
 
 Meta Graph API target is configured by `META_GRAPH_API_VERSION`. TikTok Business Messaging's API target is independently configured by `TIKTOK_BUSINESS_API_VERSION`.

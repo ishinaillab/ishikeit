@@ -42,6 +42,7 @@ export function createLogger(env: Environment) {
         "META_WEBHOOK_VERIFY_TOKEN",
         "META_MESSENGER_ACCESS_TOKEN",
         "META_INSTAGRAM_ACCESS_TOKEN",
+        "META_INSTAGRAM_OAUTH_APP_SECRET",
         "META_WHATSAPP_ACCESS_TOKEN",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_WEBHOOK_SECRET",

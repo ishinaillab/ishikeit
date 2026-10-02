@@ -42,6 +42,12 @@ const schema = z.object({
   META_WHATSAPP_ACCESS_TOKEN: z.string().min(1).optional(),
   META_INSTAGRAM_GRAPH_HOST: z.enum(["graph.instagram.com", "graph.facebook.com"]).default("graph.instagram.com"),
   META_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
+  META_INSTAGRAM_OAUTH_APP_ID: z.string().regex(/^\d+$/).optional(),
+  META_INSTAGRAM_OAUTH_APP_SECRET: z.string().min(16).max(512).optional(),
+  META_INSTAGRAM_OAUTH_REDIRECT_URI: z.string().url().optional(),
+  META_INSTAGRAM_OAUTH_STATE_TTL_SECONDS: z.coerce.number().int().min(60).max(1800).default(600),
+  META_INSTAGRAM_TOKEN_REFRESH_SKEW_SECONDS: z.coerce.number().int().min(86400).max(2592000).default(604800),
+  META_INSTAGRAM_OAUTH_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
 
   TELEGRAM_BOT_TOKEN: z.string().min(20).regex(/^[0-9]+:[A-Za-z0-9_-]+$/).optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(32).max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),
@@ -67,19 +73,23 @@ const schema = z.object({
     });
   }
 
-  const tiktokOAuthKeys = [
+  const tiktokOAuthProviderKeys = [
     "TIKTOK_BUSINESS_APP_ID",
     "TIKTOK_BUSINESS_APP_SECRET",
     "TIKTOK_BUSINESS_AUTHORIZATION_URL",
-    "TIKTOK_BUSINESS_REDIRECT_URI",
-    "OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64"
+    "TIKTOK_BUSINESS_REDIRECT_URI"
   ] as const;
-  const configuredTikTokOAuthKeys = tiktokOAuthKeys.filter((key) => value[key] !== undefined);
+  const configuredTikTokOAuthKeys = tiktokOAuthProviderKeys.filter(
+    (key) => value[key] !== undefined
+  );
+  const tiktokOAuthConfigured =
+    configuredTikTokOAuthKeys.length === tiktokOAuthProviderKeys.length;
+
   if (
     configuredTikTokOAuthKeys.length !== 0
-    && configuredTikTokOAuthKeys.length !== tiktokOAuthKeys.length
+    && !tiktokOAuthConfigured
   ) {
-    for (const key of tiktokOAuthKeys) {
+    for (const key of tiktokOAuthProviderKeys) {
       if (value[key] === undefined) {
         ctx.addIssue({
           code: "custom",
@@ -90,10 +100,15 @@ const schema = z.object({
     }
   }
 
-  if (
-    configuredTikTokOAuthKeys.length === tiktokOAuthKeys.length
-    && value.OPS_METRICS_TOKEN === undefined
-  ) {
+  if (tiktokOAuthConfigured && value.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 === undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64"],
+      message: "TikTok OAuth requires OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64"
+    });
+  }
+
+  if (tiktokOAuthConfigured && value.OPS_METRICS_TOKEN === undefined) {
     ctx.addIssue({
       code: "custom",
       path: ["OPS_METRICS_TOKEN"],
@@ -101,11 +116,45 @@ const schema = z.object({
     });
   }
 
-  if (value.TIKTOK_BUSINESS_ID !== undefined && configuredTikTokOAuthKeys.length !== tiktokOAuthKeys.length) {
+  if (value.TIKTOK_BUSINESS_ID !== undefined && !tiktokOAuthConfigured) {
     ctx.addIssue({
       code: "custom",
       path: ["TIKTOK_BUSINESS_ID"],
       message: "TikTok Business Account activation requires the complete OAuth application configuration"
+    });
+  }
+
+  const instagramOAuthProviderKeys = [
+    "META_INSTAGRAM_OAUTH_APP_ID",
+    "META_INSTAGRAM_OAUTH_APP_SECRET",
+    "META_INSTAGRAM_OAUTH_REDIRECT_URI"
+  ] as const;
+  const configuredInstagramOAuthKeys = instagramOAuthProviderKeys.filter(
+    (key) => value[key] !== undefined
+  );
+  const instagramOAuthConfigured =
+    configuredInstagramOAuthKeys.length === instagramOAuthProviderKeys.length;
+
+  if (
+    configuredInstagramOAuthKeys.length !== 0
+    && !instagramOAuthConfigured
+  ) {
+    for (const key of instagramOAuthProviderKeys) {
+      if (value[key] === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: [key],
+          message: "Instagram OAuth application settings must be configured together"
+        });
+      }
+    }
+  }
+
+  if (instagramOAuthConfigured && value.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 === undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64"],
+      message: "Instagram OAuth requires OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64"
     });
   }
 
@@ -201,6 +250,21 @@ export function loadEnvironment(input: NodeJS.ProcessEnv = process.env): Environ
     const url = new URL(parsed.TIKTOK_BUSINESS_REDIRECT_URI);
     if (url.search !== "" || url.hash !== "") {
       throw new Error("TIKTOK_BUSINESS_REDIRECT_URI must not include a query string or fragment");
+    }
+  }
+
+  if (parsed.META_INSTAGRAM_OAUTH_REDIRECT_URI !== undefined) {
+    const url = new URL(parsed.META_INSTAGRAM_OAUTH_REDIRECT_URI);
+    if (url.search !== "" || url.hash !== "") {
+      throw new Error("META_INSTAGRAM_OAUTH_REDIRECT_URI must not include a query string or fragment");
+    }
+    if (parsed.NODE_ENV === "production") {
+      if (url.protocol !== "https:") {
+        throw new Error("Instagram production OAuth redirect URI must use HTTPS");
+      }
+      if (!url.pathname.endsWith("/")) {
+        throw new Error("Instagram OAuth redirect URI path must end with a slash");
+      }
     }
   }
 

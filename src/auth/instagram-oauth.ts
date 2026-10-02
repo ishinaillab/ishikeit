@@ -1,0 +1,353 @@
+import { createHash, randomBytes } from "node:crypto";
+import type { OAuthCredentialStore } from "./oauth-store.js";
+
+const DEFAULT_AUTHORIZATION_URL = "https://www.instagram.com/oauth/authorize";
+const TOKEN_EXCHANGE_URL = "https://api.instagram.com/oauth/access_token";
+const LONG_LIVED_TOKEN_URL = "https://graph.instagram.com/access_token";
+const REFRESH_TOKEN_URL = "https://graph.instagram.com/refresh_access_token";
+
+export const INSTAGRAM_REVIEW_SCOPES = [
+  "instagram_business_basic",
+  "instagram_business_manage_messages"
+] as const;
+
+interface InstagramOAuthClientOptions {
+  appId: string;
+  appSecret: string;
+  requestTimeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}
+
+export interface InstagramShortLivedTokenResult {
+  accessToken: string;
+  userId: string;
+  scopes: readonly string[];
+}
+
+export interface InstagramLongLivedTokenResult {
+  accessToken: string;
+  accessExpiresInSeconds: number;
+}
+
+export interface InstagramOAuthClientLike {
+  exchangeAuthorizationCode(
+    code: string,
+    redirectUri: string
+  ): Promise<InstagramShortLivedTokenResult>;
+  exchangeLongLived(accessToken: string): Promise<InstagramLongLivedTokenResult>;
+  refresh(accessToken: string): Promise<InstagramLongLivedTokenResult>;
+}
+
+export interface InstagramOAuthStatus {
+  authorized: boolean;
+  accountId?: string;
+  scopes?: readonly string[];
+  accessExpiresAt?: string;
+}
+
+export interface InstagramOAuthController {
+  beginAuthorization(): Promise<{ authorizationUrl: string; expiresAt: string }>;
+  completeAuthorization(
+    state: string,
+    code: string
+  ): Promise<{
+    accountId: string;
+    scopes: readonly string[];
+    accessExpiresAt: string;
+  }>;
+  status(accountId?: string): Promise<InstagramOAuthStatus>;
+}
+
+export class InstagramOAuthRequestError extends Error {
+  readonly retryable: boolean;
+  readonly status?: number;
+  readonly providerCode?: string;
+
+  constructor(
+    message: string,
+    options: {
+      retryable: boolean;
+      status?: number;
+      providerCode?: string;
+      cause?: unknown;
+    }
+  ) {
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    this.name = "InstagramOAuthRequestError";
+    this.retryable = options.retryable;
+    if (options.status !== undefined) this.status = options.status;
+    if (options.providerCode !== undefined) this.providerCode = options.providerCode;
+  }
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  if (typeof value === "string" && value.length > 0) return value;
+  if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
+  return undefined;
+}
+
+function positiveSeconds(value: unknown): number | undefined {
+  const number = typeof value === "number"
+    ? value
+    : typeof value === "string" && /^\d+$/u.test(value)
+      ? Number(value)
+      : undefined;
+  return number !== undefined && Number.isSafeInteger(number) && number > 0
+    ? number
+    : undefined;
+}
+
+function scopesValue(value: unknown): readonly string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  }
+  if (typeof value === "string") {
+    return value.split(/[ ,]+/u).map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function providerError(body: Record<string, unknown> | undefined): {
+  message: string;
+  code?: string;
+} {
+  const graph = record(body?.error);
+  const message = stringValue(graph?.message)
+    ?? stringValue(body?.error_message)
+    ?? stringValue(body?.message)
+    ?? "unknown provider error";
+  const code = stringValue(graph?.code)
+    ?? stringValue(body?.code)
+    ?? stringValue(body?.error_type);
+  return {
+    message,
+    ...(code === undefined ? {} : { code })
+  };
+}
+
+export class InstagramOAuthClient implements InstagramOAuthClientLike {
+  readonly #appId: string;
+  readonly #appSecret: string;
+  readonly #requestTimeoutMs: number;
+  readonly #fetch: typeof fetch;
+
+  constructor(options: InstagramOAuthClientOptions) {
+    this.#appId = options.appId;
+    this.#appSecret = options.appSecret;
+    this.#requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
+    this.#fetch = options.fetchImpl ?? fetch;
+  }
+
+  async exchangeAuthorizationCode(
+    code: string,
+    redirectUri: string
+  ): Promise<InstagramShortLivedTokenResult> {
+    const form = new FormData();
+    form.set("client_id", this.#appId);
+    form.set("client_secret", this.#appSecret);
+    form.set("grant_type", "authorization_code");
+    form.set("redirect_uri", redirectUri);
+    form.set("code", code);
+
+    const body = await this.#request(TOKEN_EXCHANGE_URL, {
+      method: "POST",
+      body: form
+    });
+
+    const first = Array.isArray(body.data) ? record(body.data[0]) : undefined;
+    const source = first ?? body;
+    const accessToken = stringValue(source.access_token);
+    const userId = stringValue(source.user_id);
+    if (accessToken === undefined || userId === undefined) {
+      throw new InstagramOAuthRequestError(
+        "Instagram OAuth response did not contain a valid access token and user ID",
+        { retryable: false }
+      );
+    }
+
+    return {
+      accessToken,
+      userId,
+      scopes: scopesValue(source.permissions ?? source.scope)
+    };
+  }
+
+  async exchangeLongLived(accessToken: string): Promise<InstagramLongLivedTokenResult> {
+    const url = new URL(LONG_LIVED_TOKEN_URL);
+    url.searchParams.set("grant_type", "ig_exchange_token");
+    url.searchParams.set("client_secret", this.#appSecret);
+    url.searchParams.set("access_token", accessToken);
+    return this.#longLivedRequest(url);
+  }
+
+  async refresh(accessToken: string): Promise<InstagramLongLivedTokenResult> {
+    const url = new URL(REFRESH_TOKEN_URL);
+    url.searchParams.set("grant_type", "ig_refresh_token");
+    url.searchParams.set("access_token", accessToken);
+    return this.#longLivedRequest(url);
+  }
+
+  async #longLivedRequest(url: URL): Promise<InstagramLongLivedTokenResult> {
+    const body = await this.#request(url.toString(), { method: "GET" });
+    const accessToken = stringValue(body.access_token);
+    const accessExpiresInSeconds = positiveSeconds(body.expires_in);
+    if (accessToken === undefined || accessExpiresInSeconds === undefined) {
+      throw new InstagramOAuthRequestError(
+        "Instagram OAuth response did not contain a valid long-lived token lifetime",
+        { retryable: false }
+      );
+    }
+    return { accessToken, accessExpiresInSeconds };
+  }
+
+  async #request(url: string, init: RequestInit): Promise<Record<string, unknown>> {
+    let response: Response;
+    try {
+      response = await this.#fetch(url, {
+        ...init,
+        headers: {
+          accept: "application/json",
+          ...(init.headers ?? {})
+        },
+        signal: AbortSignal.timeout(this.#requestTimeoutMs)
+      });
+    } catch (error) {
+      throw new InstagramOAuthRequestError(
+        "Instagram OAuth request failed before a response was received",
+        { retryable: true, cause: error }
+      );
+    }
+
+    const raw: unknown = await response.json().catch(() => ({}));
+    const body = record(raw) ?? {};
+    if (!response.ok) {
+      const error = providerError(body);
+      throw new InstagramOAuthRequestError(
+        `Instagram OAuth request was rejected: ${error.message.slice(0, 300)}`,
+        {
+          retryable: response.status === 429 || response.status >= 500,
+          status: response.status,
+          ...(error.code === undefined ? {} : { providerCode: error.code })
+        }
+      );
+    }
+    return body;
+  }
+}
+
+export interface InstagramOAuthServiceOptions {
+  appId: string;
+  redirectUri: string;
+  store: OAuthCredentialStore;
+  client: InstagramOAuthClientLike;
+  authorizationUrl?: string;
+  scopes?: readonly string[];
+  stateTtlSeconds?: number;
+  now?: () => Date;
+}
+
+export class InstagramOAuthService implements InstagramOAuthController {
+  readonly #appId: string;
+  readonly #redirectUri: string;
+  readonly #store: OAuthCredentialStore;
+  readonly #client: InstagramOAuthClientLike;
+  readonly #authorizationUrl: string;
+  readonly #scopes: readonly string[];
+  readonly #stateTtlSeconds: number;
+  readonly #now: () => Date;
+
+  constructor(options: InstagramOAuthServiceOptions) {
+    this.#appId = options.appId;
+    this.#redirectUri = options.redirectUri;
+    this.#store = options.store;
+    this.#client = options.client;
+    this.#authorizationUrl = options.authorizationUrl ?? DEFAULT_AUTHORIZATION_URL;
+    this.#scopes = options.scopes ?? INSTAGRAM_REVIEW_SCOPES;
+    this.#stateTtlSeconds = options.stateTtlSeconds ?? 600;
+    this.#now = options.now ?? (() => new Date());
+  }
+
+  async beginAuthorization(): Promise<{ authorizationUrl: string; expiresAt: string }> {
+    const state = randomBytes(32).toString("base64url");
+    const stateHash = createHash("sha256").update(state).digest("hex");
+    const expiresAt = new Date(this.#now().getTime() + this.#stateTtlSeconds * 1000);
+    await this.#store.createAuthorizationState(
+      "instagram",
+      stateHash,
+      this.#redirectUri,
+      expiresAt
+    );
+
+    const url = new URL(this.#authorizationUrl);
+    url.searchParams.set("client_id", this.#appId);
+    url.searchParams.set("redirect_uri", this.#redirectUri);
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("scope", this.#scopes.join(","));
+    url.searchParams.set("state", state);
+    return {
+      authorizationUrl: url.toString(),
+      expiresAt: expiresAt.toISOString()
+    };
+  }
+
+  async completeAuthorization(
+    state: string,
+    code: string
+  ): Promise<{
+    accountId: string;
+    scopes: readonly string[];
+    accessExpiresAt: string;
+  }> {
+    if (!/^[A-Za-z0-9_-]{20,256}$/u.test(state)) {
+      throw new Error("Instagram OAuth state is invalid");
+    }
+    if (code.length < 8 || code.length > 4096) {
+      throw new Error("Instagram authorization code is invalid");
+    }
+
+    const stateHash = createHash("sha256").update(state).digest("hex");
+    const storedState = await this.#store.consumeAuthorizationState("instagram", stateHash);
+    if (storedState === undefined || storedState.redirectUri !== this.#redirectUri) {
+      throw new Error("Instagram OAuth state is expired, invalid, or already consumed");
+    }
+
+    const short = await this.#client.exchangeAuthorizationCode(code.replace(/#_$/u, ""), this.#redirectUri);
+    const long = await this.#client.exchangeLongLived(short.accessToken);
+    const accessExpiresAt = new Date(
+      this.#now().getTime() + long.accessExpiresInSeconds * 1000
+    );
+
+    await this.#store.put({
+      provider: "instagram",
+      accountId: short.userId,
+      accessToken: long.accessToken,
+      scopes: short.scopes,
+      accessExpiresAt
+    });
+
+    return {
+      accountId: short.userId,
+      scopes: short.scopes,
+      accessExpiresAt: accessExpiresAt.toISOString()
+    };
+  }
+
+  async status(accountId?: string): Promise<InstagramOAuthStatus> {
+    const credential = accountId === undefined
+      ? await this.#store.latest("instagram")
+      : await this.#store.get("instagram", accountId);
+    if (credential === undefined) return { authorized: false };
+    return {
+      authorized: true,
+      accountId: credential.accountId,
+      scopes: credential.scopes,
+      accessExpiresAt: credential.accessExpiresAt.toISOString()
+    };
+  }
+}

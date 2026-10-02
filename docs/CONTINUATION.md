@@ -1090,6 +1090,57 @@ A fresh authenticated Meta app-state read on 2026-10-02 for app `104245247211658
 
 This supersedes the 2026-10-01 transient App Review requirement snapshot that reported `business_verification_passes=false`. Business Verification is no longer the active Meta blocker. The remaining Meta work is to prepare and submit the real Instagram Login App Review package for `instagram_business_basic` and `instagram_business_manage_messages` with authentic reviewer evidence.
 
+## Instagram Login OAuth lifecycle - implementation milestone 2026-10-02
+
+A fresh authenticated Meta recheck reports Business Verification passing, App Review status `NO_SUBMISSION`, `can_submit=true`, no Advanced Access grants, and clean compliance. Current Meta documentation confirms the observed production boundary: Standard Access delivers Instagram messaging webhooks only for people with an app role; Advanced Access is required for ordinary customers.
+
+To make the real App Review flow externally testable, Ishikeit now implements Instagram API with Instagram Login OAuth on the existing durable OAuth subsystem:
+
+- public review/login entry point: `GET /ishikeit/oauth/instagram/login/`
+- exact callback route: `GET /ishikeit/oauth/instagram/callback/`
+- protected operational start/status endpoints
+- 32-byte random OAuth state with only its SHA-256 hash persisted
+- atomic one-time state consumption before code exchange
+- server-side authorization-code exchange at `api.instagram.com/oauth/access_token`
+- server-side exchange to a 60-day long-lived token at `graph.instagram.com/access_token`
+- long-lived token refresh through `graph.instagram.com/refresh_access_token`
+- encrypted durable storage in the already-deployed `oauth_credentials` tables
+- account-scoped token selection for outbound Instagram sends
+- long-lived-token refresh under process-local deduplication plus PostgreSQL advisory locking
+- current static `META_INSTAGRAM_ACCESS_TOKEN` remains the production-account fallback until Ishi's own account is deliberately migrated
+- product-specific Instagram App Secret is added to logger redaction
+- current review scopes are fixed to `instagram_business_basic` and `instagram_business_manage_messages`
+
+Configuration contract:
+
+```text
+META_INSTAGRAM_OAUTH_APP_ID=<Instagram product App ID>
+META_INSTAGRAM_OAUTH_APP_SECRET=<Instagram product App Secret>
+META_INSTAGRAM_OAUTH_REDIRECT_URI=https://apps.ishinaillab.com/ishikeit/oauth/instagram/callback/
+META_INSTAGRAM_OAUTH_STATE_TTL_SECONDS=600
+META_INSTAGRAM_TOKEN_REFRESH_SKEW_SECONDS=604800
+META_INSTAGRAM_OAUTH_REQUEST_TIMEOUT_MS=10000
+OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64=<existing 32-byte base64 OAuth encryption key>
+```
+
+The Instagram product App ID/App Secret are the values under Meta App Dashboard -> Instagram -> API setup with Instagram login -> Set up Instagram business login. They are not the general Meta App ID/App Secret. Do not paste the product secret into chat or commit it. A secured local handoff file `C:\\Users\\MBDS\\Downloads\\ishikeit-instagram-app.env` now exists outside the repository. It reuses the already-validated 32-byte OAuth encryption key from the TikTok handoff and contains placeholders only for the Instagram product App ID and App Secret.
+
+This code is intentionally **not production-active yet**. The product-specific Instagram credentials and redirect registration have not been supplied to the Hostinger environment in this checkpoint, and no public website login button has been published yet. Before App Review submission:
+
+1. securely configure the product-specific Instagram App ID/secret and the exact redirect URI
+2. deploy this OAuth lifecycle while preserving the current static production Instagram token
+3. verify the public login route redirects only to Instagram and the callback completes with one-time state
+4. authorize a controlled Instagram professional account and verify protected OAuth status returns only account/scope/expiry metadata
+5. run a controlled message through webhook -> durable event -> AI -> `action.dispatch` -> Instagram reply using that account's OAuth credential
+6. add a visible website/reviewer login link to the public login route
+7. record the real Meta screencast showing authorization, messaging, handling, API send, and receipt; do not fabricate evidence
+8. submit App Review for `instagram_business_basic` and `instagram_business_manage_messages`
+9. after approval, repeat the ordinary non-role customer DM test before declaring public Instagram messaging complete
+
+Existing production evidence already includes successful Instagram `message.send` actions with provider message IDs, including a published send on 2026-10-01. Use that as supporting API-call evidence, but the App Review screencast must still show the actual current authorization and messaging flow.
+
+Focused local validation for this implementation passed 42/42 tests across OAuth exchange/state, token refresh, Meta sender credential selection, HTTP review routes, and environment validation, followed by a clean TypeScript typecheck. The full repository gate then passed lint, typecheck, all 150 tests, and the production TypeScript build.
+
 ## Current next work
 
 The durable messaging processor is now a production system, not a scaffold. Operational metrics, audio transcription adaptation, durable handoff/outcome observability, Telegram, the TikTok adapter, and the TikTok OAuth lifecycle are already implemented; do not redo those phases.
@@ -1097,7 +1148,7 @@ The durable messaging processor is now a production system, not a scaffold. Oper
 Immediate continuity tasks after the website-domain migration:
 
 1. if direct `AI_Engine` connector tools are needed, refresh/reconnect that ChatGPT connector against `https://www.ishinaillab.com`; do not revert WordPress to the old domain to restore a stale connector
-2. Meta Business Verification now passes as of 2026-10-02. Prepare and submit the Instagram Login App Review package for `instagram_business_basic` and `instagram_business_manage_messages`, using only authentic authorization and messaging evidence
+2. Meta Business Verification now passes. Finish the Instagram Login review activation: securely configure the product-specific Instagram App ID/secret and exact callback URI, deploy the new OAuth flow, prove a real controlled professional-account authorization/message canary, publish the reviewer login link, then submit `instagram_business_basic` and `instagram_business_manage_messages` with authentic evidence
 3. wait for TikTok's **TikTok accounts** permission-scope review; after approval, continue the secured OAuth activation workflow from `ishikeit-tiktok-app.env`
 4. keep the `zdm1002_*` WordPress rollback tables until the new canonical site has remained stable through the next operational window
 5. do not change Hostinger's internal shared-hosting primary-domain label from `povnailstudio.com` until a complete file-level rollback/archive has been created and the current Hostinger change-domain side effects have been re-verified; public old-domain web DNS is already detached
@@ -1105,7 +1156,7 @@ Immediate continuity tasks after the website-domain migration:
 Continue building on the adapter/registry boundaries rather than redesigning the core. Recommended product sequence after those operational tasks:
 
 6. complete TikTok for Business provider-backed activation: authorize the target Business Account, prove token refresh, configure the webhook, verify account capability/limits, and run a controlled human-originated end-to-end canary before declaring TikTok production-active
-7. complete and submit Meta App Review for the Instagram Login permissions `instagram_business_basic` and `instagram_business_manage_messages`; reconcile the fresh Business Verification state before submission
+7. complete and submit Meta App Review for `instagram_business_basic` and `instagram_business_manage_messages` only after the newly implemented Instagram OAuth flow is configured, deployed, and proven with a real controlled account
 8. prepare the required real screencast/reviewer evidence showing Instagram authorization, an external-user DM, Ishikeit handling, API send, and receipt in Instagram; do not fabricate review evidence
 9. after approval, repeat the fresh ordinary non-role account DM test and verify normal `message.received` ingestion plus successful reply before declaring Instagram public-user messaging production-complete
 10. do not add Conversation Routing write/control APIs to the current `graph.instagram.com` path until Meta's supported authorization model for this specific app setup is proven

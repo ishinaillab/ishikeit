@@ -1,6 +1,8 @@
 import type { ContentPart } from "../domain/content.js";
 import type { MetaOutboundPayload, MetaSendResult } from "../domain/outbound.js";
 import { DispatchFailure } from "../dispatch/failure.js";
+import { AccessTokenError } from "../auth/token-provider.js";
+import type { AccountAccessTokenProvider } from "../auth/instagram-token-manager.js";
 
 interface GraphErrorBody {
   error?: {
@@ -21,6 +23,7 @@ export interface MetaSenderOptions {
   graphApiVersion: string;
   messengerAccessToken?: string | undefined;
   instagramAccessToken?: string | undefined;
+  instagramAccessTokenProvider?: AccountAccessTokenProvider | undefined;
   whatsappAccessToken?: string | undefined;
   instagramGraphHost: "graph.instagram.com" | "graph.facebook.com";
   requestTimeoutMs?: number;
@@ -137,6 +140,7 @@ export class MetaSender implements MetaMessageSender {
   readonly #graphApiVersion: string;
   readonly #messengerAccessToken: string | undefined;
   readonly #instagramAccessToken: string | undefined;
+  readonly #instagramAccessTokenProvider: AccountAccessTokenProvider | undefined;
   readonly #whatsappAccessToken: string | undefined;
   readonly #instagramGraphHost: "graph.instagram.com" | "graph.facebook.com";
   readonly #requestTimeoutMs: number;
@@ -146,6 +150,7 @@ export class MetaSender implements MetaMessageSender {
     this.#graphApiVersion = options.graphApiVersion;
     this.#messengerAccessToken = options.messengerAccessToken;
     this.#instagramAccessToken = options.instagramAccessToken;
+    this.#instagramAccessTokenProvider = options.instagramAccessTokenProvider;
     this.#whatsappAccessToken = options.whatsappAccessToken;
     this.#instagramGraphHost = options.instagramGraphHost;
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
@@ -158,7 +163,7 @@ export class MetaSender implements MetaMessageSender {
     const token = payload.channel === "messenger"
       ? this.#messengerAccessToken
       : payload.channel === "instagram"
-        ? this.#instagramAccessToken
+        ? await this.#instagramToken(payload.accountId)
         : this.#whatsappAccessToken;
     if (token === undefined) {
       throw new MetaSendFailure(
@@ -248,5 +253,21 @@ export class MetaSender implements MetaMessageSender {
         : whatsappMessageId(result);
 
     return providerMessageId === undefined ? {} : { providerMessageId };
+  }
+
+  async #instagramToken(accountId: string): Promise<string | undefined> {
+    if (this.#instagramAccessTokenProvider === undefined) {
+      return this.#instagramAccessToken;
+    }
+
+    try {
+      return await this.#instagramAccessTokenProvider.getAccessToken(accountId)
+        ?? this.#instagramAccessToken;
+    } catch (error) {
+      throw new MetaSendFailure("Instagram OAuth access token is unavailable", {
+        retryable: error instanceof AccessTokenError ? error.retryable : true,
+        cause: error
+      });
+    }
   }
 }

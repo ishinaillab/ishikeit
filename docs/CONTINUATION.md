@@ -1125,7 +1125,7 @@ OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64=<existing 32-byte base64 OAuth encryption ke
 
 The Instagram product App ID/App Secret are the values under Meta App Dashboard -> Instagram -> API setup with Instagram login -> Set up Instagram business login. They are not the general Meta App ID/App Secret. Do not paste the product secret into chat or commit it. A secured local handoff file `C:\\Users\\MBDS\\Downloads\\ishikeit-instagram-app.env` now exists outside the repository. It reuses the already-validated 32-byte OAuth encryption key from the TikTok handoff and contains placeholders only for the Instagram product App ID and App Secret.
 
-This code is intentionally **not production-active yet**. The product-specific Instagram credentials and redirect registration have not been supplied to the Hostinger environment in this checkpoint, and no public website login button has been published yet. Before App Review submission:
+The OAuth code is deployed but the feature is intentionally **not production-active yet**. The product-specific Instagram credentials and redirect registration have not been supplied to the Hostinger environment in this checkpoint, and no public website login button has been published yet. Before App Review submission:
 
 1. securely configure the product-specific Instagram App ID/secret and the exact redirect URI
 2. deploy this OAuth lifecycle while preserving the current static production Instagram token
@@ -1140,6 +1140,28 @@ This code is intentionally **not production-active yet**. The product-specific I
 Existing production evidence already includes successful Instagram `message.send` actions with provider message IDs, including a published send on 2026-10-01. Use that as supporting API-call evidence, but the App Review screencast must still show the actual current authorization and messaging flow.
 
 Focused local validation for this implementation passed 42/42 tests across OAuth exchange/state, token refresh, Meta sender credential selection, HTTP review routes, and environment validation, followed by a clean TypeScript typecheck. The full repository gate then passed lint, typecheck, all 150 tests, and the production TypeScript build.
+
+## Instagram Login OAuth merge/deployment verification - 2026-10-02
+
+The Instagram Login OAuth lifecycle described above was squash-merged through GitHub PR #35 into `main` as:
+
+```text
+1520df5c91485383228ba246b8e76db31d35eb7c
+```
+
+Validation and deployment evidence:
+
+- all PR checks passed: `context-continuity`, `php-lint`, and `node`
+- local full gate passed lint, typecheck, 28 test files / 150 tests, and production build
+- Hostinger Node.js build `01a0fb2f-7c98-7378-bae7-70b72a18f6dd` completed from exact merge SHA `1520df5c91485383228ba246b8e76db31d35eb7c`
+- post-deploy `/health/ready` returned HTTP 200 with `{"status":"ready"}`
+- `/health/capabilities` still reported the production processor and action dispatcher enabled, zero processor canary partitions, and video interpretation disabled
+- fresh runtime audit after deploy reported 7 log entries and 0 WARN/ERROR
+- `/ishikeit/oauth/instagram/login/` returned HTTP 404 as expected because the product-specific Instagram OAuth environment is intentionally not configured yet
+- the live Hostinger environment key set remained unchanged from the trusted recovery set except that the intentionally empty `PROCESSOR_CANARY_PARTITION_KEYS` key is omitted server-side; no Instagram OAuth product keys were added
+- post-deploy PostgreSQL audit found no pending outbox items, no dead letters in the preceding 30 minutes, and no failed inbound events in the preceding 30 minutes
+
+Therefore the OAuth **code is deployed**, but the Instagram OAuth **feature remains intentionally inactive/configuration-gated**. Current production Instagram messaging continues to use the established static Ishi token path. Do not mark the OAuth feature active until the secured product-specific Instagram App ID/App Secret are supplied, the redirect URI is registered, and a real authorization/canary succeeds.
 
 ## Current next work
 

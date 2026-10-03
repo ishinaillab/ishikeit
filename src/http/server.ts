@@ -13,6 +13,7 @@ import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
 import { verifyBearerAuthorization } from "../security/bearer.js";
 import type { TikTokOAuthController } from "../auth/tiktok-oauth.js";
+import type { TikTokMarketingOAuthController } from "../auth/tiktok-marketing-oauth.js";
 import { instagramOAuthFailureDiagnostic, type InstagramOAuthController } from "../auth/instagram-oauth.js";
 import type { InstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 import { verifyMetaSignedRequest } from "../security/meta-signed-request.js";
@@ -36,6 +37,9 @@ export interface ServerDeps {
   tiktokOAuth?: {
     service: TikTokOAuthController;
     configuredBusinessId?: string;
+  };
+  tiktokMarketingOAuth?: {
+    service: TikTokMarketingOAuthController;
   };
   instagramOAuth?: {
     service: InstagramOAuthController;
@@ -85,6 +89,9 @@ export function buildServer(deps: ServerDeps) {
   }
   if (deps.tiktokOAuth !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("TikTok OAuth operations require an operational bearer token");
+  }
+  if (deps.tiktokMarketingOAuth !== undefined && deps.opsMetricsToken === undefined) {
+    throw new Error("TikTok Marketing OAuth operations require an operational bearer token");
   }
 
   if (deps.metrics !== undefined && deps.opsMetricsToken !== undefined) {
@@ -183,6 +190,98 @@ export function buildServer(deps: ServerDeps) {
           .code(400)
           .type("text/plain; charset=utf-8")
           .send("TikTok authorization could not be completed. Start a new authorization request.");
+      }
+    });
+  }
+
+  if (deps.tiktokMarketingOAuth !== undefined && deps.opsMetricsToken !== undefined) {
+    const tiktokMarketingOAuth = deps.tiktokMarketingOAuth;
+    const opsToken = deps.opsMetricsToken;
+
+    server.post("/ops/tiktok/marketing/oauth/start", async (req, reply) => {
+      if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+        return reply
+          .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401)
+          .send({ status: "unauthorized" });
+      }
+      reply.header("cache-control", "private, no-store");
+      try {
+        return {
+          status: "authorization_required",
+          ...await tiktokMarketingOAuth.service.beginAuthorization()
+        };
+      } catch (error) {
+        deps.logger.error(
+          { errorClass: error instanceof Error ? error.name : "unknown" },
+          "TikTok Marketing OAuth authorization start failed"
+        );
+        return reply.code(503).send({ status: "oauth_unavailable" });
+      }
+    });
+
+    server.get("/ops/tiktok/marketing/oauth/status", async (req, reply) => {
+      if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+        return reply
+          .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401)
+          .send({ status: "unauthorized" });
+      }
+      reply.header("cache-control", "private, no-store");
+      try {
+        return await tiktokMarketingOAuth.service.status();
+      } catch (error) {
+        deps.logger.error(
+          { errorClass: error instanceof Error ? error.name : "unknown" },
+          "TikTok Marketing OAuth status failed"
+        );
+        return reply.code(503).send({ status: "oauth_unavailable" });
+      }
+    });
+
+    server.get<{
+      Querystring: { state?: string; auth_code?: string; code?: string };
+    }>("/ishikeit/oauth/tiktok/advertiser/callback/", async (req, reply) => {
+      reply.header("cache-control", "no-store");
+      const state = req.query.state;
+      const authCode = req.query.auth_code;
+      if (state === undefined || authCode === undefined) {
+        return reply
+          .code(400)
+          .type("text/plain; charset=utf-8")
+          .send("TikTok advertiser authorization could not be completed.");
+      }
+
+      try {
+        const result = await tiktokMarketingOAuth.service.completeAuthorization(
+          state,
+          authCode
+        );
+        const count = result.advertiserIds.length;
+        return reply
+          .code(200)
+          .type("text/plain; charset=utf-8")
+          .send(
+            `TikTok advertiser authorization completed for ${count} advertiser${count === 1 ? "" : "s"}. You may close this window.`
+          );
+      } catch (error) {
+        const stateFingerprint = createHash("sha256")
+          .update(state)
+          .digest("hex")
+          .slice(0, 12);
+        deps.logger.warn(
+          {
+            errorClass: error instanceof Error ? error.name : "unknown",
+            stateFingerprint
+          },
+          "TikTok Marketing OAuth callback failed"
+        );
+        return reply
+          .code(400)
+          .type("text/plain; charset=utf-8")
+          .send(
+            "TikTok advertiser authorization could not be completed. Start a new authorization request."
+          );
       }
     });
   }

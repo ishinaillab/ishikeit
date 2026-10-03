@@ -1,7 +1,7 @@
 # TikTok Marketing OAuth design
 
 Date: 2026-10-04
-Status: approved architecture; implementation not started
+Status: approved architecture; implementation complete on feature branch; pending merge/deploy
 Scope: advertiser authorization foundation only
 
 ## 1. Purpose

@@ -32,11 +32,47 @@ describe("TikTokAccessTokenManager", () => {
       accessToken: "access",
       refreshToken: "refresh",
       scopes: [],
+      refreshExpiresAt: new Date(now.getTime() + 1000),
+      tokenVersion: 1
+    }, now)).toBe(false);
+    expect(tiktokCredentialCanRefresh({
+      provider: "tiktok",
+      accountId: "business-1",
+      accessToken: "access",
+      refreshToken: "refresh",
+      scopes: [],
       accessExpiresAt: now,
       refreshExpiresAt: now,
       tokenVersion: 1
     }, now)).toBe(false);
   });
+  it("rejects a Business Messaging credential without an access expiry", async () => {
+    const store = new MemoryOAuthStore();
+    await store.put({
+      provider: "tiktok",
+      accountId: "business-1",
+      accessToken: "access-without-expiry",
+      refreshToken: "refresh-current",
+      scopes: ["business.messaging"]
+    });
+    const refresh = vi.fn();
+    const client: TikTokOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn(),
+      refresh
+    };
+    const manager = new TikTokAccessTokenManager({
+      businessId: "business-1",
+      store,
+      client
+    });
+
+    const result = manager.getAccessToken();
+    await expect(result).rejects.toBeInstanceOf(AccessTokenError);
+    await expect(result).rejects.toMatchObject({ retryable: false });
+    await expect(result).rejects.toThrow(/expiry/i);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
   it("returns an unexpired access token without refreshing", async () => {
     const store = new MemoryOAuthStore();
     const now = new Date("2026-10-02T00:00:00.000Z");

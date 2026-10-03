@@ -6,7 +6,8 @@ export function tiktokCredentialCanRefresh(
   credential: OAuthCredential | undefined,
   now: Date = new Date()
 ): boolean {
-  return credential?.refreshToken !== undefined
+  return credential?.accessExpiresAt !== undefined
+    && credential.refreshToken !== undefined
     && (
       credential.refreshExpiresAt === undefined
       || credential.refreshExpiresAt.getTime() > now.getTime()
@@ -44,6 +45,12 @@ export class TikTokAccessTokenManager implements AccessTokenProvider {
         retryable: false
       });
     }
+    if (credential.accessExpiresAt === undefined) {
+      throw new AccessTokenError(
+        "TikTok OAuth credential does not contain an access expiry; reauthorization is required",
+        { retryable: false }
+      );
+    }
 
     if (credential.accessExpiresAt.getTime() > this.#now().getTime() + this.#refreshSkewMs) {
       return credential.accessToken;
@@ -72,6 +79,12 @@ export class TikTokAccessTokenManager implements AccessTokenProvider {
       throw new AccessTokenError("TikTok Business Account is not authorized", {
         retryable: false
       });
+    }
+    if (current.accessExpiresAt === undefined) {
+      throw new AccessTokenError(
+        "TikTok OAuth credential does not contain an access expiry; reauthorization is required",
+        { retryable: false }
+      );
     }
 
     const now = this.#now();

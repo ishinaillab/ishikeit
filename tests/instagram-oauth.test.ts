@@ -279,6 +279,41 @@ describe("InstagramOAuthService", () => {
       .rejects.toThrow(/already consumed|invalid|expired/i);
   });
 
+  it("reports durable status safely when an access expiry is absent", async () => {
+    const store = new MemoryOAuthStore();
+    await store.put({
+      provider: "instagram",
+      accountId: "oauth-subject",
+      accessToken: "long-secret",
+      scopes: [...INSTAGRAM_REVIEW_SCOPES]
+    });
+    await store.putAccountAlias(
+      "instagram",
+      "professional-account",
+      "oauth-subject",
+      "instagram_professional_account"
+    );
+    const client: InstagramOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn(),
+      exchangeLongLived: vi.fn(),
+      refresh: vi.fn(),
+      resolveProfessionalAccountId: vi.fn(),
+      ensureWebhookSubscription: vi.fn()
+    };
+    const service = new InstagramOAuthService({
+      appId: "123456789012345",
+      redirectUri: "https://apps.example.test/ishikeit/oauth/instagram/callback/",
+      store,
+      client
+    });
+
+    await expect(service.status("professional-account")).resolves.toEqual({
+      authorized: true,
+      accountId: "professional-account",
+      scopes: [...INSTAGRAM_REVIEW_SCOPES]
+    });
+  });
+
   it("identifies the exact failing OAuth stage after state validation", async () => {
     const store = new MemoryOAuthStore();
     const client: InstagramOAuthClientLike = {

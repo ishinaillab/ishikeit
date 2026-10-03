@@ -17,6 +17,30 @@ describe("InstagramAccessTokenManager", () => {
     await expect(manager.getAccessToken("missing")).resolves.toBeUndefined();
   });
 
+  it("rejects an Instagram OAuth credential without an access expiry", async () => {
+    const store = new MemoryOAuthStore();
+    await store.put({
+      provider: "instagram",
+      accountId: "ig-1",
+      accessToken: "token-without-expiry",
+      scopes: ["instagram_business_basic"]
+    });
+    const refresh = vi.fn();
+    const client: InstagramOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn(),
+      exchangeLongLived: vi.fn(),
+      refresh,
+      resolveProfessionalAccountId: vi.fn(),
+      ensureWebhookSubscription: vi.fn()
+    };
+    const manager = new InstagramAccessTokenManager({ store, client });
+
+    const result = manager.getAccessToken("ig-1");
+    await expect(result).rejects.toMatchObject({ retryable: false });
+    await expect(result).rejects.toThrow(/expiry/i);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
   it("returns a healthy durable token without refreshing", async () => {
     const store = new MemoryOAuthStore();
     const now = new Date("2026-10-02T05:00:00.000Z");

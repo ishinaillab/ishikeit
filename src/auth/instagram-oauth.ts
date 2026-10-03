@@ -537,7 +537,9 @@ export class InstagramOAuthService implements InstagramOAuthController {
       authorized: true,
       accountId: aliases[0] ?? credential.accountId,
       scopes: credential.scopes,
-      accessExpiresAt: credential.accessExpiresAt.toISOString()
+      ...(credential.accessExpiresAt === undefined
+        ? {}
+        : { accessExpiresAt: credential.accessExpiresAt.toISOString() })
     };
   }
 }

@@ -167,6 +167,34 @@ describe("TikTokOAuthService", () => {
       .rejects.toThrow(/already consumed|invalid|expired/i);
   });
 
+  it("reports durable status safely when an access expiry is absent", async () => {
+    const store = new MemoryOAuthStore();
+    await store.put({
+      provider: "tiktok",
+      accountId: "business-1",
+      accessToken: "access-secret",
+      refreshToken: "refresh-secret",
+      scopes: ["business.messaging"]
+    });
+    const client: TikTokOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn(),
+      refresh: vi.fn()
+    };
+    const service = new TikTokOAuthService({
+      authorizationUrl: "https://business-api.tiktok.com/portal/auth?app=1",
+      redirectUri: "https://apps.example.test/ishikeit/oauth/tiktok/callback/",
+      store,
+      client
+    });
+
+    await expect(service.status("business-1")).resolves.toEqual({
+      authorized: true,
+      businessId: "business-1",
+      scopes: ["business.messaging"],
+      refreshAvailable: true
+    });
+  });
+
   it("rejects an initial authorization response without a refresh token", async () => {
     const store = new MemoryOAuthStore();
     const client: TikTokOAuthClientLike = {

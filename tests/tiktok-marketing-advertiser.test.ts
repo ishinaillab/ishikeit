@@ -43,6 +43,80 @@ describe("TikTokMarketingAdvertiserClient", () => {
     expect(new Headers(init?.headers).get("Access-Token")).toBe("marketing-access");
   });
 
+
+  it("requests only safe account-summary fields and drops sensitive provider fields", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      code: 0,
+      message: "OK",
+      data: {
+        list: [
+          {
+            advertiser_id: "200",
+            name: "Second account",
+            status: "STATUS_ENABLE",
+            currency: "PHP",
+            timezone: "Asia/Manila",
+            country: "PH",
+            email: "secret@example.com",
+            telephone_number: "+639171234567",
+            address: "Private address",
+            balance: 12345.67
+          },
+          {
+            advertiser_id: "100",
+            name: "First account",
+            status: "STATUS_ENABLE",
+            currency: "USD",
+            timezone: "America/Los_Angeles",
+            country: "US"
+          }
+        ]
+      }
+    }), { status: 200 }));
+    const client = new TikTokMarketingAdvertiserClient({ fetchImpl });
+
+    const result = await client.getAdvertiserAccounts(
+      "marketing-access",
+      ["200", "100"]
+    );
+
+    expect(result).toEqual([
+      {
+        advertiserId: "100",
+        name: "First account",
+        status: "STATUS_ENABLE",
+        currency: "USD",
+        timezone: "America/Los_Angeles",
+        country: "US"
+      },
+      {
+        advertiserId: "200",
+        name: "Second account",
+        status: "STATUS_ENABLE",
+        currency: "PHP",
+        timezone: "Asia/Manila",
+        country: "PH"
+      }
+    ]);
+
+    const [urlValue] = fetchImpl.mock.calls[0]!;
+    const url = requestUrl(urlValue);
+    expect(url.searchParams.getAll("advertiser_ids")).toEqual(["100", "200"]);
+    expect(url.searchParams.getAll("fields")).toEqual([
+      "advertiser_id",
+      "country",
+      "currency",
+      "name",
+      "status",
+      "timezone"
+    ]);
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("secret@example.com");
+    expect(serialized).not.toContain("+639171234567");
+    expect(serialized).not.toContain("Private address");
+    expect(serialized).not.toContain("12345.67");
+  });
+
   it("rejects an empty advertiser request before network I/O", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const client = new TikTokMarketingAdvertiserClient({ fetchImpl });
@@ -126,12 +200,116 @@ describe("TikTokMarketingAdvertiserService", () => {
     const getAdvertiserIds = vi.fn();
     const service = new TikTokMarketingAdvertiserService({
       store,
-      client: { getAdvertiserIds }
+      client: { getAdvertiserIds, getAdvertiserAccounts: vi.fn() }
     });
 
     await expect(service.verifyAccountManagement())
       .rejects.toBeInstanceOf(TikTokMarketingOAuthNotAuthorizedError);
     expect(getAdvertiserIds).not.toHaveBeenCalled();
+  });
+
+
+  it("lists safe advertiser summaries across independent OAuth grants", async () => {
+    const store = new MemoryOAuthStore();
+    await store.put({
+      provider: "tiktok-marketing",
+      accountId: "100",
+      accessToken: "grant-a",
+      scopes: []
+    });
+    await store.put({
+      provider: "tiktok-marketing",
+      accountId: "200",
+      accessToken: "grant-a",
+      scopes: []
+    });
+    await store.put({
+      provider: "tiktok-marketing",
+      accountId: "300",
+      accessToken: "grant-b",
+      scopes: []
+    });
+    const getAdvertiserAccounts = vi.fn()
+      .mockImplementation((accessToken: string) => {
+        if (accessToken === "grant-a") {
+          return Promise.resolve([
+            {
+              advertiserId: "200",
+              name: "Second",
+              status: "STATUS_ENABLE",
+              currency: "PHP",
+              timezone: "Asia/Manila",
+              country: "PH"
+            },
+            {
+              advertiserId: "100",
+              name: "First",
+              status: "STATUS_ENABLE",
+              currency: "PHP",
+              timezone: "Asia/Manila",
+              country: "PH"
+            },
+            { advertiserId: "999", name: "Not requested" }
+          ]);
+        }
+        if (accessToken === "grant-b") {
+          return Promise.resolve([
+            { advertiserId: "300", name: "Third", status: "STATUS_ENABLE" }
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+    const service = new TikTokMarketingAdvertiserService({
+      store,
+      client: {
+        getAdvertiserIds: vi.fn(),
+        getAdvertiserAccounts
+      }
+    });
+
+    const result = await service.listAccounts();
+    expect(result).toEqual({
+      accounts: [
+        {
+          advertiserId: "100",
+          name: "First",
+          status: "STATUS_ENABLE",
+          currency: "PHP",
+          timezone: "Asia/Manila",
+          country: "PH"
+        },
+        {
+          advertiserId: "200",
+          name: "Second",
+          status: "STATUS_ENABLE",
+          currency: "PHP",
+          timezone: "Asia/Manila",
+          country: "PH"
+        },
+        { advertiserId: "300", name: "Third", status: "STATUS_ENABLE" }
+      ]
+    });
+    expect(getAdvertiserAccounts).toHaveBeenCalledTimes(2);
+    expect(getAdvertiserAccounts).toHaveBeenCalledWith("grant-a", ["100", "200"]);
+    expect(getAdvertiserAccounts).toHaveBeenCalledWith("grant-b", ["300"]);
+    expect(JSON.stringify(result)).not.toContain("grant-a");
+    expect(JSON.stringify(result)).not.toContain("grant-b");
+  });
+
+  it("requires durable Marketing authorization before listing advertiser summaries", async () => {
+    const store = new MemoryOAuthStore();
+    const getAdvertiserAccounts = vi.fn();
+    const service = new TikTokMarketingAdvertiserService({
+      store,
+      client: {
+        getAdvertiserIds: vi.fn(),
+        getAdvertiserAccounts
+      }
+    });
+
+    await expect(service.listAccounts())
+      .rejects.toBeInstanceOf(TikTokMarketingOAuthNotAuthorizedError);
+    expect(getAdvertiserAccounts).not.toHaveBeenCalled();
   });
 
   it("proves every stored advertiser against the token grant that created it", async () => {
@@ -162,7 +340,7 @@ describe("TikTokMarketingAdvertiserService", () => {
       });
     const service = new TikTokMarketingAdvertiserService({
       store,
-      client: { getAdvertiserIds }
+      client: { getAdvertiserIds, getAdvertiserAccounts: vi.fn() }
     });
 
     await expect(service.verifyAccountManagement()).resolves.toEqual({
@@ -193,7 +371,8 @@ describe("TikTokMarketingAdvertiserService", () => {
     const service = new TikTokMarketingAdvertiserService({
       store,
       client: {
-        getAdvertiserIds: vi.fn().mockResolvedValue(["100"])
+        getAdvertiserIds: vi.fn().mockResolvedValue(["100"]),
+        getAdvertiserAccounts: vi.fn()
       }
     });
 

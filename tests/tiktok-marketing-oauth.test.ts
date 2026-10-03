@@ -187,6 +187,7 @@ describe("TikTokMarketingOAuthClient", () => {
     await expect(client.exchangeAuthorizationCode("auth-code-123"))
       .rejects.toMatchObject({
         retryable: false,
+        status: 200,
         providerCode: "40001",
         stage: "token_exchange"
       });

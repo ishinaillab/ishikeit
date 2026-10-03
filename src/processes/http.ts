@@ -27,6 +27,10 @@ import { telegramBotIdFromToken } from "../security/telegram.js";
 import { CredentialCipher } from "../auth/credential-cipher.js";
 import { PostgresOAuthCredentialStore } from "../auth/oauth-store.js";
 import { TikTokOAuthClient, TikTokOAuthService } from "../auth/tiktok-oauth.js";
+import {
+  TikTokMarketingOAuthClient,
+  TikTokMarketingOAuthService
+} from "../auth/tiktok-marketing-oauth.js";
 import { TikTokAccessTokenManager, tiktokCredentialCanRefresh } from "../auth/tiktok-token-manager.js";
 import { INSTAGRAM_WEBHOOK_FIELDS, InstagramOAuthClient, InstagramOAuthService } from "../auth/instagram-oauth.js";
 import { InstagramAccessTokenManager, InstagramAccessTokenRouter } from "../auth/instagram-token-manager.js";
@@ -54,13 +58,24 @@ const tiktokOAuthConfigured = (
   && env.TIKTOK_BUSINESS_REDIRECT_URI !== undefined
   && env.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined
 );
+const tiktokMarketingOAuthConfigured = (
+  env.TIKTOK_BUSINESS_APP_ID !== undefined
+  && env.TIKTOK_BUSINESS_APP_SECRET !== undefined
+  && env.TIKTOK_MARKETING_AUTHORIZATION_URL !== undefined
+  && env.TIKTOK_MARKETING_REDIRECT_URI !== undefined
+  && env.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined
+);
 const instagramOAuthConfigured = (
   env.META_INSTAGRAM_OAUTH_APP_ID !== undefined
   && env.META_INSTAGRAM_OAUTH_APP_SECRET !== undefined
   && env.META_INSTAGRAM_OAUTH_REDIRECT_URI !== undefined
   && env.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined
 );
-const oauthStore = !(tiktokOAuthConfigured || instagramOAuthConfigured)
+const oauthStore = !(
+  tiktokOAuthConfigured
+  || tiktokMarketingOAuthConfigured
+  || instagramOAuthConfigured
+)
   ? undefined
   : new PostgresOAuthCredentialStore(
       db,
@@ -85,6 +100,26 @@ const tiktokOAuthService = (
       store: oauthStore,
       client: tiktokOAuthClient,
       stateTtlSeconds: env.TIKTOK_OAUTH_STATE_TTL_SECONDS
+    });
+const tiktokMarketingOAuthClient = !tiktokMarketingOAuthConfigured
+  ? undefined
+  : new TikTokMarketingOAuthClient({
+      appId: env.TIKTOK_BUSINESS_APP_ID!,
+      appSecret: env.TIKTOK_BUSINESS_APP_SECRET!,
+      apiVersion: env.TIKTOK_BUSINESS_API_VERSION,
+      requestTimeoutMs: env.TIKTOK_MARKETING_OAUTH_REQUEST_TIMEOUT_MS
+    });
+const tiktokMarketingOAuthService = (
+  oauthStore === undefined
+  || tiktokMarketingOAuthClient === undefined
+)
+  ? undefined
+  : new TikTokMarketingOAuthService({
+      authorizationUrl: env.TIKTOK_MARKETING_AUTHORIZATION_URL!,
+      redirectUri: env.TIKTOK_MARKETING_REDIRECT_URI!,
+      store: oauthStore,
+      client: tiktokMarketingOAuthClient,
+      stateTtlSeconds: env.TIKTOK_MARKETING_OAUTH_STATE_TTL_SECONDS
     });
 const instagramOAuthClient = !instagramOAuthConfigured
   ? undefined
@@ -253,6 +288,13 @@ const server = buildServer({
           ...(env.TIKTOK_BUSINESS_ID === undefined
             ? {}
             : { configuredBusinessId: env.TIKTOK_BUSINESS_ID })
+        }
+      }),
+  ...(tiktokMarketingOAuthService === undefined
+    ? {}
+    : {
+        tiktokMarketingOAuth: {
+          service: tiktokMarketingOAuthService
         }
       }),
   ...(instagramOAuthService === undefined

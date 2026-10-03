@@ -75,6 +75,24 @@ describe("TikTokMarketingAdvertiserClient", () => {
     expect(JSON.stringify(result)).not.toContain("PHP");
   });
 
+
+  it("treats TikTok provider throttling codes as retryable even on HTTP 200", async () => {
+    const client = new TikTokMarketingAdvertiserClient({
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+        code: 40100,
+        message: "rate limited"
+      }), { status: 200 }))
+    });
+
+    await expect(client.getAdvertiserIds("marketing-access", ["100"]))
+      .rejects.toMatchObject({
+        retryable: true,
+        status: 200,
+        providerCode: "40100",
+        stage: "advertiser_info"
+      });
+  });
+
   it("classifies advertiser-info provider failures without leaking the access token", async () => {
     const token = "marketing-access-secret";
     const client = new TikTokMarketingAdvertiserClient({

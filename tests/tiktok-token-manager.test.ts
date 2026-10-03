@@ -32,6 +32,15 @@ describe("TikTokAccessTokenManager", () => {
       accessToken: "access",
       refreshToken: "refresh",
       scopes: [],
+      refreshExpiresAt: new Date(now.getTime() + 1000),
+      tokenVersion: 1
+    } as never, now)).toBe(false);
+    expect(tiktokCredentialCanRefresh({
+      provider: "tiktok",
+      accountId: "business-1",
+      accessToken: "access",
+      refreshToken: "refresh",
+      scopes: [],
       accessExpiresAt: now,
       refreshExpiresAt: now,
       tokenVersion: 1

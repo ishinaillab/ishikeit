@@ -46,9 +46,10 @@ describe("TikTokAccessTokenManager", () => {
       refreshToken: "refresh-current",
       scopes: ["business.messaging"]
     } as never);
+    const refresh = vi.fn();
     const client: TikTokOAuthClientLike = {
       exchangeAuthorizationCode: vi.fn(),
-      refresh: vi.fn()
+      refresh
     };
     const manager = new TikTokAccessTokenManager({
       businessId: "business-1",
@@ -60,7 +61,7 @@ describe("TikTokAccessTokenManager", () => {
     await expect(result).rejects.toBeInstanceOf(AccessTokenError);
     await expect(result).rejects.toMatchObject({ retryable: false });
     await expect(result).rejects.toThrow(/expiry/i);
-    expect(client.refresh).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("returns an unexpired access token without refreshing", async () => {

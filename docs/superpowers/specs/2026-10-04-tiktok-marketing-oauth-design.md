@@ -1,7 +1,7 @@
 # TikTok Marketing OAuth design
 
-Date: 2026-10-04  
-Status: approved architecture; implementation not started  
+Date: 2026-10-04
+Status: approved architecture; implementation not started
 Scope: advertiser authorization foundation only
 
 ## 1. Purpose
@@ -210,9 +210,9 @@ The advertiser authorization belongs to the same TikTok API for Business develop
 
 Add only Marketing-specific configuration:
 
-`TIKTOK_MARKETING_AUTHORIZATION_URL`  
-`TIKTOK_MARKETING_REDIRECT_URI`  
-`TIKTOK_MARKETING_OAUTH_STATE_TTL_SECONDS` (default 600)  
+`TIKTOK_MARKETING_AUTHORIZATION_URL`
+`TIKTOK_MARKETING_REDIRECT_URI`
+`TIKTOK_MARKETING_OAUTH_STATE_TTL_SECONDS` (default 600)
 `TIKTOK_MARKETING_OAUTH_REQUEST_TIMEOUT_MS` (default 10000)
 
 Reuse `TIKTOK_BUSINESS_API_VERSION` (currently default `v1.3`) unless TikTok documents a different Marketing API version contract at implementation time.

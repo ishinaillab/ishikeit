@@ -323,6 +323,18 @@ Inbound message normalization currently covers text, image, video, share-post, a
 
 Outbound registers `tiktok / messaging / message.send`. The initial generic operation intentionally supports text only and enforces TikTok's text limit before network I/O. Token acquisition happens before the provider send request; an OAuth/token-refresh failure is therefore retryable but not delivery-ambiguous. Transport failures after the send request begins remain retryable and delivery-ambiguous. Provider/API failures remain provider-specific, and the adapter rejects actions whose target Business Account differs from its configured account.
 
+### TikTok Business Messaging read boundary
+
+When a real TikTok Business Account is activated, Ishikeit also wires a read-only operational client through the same refreshed access-token provider. The client is not a dispatcher adapter and performs no provider mutation.
+
+- `GET /ops/tiktok/messaging/capabilities?conversation_id=...&conversation_type=SINGLE|STRANGER` calls TikTok's conversation capability endpoint for `IMAGE_SEND`.
+- `GET /ops/tiktok/messaging/conversations?conversation_type=SINGLE|STRANGER&limit=...&cursor=...` calls the conversation-list endpoint with TikTok's 1–100 page-size constraint.
+- `GET /ops/tiktok/messaging/conversations/:conversationId/messages` calls the message-content listing endpoint.
+
+All three routes require the existing operational bearer token and return `Cache-Control: private, no-store`. They are registered only when `TIKTOK_BUSINESS_ID` is configured and the durable TikTok token manager exists. Invalid input returns 400; a durable reauthorization-required state maps to 409; provider/transport failures map to a generic 503 without returning provider error text.
+
+Conversation responses keep only conversation ID, last-message timestamp, pagination state, and cursor. Message history intentionally drops TikTok usernames, participant identifiers/display names/profile images, referrals, and provider media IDs. It retains message ID, conversation ID, timestamp, message type, source/role metadata, automatic-message type, text content when present, and referenced-message ID. This minimized shape is sufficient for operations and future webhook-gap reconciliation without unnecessarily broadening exposure of TikTok account data.
+
 ### TikTok OAuth lifecycle
 
 TikTok Business Account authorization is modeled separately from messaging. Static production access tokens are not used because TikTok Business Account access tokens are short-lived.

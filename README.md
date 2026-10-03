@@ -180,7 +180,7 @@ TikTok's Business Account access token is short-lived, so Ishikeit does not use 
 
 OAuth application configuration requires the TikTok app ID/secret, TikTok-generated Business Account authorization URL, the exact registered HTTPS callback, the operational bearer token, and a dedicated 32-byte encryption key. `TIKTOK_BUSINESS_ID` is set only after successful authorization using TikTok's returned Business Account `open_id`; that setting activates the webhook/sender/media adapter for the authorized account.
 
-TikTok's Business Messaging API remains distinct from its Marketing, Organic, and Lead APIs. Templates, automatic messages, Comment-to-Message, image upload/send, lead operations, and advertising operations should therefore be added as explicit future operations rather than hidden inside generic `message.send`.
+TikTok's Business Messaging API remains distinct from its Marketing, Organic, and Lead APIs. The read-only operational surfaces deliberately omit usernames, participant IDs, profile images, referral metadata, and provider media IDs; message history keeps text content only because it is the history being inspected. Templates, automatic messages, Comment-to-Message, image upload/send, lead operations, and advertising operations should therefore be added as explicit future operations rather than hidden inside generic `message.send`.
 
 Production activation still requires TikTok Business Messaging API access/review, real Business Account authorization, provider webhook configuration pointing to Ishikeit, capability/permission verification, and a controlled human-originated end-to-end canary. No TikTok credentials are committed to this repository.
 

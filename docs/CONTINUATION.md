@@ -665,7 +665,7 @@ TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS=10000
 
 `TIKTOK_BUSINESS_ACCESS_TOKEN` is deliberately no longer a production environment variable. TikTok Business Account access tokens are short-lived and are now obtained/refreshed through the durable OAuth flow.
 
-Current official TikTok API for Business documentation treats Business Messaging, Marketing, Organic, and other API product families separately. Keep that separation in Ishikeit. Automatic messages, templates, Comment-to-Message, image upload/send, conversation unlock, lead operations, Organic API actions, Marketing API actions, and future TikTok surfaces must be explicit operations/capabilities rather than hidden behind generic conversational `message.send`.
+Current official TikTok API for Business documentation treats Business Messaging, Marketing, Organic, and other API product families separately. Keep that separation in Ishikeit. The current Marketing Ad account management review is not a substitute for Business Messaging access. Automatic messages, templates, Comment-to-Message, image upload/send, conversation unlock, lead operations, Organic API actions, Marketing API actions, and future TikTok surfaces must be explicit operations/capabilities rather than hidden behind generic conversational `message.send`.
 
 ### TikTok OAuth/token lifecycle hardening — 2026-10-02
 
@@ -898,7 +898,7 @@ TikTok code/runtime status remains as documented above:
 
 Provider-side progress as of this checkpoint:
 
-- the TikTok for Business application has been filled out far enough for the **TikTok accounts** permission scope to be under review
+- the TikTok developer application is currently under review for the separate Marketing **Ad account management** scope; this does not grant Business Messaging API access
 - wait for that approval before supplying real TikTok credentials to Ishikeit
 - a secured local handoff file `C:\\Users\\MBDS\\Downloads\\ishikeit-tiktok-app.env` exists; it contains the generated OAuth encryption key and placeholders for the TikTok app values
 - do not paste the TikTok app secret into chat
@@ -1283,7 +1283,7 @@ Immediate continuity tasks after the website-domain migration:
 
 1. if direct `AI_Engine` connector tools are needed, refresh/reconnect that ChatGPT connector against `https://www.ishinaillab.com`; do not revert WordPress to the old domain to restore a stale connector
 2. Instagram OAuth is configured, authorized, encrypted, alias-aware, OAuth-only for configured accounts, and deployed. The reviewer page is public and the submission package is current. Record the required real screencast, upload it with the reviewer instructions, then submit `instagram_business_basic` and `instagram_business_manage_messages` for Advanced Access
-3. wait for TikTok's **TikTok accounts** permission-scope review; after approval, continue the secured OAuth activation workflow from `ishikeit-tiktok-app.env`
+3. keep the current Marketing **Ad account management** app review separate from the Business Messaging access/security/privacy review; Business Messaging account-holder OAuth activation starts only after TikTok grants the required messaging access
 4. keep the `zdm1002_*` WordPress rollback tables until the new canonical site has remained stable through the next operational window
 5. do not change Hostinger's internal shared-hosting primary-domain label from `povnailstudio.com` until a complete file-level rollback/archive has been created and the current Hostinger change-domain side effects have been re-verified; public old-domain web DNS is already detached
 
@@ -1374,7 +1374,7 @@ This section is the current continuation source of truth. If any earlier Instagr
 
 ### Other project continuity
 
-- TikTok adapter and OAuth lifecycle are implemented; activation remains blocked on TikTok **TikTok accounts** permission-scope review.
+- TikTok adapter and OAuth lifecycle are implemented; Business Messaging production activation remains blocked on TikTok's dedicated Business Messaging access/security/privacy review plus real Business Account authorization.
 - Secure TikTok handoff remains `C:\Users\MBDS\Downloads\ishikeit-tiktok-app.env`.
 - Keep `zdm1002_*` WordPress rollback tables for now.
 - Do not change Hostinger's internal shared-hosting primary-domain label from `povnailstudio.com` until rollback/archive implications are reverified.
@@ -1725,7 +1725,7 @@ Telegram:
 TikTok:
 
 - adapter and durable OAuth lifecycle remain implemented;
-- existing continuation state says activation depends on TikTok **TikTok accounts** permission-scope review;
+- Business Messaging activation depends on TikTok's dedicated Business Messaging access/security/privacy review and Business Account authorization; the currently pending Marketing Ad account management review is a separate track;
 - no fresh TikTok production canary was independently captured in this transfer check;
 - continue from the latest TikTok permission/review state rather than reimplementing the adapter.
 
@@ -1984,3 +1984,67 @@ Final CI and production readback:
 - `/ops/tiktok/marketing/advertisers/verify`, `/ops/tiktok/marketing/oauth/status`, and `/ops/tiktok/marketing/oauth/verify` likewise remain HTTP 404 in that intentionally inactive state.
 
 After TikTok approval and production configuration, complete advertiser OAuth first, then use the safe account-summary route plus both verification routes for the provider-backed activation proof.
+
+
+### TikTok Business Messaging capability + history reads — implementation branch
+
+Credential-independent Business Messaging work continued while provider access/approval remains external.
+
+Branch: `feature/tiktok-business-messaging-read`
+
+Implemented boundary:
+
+- new `src/messaging/tiktok-business-read.ts`, separate from TikTok send, OAuth, Marketing, and dispatcher code;
+- `GET /open_api/v1.3/business/message/capabilities/get/` for conversation-scoped `IMAGE_SEND` capability;
+- `GET /open_api/v1.3/business/message/conversation/list/` with explicit `SINGLE|STRANGER`, page limit 1–100, and cursor support;
+- `GET /open_api/v1.3/business/message/content/list/` for conversation message history;
+- dynamic access-token acquisition through the existing `TikTokAccessTokenManager`, including refresh behavior;
+- plus-sign conversation IDs are encoded safely through URL query encoding;
+- read-only operational routes:
+  - `GET /ops/tiktok/messaging/capabilities`
+  - `GET /ops/tiktok/messaging/conversations`
+  - `GET /ops/tiktok/messaging/conversations/:conversationId/messages`
+- all routes require the existing ops bearer token and use `private, no-store`;
+- invalid input -> 400 `invalid_request`;
+- reauthorization-required durable token state -> 409 `not_authorized`;
+- provider/transport failure -> generic 503 `messaging_read_unavailable`;
+- capability marker: `tiktokBusinessMessagingReadSchema: 1`;
+- no new environment variable, database migration, provider permission, messaging send behavior, or dispatcher operation.
+
+Privacy minimization:
+
+- conversation reads discard referral/ad metadata;
+- message reads discard TikTok usernames, participant IDs, participant display names, profile images, provider media IDs, and the provider participants collection;
+- retained message fields are limited to message/conversation ID, timestamp, type, source, sender/recipient role, automatic-message type, text content when present, and referenced-message ID.
+
+Provider contract evidence:
+
+- current TikTok Business Messaging API index lists Send message, Get conversations, Get messages, Upload image, Download media, and Check capability as first-class Direct Messages operations;
+- endpoint/parameter shapes were cross-checked against the current Go SDK implementation that maps these operations to `/open_api/v1.3/business/message/capabilities/get/`, `conversation/list/`, and `content/list/`;
+- `IMAGE_SEND` is currently the documented capability type and requires conversation ID/type;
+- conversation types are `SINGLE` and `STRANGER`.
+
+TDD evidence so far:
+
+- provider-client RED: module missing;
+- provider-client GREEN: 7/7 focused tests;
+- HTTP RED: five expected missing-boundary failures while all existing HTTP tests remained green;
+- HTTP + provider GREEN: 32/32 focused tests;
+- process composition typecheck passed.
+
+Onboarding state correction:
+
+- the TikTok app currently under review is the separate Marketing **Ad account management** review;
+- Business Messaging production activation still requires TikTok's dedicated Business Messaging access/security/privacy review, account-holder authorization, webhook registration, capability proof, and a human-originated live canary;
+- do not refer to the current blocker as a TikTok Accounts permission-scope review.
+
+Verification completed before PR:
+
+- full repository gate passed: lint, typecheck, 33 test files / 218 tests, and build;
+- `git diff --check` passed;
+- new messaging module contains no Business Messaging send/upload/automatic-message/unlock mutation endpoint;
+- dispatcher/adapters/workers contain no read-client registration or crossover;
+- changed production-source scan found no flow of provider profile image, display name, sender/recipient username, participants collection, referral metadata, or media ID into the new safe read response;
+- changed-line scan found no secret-like literal additions.
+
+Next gate: PR and Node 24 CI. Do not merge/deploy without explicit production authorization because `main` auto-deploys Hostinger.

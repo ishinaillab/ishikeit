@@ -18,6 +18,11 @@ import {
   type TikTokMarketingOAuthController
 } from "../auth/tiktok-marketing-oauth.js";
 import type { TikTokMarketingAdvertiserController } from "../marketing/tiktok-advertiser.js";
+import {
+  TikTokBusinessMessagingNotAuthorizedError,
+  type TikTokBusinessMessagingReadController,
+  TikTokBusinessMessagingValidationError
+} from "../messaging/tiktok-business-read.js";
 import { instagramOAuthFailureDiagnostic, type InstagramOAuthController } from "../auth/instagram-oauth.js";
 import type { InstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 import { verifyMetaSignedRequest } from "../security/meta-signed-request.js";
@@ -41,6 +46,9 @@ export interface ServerDeps {
   tiktokOAuth?: {
     service: TikTokOAuthController;
     configuredBusinessId?: string;
+  };
+  tiktokBusinessMessagingRead?: {
+    service: TikTokBusinessMessagingReadController;
   };
   tiktokMarketingOAuth?: {
     service: TikTokMarketingOAuthController;
@@ -96,6 +104,14 @@ export function buildServer(deps: ServerDeps) {
   }
   if (deps.tiktokOAuth !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("TikTok OAuth operations require an operational bearer token");
+  }
+  if (
+    deps.tiktokBusinessMessagingRead !== undefined
+    && deps.opsMetricsToken === undefined
+  ) {
+    throw new Error(
+      "TikTok Business Messaging read operations require an operational bearer token"
+    );
   }
   if (deps.tiktokMarketingOAuth !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("TikTok Marketing OAuth operations require an operational bearer token");
@@ -207,6 +223,152 @@ export function buildServer(deps: ServerDeps) {
           .send("TikTok authorization could not be completed. Start a new authorization request.");
       }
     });
+  }
+
+  if (
+    deps.tiktokBusinessMessagingRead !== undefined
+    && deps.opsMetricsToken !== undefined
+  ) {
+    const tiktokBusinessMessagingRead = deps.tiktokBusinessMessagingRead;
+    const opsToken = deps.opsMetricsToken;
+
+    server.get<{
+      Querystring: {
+        conversation_id?: string;
+        conversation_type?: string;
+      };
+    }>("/ops/tiktok/messaging/capabilities", async (req, reply) => {
+      if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+        return reply
+          .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401)
+          .send({ status: "unauthorized" });
+      }
+
+      const conversationId = req.query.conversation_id;
+      const conversationType = req.query.conversation_type;
+      if (
+        conversationId === undefined
+        || conversationId.length === 0
+        || (conversationType !== "SINGLE" && conversationType !== "STRANGER")
+      ) {
+        return reply.code(400).send({ status: "invalid_request" });
+      }
+
+      reply.header("cache-control", "private, no-store");
+      try {
+        return await tiktokBusinessMessagingRead.service.checkImageSendCapability({
+          conversationId,
+          conversationType
+        });
+      } catch (error) {
+        if (error instanceof TikTokBusinessMessagingNotAuthorizedError) {
+          return reply.code(409).send({ status: "not_authorized" });
+        }
+        if (error instanceof TikTokBusinessMessagingValidationError) {
+          return reply.code(400).send({ status: "invalid_request" });
+        }
+        deps.logger.warn(
+          { errorClass: error instanceof Error ? error.name : "unknown" },
+          "TikTok Business Messaging capability read failed"
+        );
+        return reply.code(503).send({ status: "messaging_read_unavailable" });
+      }
+    });
+
+    server.get<{
+      Querystring: {
+        conversation_type?: string;
+        limit?: string;
+        cursor?: string;
+      };
+    }>("/ops/tiktok/messaging/conversations", async (req, reply) => {
+      if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+        return reply
+          .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401)
+          .send({ status: "unauthorized" });
+      }
+
+      const conversationType = req.query.conversation_type;
+      const rawLimit = req.query.limit ?? "100";
+      const rawCursor = req.query.cursor;
+      if (
+        (conversationType !== "SINGLE" && conversationType !== "STRANGER")
+        || !/^\d+$/u.test(rawLimit)
+        || (rawCursor !== undefined && !/^\d+$/u.test(rawCursor))
+      ) {
+        return reply.code(400).send({ status: "invalid_request" });
+      }
+
+      const limit = Number(rawLimit);
+      const cursor = rawCursor === undefined ? undefined : Number(rawCursor);
+      if (
+        !Number.isInteger(limit)
+        || limit < 1
+        || limit > 100
+        || (
+          cursor !== undefined
+          && (!Number.isSafeInteger(cursor) || cursor < 0)
+        )
+      ) {
+        return reply.code(400).send({ status: "invalid_request" });
+      }
+
+      reply.header("cache-control", "private, no-store");
+      try {
+        return await tiktokBusinessMessagingRead.service.listConversations({
+          conversationType,
+          limit,
+          ...(cursor === undefined ? {} : { cursor })
+        });
+      } catch (error) {
+        if (error instanceof TikTokBusinessMessagingNotAuthorizedError) {
+          return reply.code(409).send({ status: "not_authorized" });
+        }
+        if (error instanceof TikTokBusinessMessagingValidationError) {
+          return reply.code(400).send({ status: "invalid_request" });
+        }
+        deps.logger.warn(
+          { errorClass: error instanceof Error ? error.name : "unknown" },
+          "TikTok Business Messaging conversation read failed"
+        );
+        return reply.code(503).send({ status: "messaging_read_unavailable" });
+      }
+    });
+
+    server.get<{
+      Params: { conversationId: string };
+    }>(
+      "/ops/tiktok/messaging/conversations/:conversationId/messages",
+      async (req, reply) => {
+        if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+          return reply
+            .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+            .code(401)
+            .send({ status: "unauthorized" });
+        }
+
+        reply.header("cache-control", "private, no-store");
+        try {
+          return await tiktokBusinessMessagingRead.service.listMessages(
+            req.params.conversationId
+          );
+        } catch (error) {
+          if (error instanceof TikTokBusinessMessagingNotAuthorizedError) {
+            return reply.code(409).send({ status: "not_authorized" });
+          }
+          if (error instanceof TikTokBusinessMessagingValidationError) {
+            return reply.code(400).send({ status: "invalid_request" });
+          }
+          deps.logger.warn(
+            { errorClass: error instanceof Error ? error.name : "unknown" },
+            "TikTok Business Messaging message read failed"
+          );
+          return reply.code(503).send({ status: "messaging_read_unavailable" });
+        }
+      }
+    );
   }
 
   if (

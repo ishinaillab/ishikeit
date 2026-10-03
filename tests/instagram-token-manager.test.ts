@@ -197,6 +197,19 @@ describe("InstagramAccessTokenRouter", () => {
     expect(resolveProfessionalAccountId).toHaveBeenCalledWith("managed-token");
   });
 
+
+
+  it("reports no managed account when no App Dashboard token is configured", async () => {
+    const resolveProfessionalAccountId = vi.fn();
+    const router = new InstagramAccessTokenRouter({
+      client: { resolveProfessionalAccountId }
+    });
+
+    await expect(router.managedAccountId()).resolves.toBeUndefined();
+    await expect(router.getAccessToken("business-account")).resolves.toBeUndefined();
+    expect(resolveProfessionalAccountId).not.toHaveBeenCalled();
+  });
+
   it("does not fall through to a managed token when OAuth routing rejects a revoked account", async () => {
     const oauthProvider = {
       getAccessToken: vi.fn().mockRejectedValue(

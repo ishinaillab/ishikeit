@@ -2057,3 +2057,46 @@ Final CI and production readback:
 - `/ops/tiktok/messaging/capabilities`, `/ops/tiktok/messaging/conversations`, and `/ops/tiktok/messaging/conversations/:conversationId/messages` remain HTTP 404 while Business Messaging OAuth/account activation is intentionally unconfigured.
 
 After TikTok grants Business Messaging access and the Business Account is authorized, activate `TIKTOK_BUSINESS_ID`, then use these read routes for capability proof, conversation inspection, message-history validation, and later webhook-gap reconciliation.
+
+
+### TikTok Business Messaging webhook reconciliation — implementation branch
+
+Credential-independent Business Messaging work continued while TikTok provider access remains external.
+
+Branch: `feature/tiktok-business-webhook-reconcile`
+
+Implemented boundary:
+
+- new `src/messaging/tiktok-webhook-config.ts`, separate from inbound verification, outbound sending, Business Account OAuth, Marketing, and dispatcher code;
+- provider status read for the developer-app `DIRECT_MESSAGE` webhook subscription;
+- provider create/update for that single subscription only;
+- expected callback is independently configured through `TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL`;
+- production example is `https://apps.ishinaillab.com/ishikeit/webhooks/tiktok`;
+- webhook management requires shared TikTok app credentials and the existing ops bearer credential but does not require `TIKTOK_BUSINESS_ID` or completed account-holder OAuth;
+- protected operational routes:
+  - `GET /ops/tiktok/messaging/webhook/status`
+  - `POST /ops/tiktok/messaging/webhook/reconcile`
+- status reports configured state, actual callback, expected callback, and drift only;
+- reconcile is idempotent: no write when current state already matches, otherwise create/update then provider read-back;
+- reconcile never deletes provider webhook state automatically;
+- provider errors map to generic 503 responses and never expose App Secret/provider response text;
+- capability marker: `tiktokBusinessMessagingWebhookSchema: 1`;
+- readiness behavior is unchanged; webhook drift does not make `/health/ready` fail.
+
+Provider contract evidence:
+
+- current official TikTok Business Messaging API index lists Create, Get, and Delete Business Messaging Webhook configuration as first-class webhook operations;
+- TikTok's current model is one subscription per event type per developer app, and `DIRECT_MESSAGE` covers the Business Messaging `im_*` event family for all businesses that authorize the app;
+- endpoint/request shapes were cross-checked against a current generated TikTok Business API OpenAPI mirror mapping create/update, list, and delete to `/open_api/v1.3/business/webhook/update/`, `list/`, and `delete/`;
+- this milestone intentionally implements only status + create/update reconcile; delete remains unsupported to avoid destructive automatic recovery.
+
+TDD evidence so far:
+
+- webhook client/service RED: module missing;
+- webhook client/service GREEN: 8/8 focused tests;
+- env RED: callback variable/dependencies/safety validation absent;
+- env GREEN: 20/20 env tests;
+- HTTP RED: four expected missing-boundary failures while all existing HTTP tests remained green;
+- webhook + env + HTTP GREEN: 56/56 focused tests.
+
+Next gate: full repository check, diff/isolation/secret review, PR, and Node 24 CI. Do not merge/deploy without explicit production authorization because `main` auto-deploys Hostinger.

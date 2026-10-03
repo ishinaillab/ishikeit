@@ -23,6 +23,7 @@ import {
   type TikTokBusinessMessagingReadController,
   TikTokBusinessMessagingValidationError
 } from "../messaging/tiktok-business-read.js";
+import type { TikTokBusinessWebhookController } from "../messaging/tiktok-webhook-config.js";
 import { instagramOAuthFailureDiagnostic, type InstagramOAuthController } from "../auth/instagram-oauth.js";
 import type { InstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 import { verifyMetaSignedRequest } from "../security/meta-signed-request.js";
@@ -49,6 +50,9 @@ export interface ServerDeps {
   };
   tiktokBusinessMessagingRead?: {
     service: TikTokBusinessMessagingReadController;
+  };
+  tiktokBusinessMessagingWebhook?: {
+    service: TikTokBusinessWebhookController;
   };
   tiktokMarketingOAuth?: {
     service: TikTokMarketingOAuthController;
@@ -111,6 +115,14 @@ export function buildServer(deps: ServerDeps) {
   ) {
     throw new Error(
       "TikTok Business Messaging read operations require an operational bearer token"
+    );
+  }
+  if (
+    deps.tiktokBusinessMessagingWebhook !== undefined
+    && deps.opsMetricsToken === undefined
+  ) {
+    throw new Error(
+      "TikTok Business Messaging webhook operations require an operational bearer token"
     );
   }
   if (deps.tiktokMarketingOAuth !== undefined && deps.opsMetricsToken === undefined) {
@@ -221,6 +233,58 @@ export function buildServer(deps: ServerDeps) {
           .code(400)
           .type("text/plain; charset=utf-8")
           .send("TikTok authorization could not be completed. Start a new authorization request.");
+      }
+    });
+  }
+
+  if (
+    deps.tiktokBusinessMessagingWebhook !== undefined
+    && deps.opsMetricsToken !== undefined
+  ) {
+    const tiktokBusinessMessagingWebhook = deps.tiktokBusinessMessagingWebhook;
+    const opsToken = deps.opsMetricsToken;
+
+    server.get("/ops/tiktok/messaging/webhook/status", async (req, reply) => {
+      if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+        return reply
+          .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401)
+          .send({ status: "unauthorized" });
+      }
+
+      reply.header("cache-control", "private, no-store");
+      try {
+        return await tiktokBusinessMessagingWebhook.service.status();
+      } catch (error) {
+        deps.logger.warn(
+          { errorClass: error instanceof Error ? error.name : "unknown" },
+          "TikTok Business Messaging webhook status failed"
+        );
+        return reply
+          .code(503)
+          .send({ status: "webhook_configuration_unavailable" });
+      }
+    });
+
+    server.post("/ops/tiktok/messaging/webhook/reconcile", async (req, reply) => {
+      if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+        return reply
+          .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401)
+          .send({ status: "unauthorized" });
+      }
+
+      reply.header("cache-control", "private, no-store");
+      try {
+        return await tiktokBusinessMessagingWebhook.service.reconcile();
+      } catch (error) {
+        deps.logger.warn(
+          { errorClass: error instanceof Error ? error.name : "unknown" },
+          "TikTok Business Messaging webhook reconcile failed"
+        );
+        return reply
+          .code(503)
+          .send({ status: "webhook_reconcile_unavailable" });
       }
     });
   }

@@ -2059,11 +2059,11 @@ Final CI and production readback:
 After TikTok grants Business Messaging access and the Business Account is authorized, activate `TIKTOK_BUSINESS_ID`, then use these read routes for capability proof, conversation inspection, message-history validation, and later webhook-gap reconciliation.
 
 
-### TikTok Business Messaging webhook reconciliation — implementation branch
+### TikTok Business Messaging webhook reconciliation — deployed
 
 Credential-independent Business Messaging work continued while TikTok provider access remains external.
 
-Branch: `feature/tiktok-business-webhook-reconcile`
+PR #65 was squash-merged to `main` as `1deaa08908696dfe6439eac737aea291c8a42d66` and deployed by Hostinger.
 
 Implemented boundary:
 
@@ -2109,4 +2109,15 @@ Verification completed before PR:
 - changed production-source scan found no App Secret logging or secret-bearing operational response flow;
 - changed-line scan found no secret-like literal additions.
 
-Next gate: PR and Node 24 CI. Do not merge/deploy without explicit production authorization because `main` auto-deploys Hostinger.
+Final CI and production readback:
+
+- PR #65 Node 24 CI passed along with PHP lint and context continuity before merge;
+- production `/health/capabilities` now reports `tiktokBusinessMessagingWebhookSchema: 1`;
+- `tiktokBusinessMessagingReadSchema: 1`, `tiktokMarketingOAuthSchema: 2`, and `tiktokMarketingAdvertiserSchema: 2` remain unchanged;
+- production `/health/live` remains HTTP 200 / `ok`;
+- production `/health/ready` remains HTTP 200 / `ready`;
+- processor and action-dispatch runtime flags remain enabled;
+- `/ops/tiktok/messaging/webhook/status` and `POST /ops/tiktok/messaging/webhook/reconcile` remain HTTP 404 because `TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL` is intentionally unset while Business Messaging provider activation is still pending;
+- existing TikTok Business Messaging read routes also remain HTTP 404 while Business Account OAuth/account activation is unconfigured.
+
+After TikTok grants Business Messaging access, configure `TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL=https://apps.ishinaillab.com/ishikeit/webhooks/tiktok`, verify the status route becomes protected/available, run one explicit reconcile, confirm provider read-back convergence, then continue Business Account OAuth and live canary activation.

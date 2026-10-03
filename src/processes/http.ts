@@ -426,6 +426,7 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
   if (
     env.TIKTOK_BUSINESS_ID !== undefined
     && tiktokAccessTokenManager !== undefined
+    && tiktokBusinessMessagingRead !== undefined
   ) {
     dispatcher.register(new TikTokBusinessMessagingAdapter(new TikTokBusinessSender({
       businessId: env.TIKTOK_BUSINESS_ID,

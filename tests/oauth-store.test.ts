@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { CredentialCipher } from "../src/auth/credential-cipher.js";
-import {
-  PostgresOAuthCredentialStore,
-  type OAuthCredential
-} from "../src/auth/oauth-store.js";
+import { PostgresOAuthCredentialStore } from "../src/auth/oauth-store.js";
 import type { PostgresDatabase, SqlExecutor } from "../src/persistence/postgres.js";
 
 describe("PostgresOAuthCredentialStore", () => {

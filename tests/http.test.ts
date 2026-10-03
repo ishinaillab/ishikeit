@@ -201,7 +201,7 @@ describe("webhook routes", () => {
       verifyToken: "verify-token-1234",
       opsMetricsToken: token,
       tiktokOAuth: {
-        service: { beginAuthorization, status, verifyAccess, completeAuthorization },
+        service: { beginAuthorization, status, completeAuthorization },
         configuredBusinessId: "business-1"
       }
     });

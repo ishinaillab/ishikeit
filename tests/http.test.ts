@@ -61,6 +61,7 @@ describe("webhook routes", () => {
       operationalMetricsSchema: 2,
       wordpressBridgeApiSchema: 3,
       wordpressBridgeStorageSchema: "1.1.1",
+      tiktokMarketingOAuthSchema: 1,
       runtime: {
         processorEnabled: false,
         actionDispatchEnabled: false,

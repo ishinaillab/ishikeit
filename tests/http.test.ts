@@ -3,6 +3,11 @@ import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { buildServer } from "../src/http/server.js";
 import { TikTokMarketingOAuthNotAuthorizedError } from "../src/auth/tiktok-marketing-oauth.js";
+import {
+  TikTokBusinessMessagingNotAuthorizedError,
+  TikTokBusinessMessagingReadError,
+  TikTokBusinessMessagingValidationError
+} from "../src/messaging/tiktok-business-read.js";
 import type { InboundStore } from "../src/persistence/inbound.js";
 
 function makeServer(store: InboundStore, webhookBodyLimit?: number) {
@@ -64,6 +69,7 @@ describe("webhook routes", () => {
       wordpressBridgeStorageSchema: "1.1.1",
       tiktokMarketingOAuthSchema: 2,
       tiktokMarketingAdvertiserSchema: 2,
+      tiktokBusinessMessagingReadSchema: 1,
       runtime: {
         processorEnabled: false,
         actionDispatchEnabled: false,
@@ -252,6 +258,237 @@ describe("webhook routes", () => {
     await server.close();
   });
 
+
+
+  it("gates TikTok Business Messaging read routes and requires operational bearer auth", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const absent = makeServer({ ingest });
+    const absentCapability = await absent.inject({
+      method: "GET",
+      url: "/ops/tiktok/messaging/capabilities?conversation_id=conv-1&conversation_type=SINGLE"
+    });
+    const absentConversations = await absent.inject({
+      method: "GET",
+      url: "/ops/tiktok/messaging/conversations?conversation_type=SINGLE"
+    });
+    const absentMessages = await absent.inject({
+      method: "GET",
+      url: "/ops/tiktok/messaging/conversations/conv-1/messages"
+    });
+    expect(absentCapability.statusCode).toBe(404);
+    expect(absentConversations.statusCode).toBe(404);
+    expect(absentMessages.statusCode).toBe(404);
+    await absent.close();
+
+    expect(() => buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      tiktokBusinessMessagingRead: {
+        service: {
+          checkImageSendCapability: vi.fn(),
+          listConversations: vi.fn(),
+          listMessages: vi.fn()
+        }
+      }
+    })).toThrow(/TikTok Business Messaging read operations require an operational bearer token/i);
+  });
+
+  it("protects and serves TikTok Business Messaging capability, conversation, and message reads", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const token = "o".repeat(32);
+    const checkImageSendCapability = vi.fn().mockResolvedValue({
+      conversationId: "conv+1",
+      conversationType: "SINGLE",
+      imageSend: true
+    });
+    const listConversations = vi.fn().mockResolvedValue({
+      conversations: [
+        { conversationId: "conv+1", updatedAtMs: 1791061200123 }
+      ],
+      hasMore: true,
+      cursor: 1791060000000
+    });
+    const listMessages = vi.fn().mockResolvedValue({
+      conversationId: "conv+1",
+      messages: [
+        {
+          messageId: "msg-1",
+          conversationId: "conv+1",
+          timestampMs: 1791061200123,
+          messageType: "TEXT",
+          source: "APP",
+          fromRole: "PERSONAL_ACCOUNT",
+          toRole: "BUSINESS_ACCOUNT",
+          text: "Hello"
+        }
+      ]
+    });
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokBusinessMessagingRead: {
+        service: {
+          checkImageSendCapability,
+          listConversations,
+          listMessages
+        }
+      }
+    });
+
+    const unauthorized = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/messaging/conversations?conversation_type=SINGLE"
+    });
+    expect(unauthorized.statusCode).toBe(401);
+    expect(unauthorized.headers["www-authenticate"]).toContain("Bearer");
+    expect(listConversations).not.toHaveBeenCalled();
+
+    const capability = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/messaging/capabilities?conversation_id=conv%2B1&conversation_type=SINGLE",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(capability.statusCode).toBe(200);
+    expect(capability.headers["cache-control"]).toBe("private, no-store");
+    expect(capability.json()).toEqual({
+      conversationId: "conv+1",
+      conversationType: "SINGLE",
+      imageSend: true
+    });
+    expect(checkImageSendCapability).toHaveBeenCalledWith({
+      conversationId: "conv+1",
+      conversationType: "SINGLE"
+    });
+
+    const conversations = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/messaging/conversations?conversation_type=STRANGER&limit=25&cursor=1791050000000",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(conversations.statusCode).toBe(200);
+    expect(conversations.headers["cache-control"]).toBe("private, no-store");
+    expect(listConversations).toHaveBeenCalledWith({
+      conversationType: "STRANGER",
+      limit: 25,
+      cursor: 1791050000000
+    });
+
+    const messages = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/messaging/conversations/conv%2B1/messages",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(messages.statusCode).toBe(200);
+    expect(messages.headers["cache-control"]).toBe("private, no-store");
+    expect(listMessages).toHaveBeenCalledWith("conv+1");
+    expect(messages.body).not.toContain("profile_image");
+    expect(messages.body).not.toContain("access-token");
+
+    await server.close();
+  });
+
+  it("validates TikTok Business Messaging read query parameters before provider calls", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const token = "o".repeat(32);
+    const checkImageSendCapability = vi.fn();
+    const listConversations = vi.fn();
+    const listMessages = vi.fn();
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokBusinessMessagingRead: {
+        service: {
+          checkImageSendCapability,
+          listConversations,
+          listMessages
+        }
+      }
+    });
+    const headers = { authorization: "Bearer " + token };
+
+    for (const url of [
+      "/ops/tiktok/messaging/capabilities?conversation_id=conv-1&conversation_type=GROUP",
+      "/ops/tiktok/messaging/capabilities?conversation_type=SINGLE",
+      "/ops/tiktok/messaging/conversations",
+      "/ops/tiktok/messaging/conversations?conversation_type=SINGLE&limit=0",
+      "/ops/tiktok/messaging/conversations?conversation_type=SINGLE&limit=101",
+      "/ops/tiktok/messaging/conversations?conversation_type=SINGLE&cursor=-1",
+      "/ops/tiktok/messaging/conversations?conversation_type=SINGLE&cursor=1.5"
+    ]) {
+      const result = await server.inject({ method: "GET", url, headers });
+      expect(result.statusCode, url).toBe(400);
+      expect(result.json()).toEqual({ status: "invalid_request" });
+    }
+
+    expect(checkImageSendCapability).not.toHaveBeenCalled();
+    expect(listConversations).not.toHaveBeenCalled();
+    expect(listMessages).not.toHaveBeenCalled();
+    await server.close();
+  });
+
+  it("maps TikTok Business Messaging read authorization, validation, and provider errors safely", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const token = "o".repeat(32);
+    const headers = { authorization: "Bearer " + token };
+
+    for (const [error, expectedStatus, expectedBody] of [
+      [
+        new TikTokBusinessMessagingNotAuthorizedError(),
+        409,
+        { status: "not_authorized" }
+      ],
+      [
+        new TikTokBusinessMessagingValidationError("invalid"),
+        400,
+        { status: "invalid_request" }
+      ],
+      [
+        new TikTokBusinessMessagingReadError(
+          "provider echoed private-message-content",
+          { retryable: true, stage: "message_list", status: 503 }
+        ),
+        503,
+        { status: "messaging_read_unavailable" }
+      ]
+    ] as const) {
+      const server = buildServer({
+        logger: pino({ level: "silent" }),
+        ready: () => Promise.resolve(true),
+        inbound: { ingest },
+        appSecret: "secret",
+        verifyToken: "verify-token-1234",
+        opsMetricsToken: token,
+        tiktokBusinessMessagingRead: {
+          service: {
+            checkImageSendCapability: vi.fn(),
+            listConversations: vi.fn(),
+            listMessages: vi.fn().mockRejectedValue(error)
+          }
+        }
+      });
+
+      const result = await server.inject({
+        method: "GET",
+        url: "/ops/tiktok/messaging/conversations/conv-1/messages",
+        headers
+      });
+      expect(result.statusCode).toBe(expectedStatus);
+      expect(result.json()).toEqual(expectedBody);
+      expect(result.body).not.toContain("private-message-content");
+      await server.close();
+    }
+  });
 
   it("gates TikTok Marketing OAuth routes and requires operational bearer auth", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();

@@ -1986,11 +1986,11 @@ Final CI and production readback:
 After TikTok approval and production configuration, complete advertiser OAuth first, then use the safe account-summary route plus both verification routes for the provider-backed activation proof.
 
 
-### TikTok Business Messaging capability + history reads — implementation branch
+### TikTok Business Messaging capability + history reads — deployed
 
 Credential-independent Business Messaging work continued while provider access/approval remains external.
 
-Branch: `feature/tiktok-business-messaging-read`
+PR #63 was squash-merged to `main` as `392e00da35ecf70ffa57c27560c04ad9aeddf479` and deployed by Hostinger.
 
 Implemented boundary:
 
@@ -2047,4 +2047,13 @@ Verification completed before PR:
 - changed production-source scan found no flow of provider profile image, display name, sender/recipient username, participants collection, referral metadata, or media ID into the new safe read response;
 - changed-line scan found no secret-like literal additions.
 
-Next gate: PR and Node 24 CI. Do not merge/deploy without explicit production authorization because `main` auto-deploys Hostinger.
+Final CI and production readback:
+
+- PR #63 Node 24 CI passed along with PHP lint and context continuity before merge;
+- production `/health/capabilities` now reports `tiktokBusinessMessagingReadSchema: 1`, with `tiktokMarketingOAuthSchema: 2` and `tiktokMarketingAdvertiserSchema: 2` unchanged;
+- production `/health/live` remains HTTP 200 / `ok`;
+- production `/health/ready` remains HTTP 200 / `ready`;
+- processor and action-dispatch runtime flags remain enabled;
+- `/ops/tiktok/messaging/capabilities`, `/ops/tiktok/messaging/conversations`, and `/ops/tiktok/messaging/conversations/:conversationId/messages` remain HTTP 404 while Business Messaging OAuth/account activation is intentionally unconfigured.
+
+After TikTok grants Business Messaging access and the Business Account is authorized, activate `TIKTOK_BUSINESS_ID`, then use these read routes for capability proof, conversation inspection, message-history validation, and later webhook-gap reconciliation.

@@ -2,6 +2,7 @@ import pino from "pino";
 import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { buildServer } from "../src/http/server.js";
+import { TikTokMarketingOAuthNotAuthorizedError } from "../src/auth/tiktok-marketing-oauth.js";
 import type { InboundStore } from "../src/persistence/inbound.js";
 
 function makeServer(store: InboundStore, webhookBodyLimit?: number) {
@@ -61,7 +62,7 @@ describe("webhook routes", () => {
       operationalMetricsSchema: 2,
       wordpressBridgeApiSchema: 3,
       wordpressBridgeStorageSchema: "1.1.1",
-      tiktokMarketingOAuthSchema: 1,
+      tiktokMarketingOAuthSchema: 2,
       runtime: {
         processorEnabled: false,
         actionDispatchEnabled: false,
@@ -200,7 +201,7 @@ describe("webhook routes", () => {
       verifyToken: "verify-token-1234",
       opsMetricsToken: token,
       tiktokOAuth: {
-        service: { beginAuthorization, status, completeAuthorization },
+        service: { beginAuthorization, status, verifyAccess, completeAuthorization },
         configuredBusinessId: "business-1"
       }
     });
@@ -258,11 +259,16 @@ describe("webhook routes", () => {
       method: "POST",
       url: "/ops/tiktok/marketing/oauth/start"
     });
+    const absentVerify = await absent.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/oauth/verify"
+    });
     const absentCallback = await absent.inject({
       method: "GET",
       url: "/ishikeit/oauth/tiktok/advertiser/callback/?state=opaque_state_1234567890&auth_code=auth-code-123"
     });
     expect(absentStart.statusCode).toBe(404);
+    expect(absentVerify.statusCode).toBe(404);
     expect(absentCallback.statusCode).toBe(404);
     await absent.close();
 
@@ -276,6 +282,7 @@ describe("webhook routes", () => {
         service: {
           beginAuthorization: vi.fn(),
           status: vi.fn(),
+          verifyAccess: vi.fn(),
           completeAuthorization: vi.fn()
         }
       }
@@ -295,6 +302,14 @@ describe("webhook routes", () => {
     });
     const completeAuthorization = vi.fn().mockResolvedValue({
       advertiserIds: ["100", "200"]
+    });
+    const verifyAccess = vi.fn().mockResolvedValue({
+      verified: true,
+      inSync: true,
+      authorizedAdvertiserIds: ["100", "200"],
+      storedAdvertiserIds: ["100", "200"],
+      staleStoredAdvertiserIds: [],
+      untrackedAuthorizedAdvertiserIds: []
     });
     const token = "o".repeat(32);
     const server = buildServer({
@@ -343,6 +358,32 @@ describe("webhook routes", () => {
     expect(statusResult.body).not.toContain("token");
     expect(statusResult.body).not.toContain("secret");
 
+    const verifyUnauthorized = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/oauth/verify"
+    });
+    expect(verifyUnauthorized.statusCode).toBe(401);
+    expect(verifyAccess).not.toHaveBeenCalled();
+
+    const verified = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/oauth/verify",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(verified.statusCode).toBe(200);
+    expect(verified.headers["cache-control"]).toBe("private, no-store");
+    expect(verified.json()).toEqual({
+      verified: true,
+      inSync: true,
+      authorizedAdvertiserIds: ["100", "200"],
+      storedAdvertiserIds: ["100", "200"],
+      staleStoredAdvertiserIds: [],
+      untrackedAuthorizedAdvertiserIds: []
+    });
+    expect(verified.body).not.toContain("token");
+    expect(verified.body).not.toContain("secret");
+    expect(verified.body).not.toContain("advertiserName");
+
     const callback = await server.inject({
       method: "GET",
       url: "/ishikeit/oauth/tiktok/advertiser/callback/?state=opaque_state_1234567890&auth_code=authoritative-auth-code&code=wrong-code"
@@ -358,6 +399,68 @@ describe("webhook routes", () => {
     );
 
     await server.close();
+  });
+
+
+  it("maps TikTok Marketing verification state safely without exposing provider errors", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const token = "o".repeat(32);
+    const baseService = {
+      beginAuthorization: vi.fn(),
+      status: vi.fn(),
+      completeAuthorization: vi.fn()
+    };
+
+    const notAuthorized = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokMarketingOAuth: {
+        service: {
+          ...baseService,
+          verifyAccess: vi.fn().mockRejectedValue(
+            new TikTokMarketingOAuthNotAuthorizedError()
+          )
+        }
+      }
+    });
+    const missing = await notAuthorized.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/oauth/verify",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(missing.statusCode).toBe(409);
+    expect(missing.json()).toEqual({ status: "not_authorized" });
+    await notAuthorized.close();
+
+    const unavailable = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokMarketingOAuth: {
+        service: {
+          ...baseService,
+          verifyAccess: vi.fn().mockRejectedValue(
+            new Error("provider echoed marketing-access-secret")
+          )
+        }
+      }
+    });
+    const failed = await unavailable.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/oauth/verify",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(failed.statusCode).toBe(503);
+    expect(failed.json()).toEqual({ status: "verification_unavailable" });
+    expect(failed.body).not.toContain("marketing-access-secret");
+    await unavailable.close();
   });
 
   it("rejects incomplete or failed TikTok Marketing callbacks without exposing provider data", async () => {
@@ -377,6 +480,7 @@ describe("webhook routes", () => {
         service: {
           beginAuthorization: vi.fn(),
           status: vi.fn(),
+          verifyAccess: vi.fn(),
           completeAuthorization
         }
       }

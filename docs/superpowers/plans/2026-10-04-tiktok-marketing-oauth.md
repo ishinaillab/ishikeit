@@ -40,6 +40,7 @@
 **Files:**
 - Modify: `ishinaillab/ishikeit/src/auth/oauth-store.ts`
 - Modify: `ishinaillab/ishikeit/tests/support/memory-oauth-store.ts`
+- Create: `ishinaillab/ishikeit/tests/oauth-store.test.ts`
 - Modify: `ishinaillab/ishikeit/tests/tiktok-token-manager.test.ts`
 - Modify: `ishinaillab/ishikeit/tests/instagram-token-manager.test.ts`
 - Create: `ishinaillab/ishikeit-db/supabase/migrations/20261004010000_nullable_oauth_access_expiry.sql`
@@ -60,7 +61,7 @@ Add tests that assert:
 
 Run:
 
-`npm test -- tests/tiktok-token-manager.test.ts tests/instagram-token-manager.test.ts`
+`npm test -- tests/oauth-store.test.ts tests/tiktok-token-manager.test.ts tests/instagram-token-manager.test.ts`
 
 Expected: compile/test failure because `OAuthCredential.accessExpiresAt` is currently required or existing code assumes a `Date`.
 
@@ -100,7 +101,7 @@ Database repository commit:
 
 Application repository commit:
 
-`git add src/auth/oauth-store.ts tests/support/memory-oauth-store.ts tests/tiktok-token-manager.test.ts tests/instagram-token-manager.test.ts && git commit -m "Support OAuth credentials without synthetic expiry"`
+`git add src/auth/oauth-store.ts tests/support/memory-oauth-store.ts tests/oauth-store.test.ts tests/tiktok-token-manager.test.ts tests/instagram-token-manager.test.ts && git commit -m "Support OAuth credentials without synthetic expiry"`
 
 ---
 
@@ -113,7 +114,7 @@ Application repository commit:
 **Interfaces:**
 - Consumes: `fetch`, TikTok app ID/secret, API version, request timeout.
 - Produces:
-  - `TikTokMarketingTokenResult { accessToken: string; scopes: readonly string[] }`
+  - `TikTokMarketingTokenResult { accessToken: string; scopes?: readonly string[] }`
   - `TikTokMarketingAdvertiser { advertiserId: string; advertiserName?: string }`
   - `TikTokMarketingOAuthClientLike.exchangeAuthorizationCode(authCode: string): Promise<TikTokMarketingTokenResult>`
   - `TikTokMarketingOAuthClientLike.listAuthorizedAdvertisers(accessToken: string): Promise<readonly TikTokMarketingAdvertiser[]>`
@@ -125,7 +126,7 @@ Tests must assert:
 - POST URL is `https://business-api.tiktok.com/open_api/v1.3/oauth2/access_token/`;
 - JSON body contains exactly `app_id`, `auth_code`, and `secret`;
 - no redirect URI or `tt_user` field is added;
-- a valid provider response yields only the validated access token/scopes required by the service;
+- a valid provider response yields the validated access token and includes scopes only when the current provider response actually supplies a valid scope field;
 - missing/empty access token is rejected.
 
 - [ ] **Step 2: Run the new test file and verify RED**
@@ -233,6 +234,7 @@ Assert:
 - N verified advertisers persist N `tiktok-marketing` credentials;
 - each row uses the advertiser ID as `accountId`;
 - each row stores the same access token encrypted by the real store boundary later, no refresh token, and no synthetic `accessExpiresAt`;
+- absent token scopes persist as an empty scope list rather than invented permissions;
 - Marketing credentials never use provider `tiktok`;
 - callback result/status does not contain the access token or app secret.
 

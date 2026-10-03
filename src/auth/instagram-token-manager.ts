@@ -42,13 +42,14 @@ export class InstagramAccessTokenRouter implements AccountAccessTokenProvider {
 
     if (this.#managedAccessToken === undefined) return undefined;
 
-    const managedAccountId = await this.#managedAccountId();
+    const managedAccountId = await this.managedAccountId();
     return managedAccountId === accountId ? this.#managedAccessToken : undefined;
   }
 
-  async #managedAccountId(): Promise<string> {
+  async managedAccountId(): Promise<string | undefined> {
+    if (this.#managedAccessToken === undefined) return undefined;
     this.#managedAccountIdPromise ??= this.#client
-      .resolveProfessionalAccountId(this.#managedAccessToken!)
+      .resolveProfessionalAccountId(this.#managedAccessToken)
       .catch((error) => {
         this.#managedAccountIdPromise = undefined;
         throw new AccessTokenError(

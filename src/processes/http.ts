@@ -124,12 +124,14 @@ const instagramAccessTokenManager = (
     });
 
 const instagramAccessTokenRouter = instagramOAuthClient === undefined
-  ? instagramAccessTokenManager
+  ? undefined
   : new InstagramAccessTokenRouter({
       oauthProvider: instagramAccessTokenManager,
       managedAccessToken: env.META_INSTAGRAM_ACCESS_TOKEN,
       client: instagramOAuthClient
     });
+const instagramAccessTokenProvider = instagramAccessTokenRouter
+  ?? instagramAccessTokenManager;
 
 const tiktokAccessTokenManager = (
   oauthStore === undefined
@@ -203,6 +205,34 @@ async function reconcileInstagramOAuthAccounts(): Promise<void> {
   }
 }
 
+async function reconcileInstagramManagedAccount(): Promise<void> {
+  if (
+    instagramAccessTokenRouter === undefined
+    || instagramOAuthClient === undefined
+    || env.META_INSTAGRAM_ACCESS_TOKEN === undefined
+  ) {
+    return;
+  }
+
+  try {
+    const professionalAccountId = await instagramAccessTokenRouter.managedAccountId();
+    if (professionalAccountId === undefined) return;
+    await instagramOAuthClient.ensureWebhookSubscription(
+      env.META_INSTAGRAM_ACCESS_TOKEN,
+      INSTAGRAM_WEBHOOK_FIELDS
+    );
+    logger.info(
+      { professionalAccountId },
+      "Instagram managed-account token and webhook subscription reconciled"
+    );
+  } catch (error) {
+    logger.warn(
+      { err: error },
+      "Instagram managed-account token or webhook subscription reconciliation failed"
+    );
+  }
+}
+
 const server = buildServer({
   logger,
   ready: async () =>
@@ -263,7 +293,7 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
     graphApiVersion: env.META_GRAPH_API_VERSION,
     messengerAccessToken: env.META_MESSENGER_ACCESS_TOKEN,
     instagramAccessToken: env.META_INSTAGRAM_ACCESS_TOKEN,
-    ...(instagramAccessTokenRouter === undefined ? {} : { instagramAccessTokenProvider: instagramAccessTokenRouter }),
+    ...(instagramAccessTokenProvider === undefined ? {} : { instagramAccessTokenProvider }),
     whatsappAccessToken: env.META_WHATSAPP_ACCESS_TOKEN,
     instagramGraphHost: env.META_INSTAGRAM_GRAPH_HOST,
     requestTimeoutMs: env.META_OUTBOUND_REQUEST_TIMEOUT_MS
@@ -387,6 +417,7 @@ async function main(): Promise<void> {
       throw new Error("Instagram data lifecycle schema is not ready");
     }
     await reconcileInstagramOAuthAccounts();
+    await reconcileInstagramManagedAccount();
     if (!await tiktokAuthorizationReady()) {
       throw new Error("TikTok Business Account activation requires a usable durable OAuth credential");
     }

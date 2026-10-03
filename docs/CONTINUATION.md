@@ -1407,3 +1407,26 @@ Validation:
 - full local gate: lint passed, typecheck passed, 29 test files / 162 tests passed, production build passed, `git diff --check` passed.
 - Meta's current Instagram API guidance supports App Dashboard access tokens for owned/managed Professional accounts and requires the sending token to be requested by the Professional account that can send messages.
 - Production still needs a fresh valid managed-account token for the actual business Professional account before the repaired fallback can send; the old configured managed token currently fails Meta `/me` validation with Graph code 100.
+
+
+### Instagram managed-token startup validation — 2026-10-03 late evening
+
+Additional production diagnosis after PR #49:
+
+- PR #49 merged as `4c38e646a285d4def7b7225f7904286f326e5277`.
+- Hostinger build `01a10240-8b96-7248-bf4d-370dcd00025c` completed for that exact merge SHA.
+- Both configured Instagram tester identities are reaching Ishikeit as distinct `message.received` events.
+- Both tester reply actions target the same business Professional account `17841438662359631` and both were dead-lettered locally before a Meta HTTP response under the pre-fix deployment. This proves the tester roles/inbound webhook path are not the shared failure.
+- A current App Dashboard screenshot captured 2026-10-03 13:08:56Z shows **Instagram -> API setup with Instagram login -> 2. Generate access tokens** with only the **Add account** button and no Professional account assigned.
+- The locally archived IG token from the original working build was tested without exposing it and is expired/invalid (Meta Graph code 190). It was not promoted to production, and the local env was restored from backup.
+- The current production managed token also fails Meta identity validation, so no valid business-account managed token is presently available.
+- Meta's current Send API documentation states that sending requires an access token requested by the Instagram Professional account that can send the message, and lists App Dashboard as a supported token source.
+
+Hardening added after PR #49:
+
+- `InstagramAccessTokenRouter.managedAccountId()` exposes safe cached identity validation for the configured managed token.
+- HTTP startup now validates the managed token and reconciles `messages`, `standby`, and `messaging_handover` subscriptions immediately when the token is valid.
+- Invalid/wrong-account managed tokens produce an explicit startup warning instead of being discovered only after a customer message.
+- full local gate: lint passed, typecheck passed, 29 test files / 163 tests passed, build passed, `git diff --check` passed.
+
+Remaining external step is account-owner consent in Meta's dashboard: assign the actual business Professional account `ishinaillab` under **2. Generate access tokens**, complete any Instagram account confirmation Meta requires, and generate its token. This action is not exposed by the connected Meta DevTools API and requires the Instagram account owner's interactive Meta/Instagram session. Once that token exists, Ishikeit can validate the account ID, install it in Hostinger, reconcile subscriptions, and replay/verify the tester reply path.

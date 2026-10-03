@@ -261,8 +261,7 @@ export class MetaSender implements MetaMessageSender {
     }
 
     try {
-      return await this.#instagramAccessTokenProvider.getAccessToken(accountId)
-        ?? this.#instagramAccessToken;
+      return await this.#instagramAccessTokenProvider.getAccessToken(accountId);
     } catch (error) {
       throw new MetaSendFailure("Instagram OAuth access token is unavailable", {
         retryable: error instanceof AccessTokenError ? error.retryable : true,

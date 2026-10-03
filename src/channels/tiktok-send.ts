@@ -6,6 +6,11 @@ import {
   StaticAccessTokenProvider,
   type AccessTokenProvider
 } from "../auth/token-provider.js";
+import {
+  TikTokBusinessMessagingNotAuthorizedError,
+  TikTokBusinessMessagingValidationError,
+  type TikTokBusinessConversationType
+} from "../messaging/tiktok-business-read.js";
 
 interface TikTokBusinessSenderOptions {
   businessId: string;
@@ -13,7 +18,18 @@ interface TikTokBusinessSenderOptions {
   accessTokenProvider?: AccessTokenProvider;
   apiVersion?: string;
   requestTimeoutMs?: number;
+  imageCapabilityResolver?: TikTokImageCapabilityResolver;
   fetchImpl?: typeof fetch;
+}
+
+export interface TikTokImageCapabilityResolver {
+  resolveConversationType(
+    conversationId: string
+  ): Promise<TikTokBusinessConversationType>;
+  checkImageSendCapability(input: {
+    conversationId: string;
+    conversationType: TikTokBusinessConversationType;
+  }): Promise<{ imageSend: boolean }>;
 }
 
 export interface TikTokSendResult {
@@ -92,6 +108,7 @@ export class TikTokBusinessSender {
   readonly #accessTokenProvider: AccessTokenProvider;
   readonly #apiVersion: string;
   readonly #requestTimeoutMs: number;
+  readonly #imageCapabilityResolver: TikTokImageCapabilityResolver | undefined;
   readonly #fetch: typeof fetch;
 
   constructor(options: TikTokBusinessSenderOptions) {
@@ -103,6 +120,7 @@ export class TikTokBusinessSender {
       ?? new StaticAccessTokenProvider(options.accessToken!);
     this.#apiVersion = options.apiVersion ?? "v1.3";
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
+    this.#imageCapabilityResolver = options.imageCapabilityResolver;
     this.#fetch = options.fetchImpl ?? fetch;
   }
 
@@ -195,6 +213,8 @@ export class TikTokBusinessSender {
     }
     this.#validateImageUrl(sourceUrl, sourceUrl.hostname.toLowerCase());
 
+    await this.#assertImageSendCapability(conversationId);
+
     const accessToken = await this.#accessToken();
     const image = await this.#downloadImage(sourceUrl, part);
     const mediaId = await this.#uploadImage(image, accessToken);
@@ -206,6 +226,52 @@ export class TikTokBusinessSender {
       message_type: "IMAGE",
       image: { media_id: mediaId }
     }, accessToken);
+  }
+
+  async #assertImageSendCapability(conversationId: string): Promise<void> {
+    if (this.#imageCapabilityResolver === undefined) {
+      throw new DispatchFailure(
+        "TikTok IMAGE_SEND capability resolver is unavailable",
+        { retryable: false, ambiguous: false }
+      );
+    }
+
+    try {
+      const conversationType =
+        await this.#imageCapabilityResolver.resolveConversationType(conversationId);
+      const capability =
+        await this.#imageCapabilityResolver.checkImageSendCapability({
+          conversationId,
+          conversationType
+        });
+
+      if (!capability.imageSend) {
+        throw new DispatchFailure(
+          "TikTok conversation does not support image sending",
+          { retryable: false, ambiguous: false }
+        );
+      }
+    } catch (error) {
+      if (error instanceof DispatchFailure) throw error;
+
+      const retryable = error instanceof TikTokBusinessMessagingNotAuthorizedError
+        || error instanceof TikTokBusinessMessagingValidationError
+        ? false
+        : typeof error === "object"
+          && error !== null
+          && typeof (error as { retryable?: unknown }).retryable === "boolean"
+          ? (error as { retryable: boolean }).retryable
+          : true;
+
+      throw new DispatchFailure(
+        "TikTok IMAGE_SEND capability preflight failed",
+        {
+          retryable,
+          ambiguous: false,
+          cause: error
+        }
+      );
+    }
   }
 
   #validateImageUrl(url: URL, initialHost: string): void {

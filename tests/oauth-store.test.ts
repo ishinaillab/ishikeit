@@ -28,7 +28,7 @@ describe("PostgresOAuthCredentialStore", () => {
       accountId: "advertiser-1",
       accessToken: "marketing-access",
       scopes: []
-    } as unknown as Omit<OAuthCredential, "tokenVersion">);
+    });
 
     const insert = calls.find(({ text }) => text.includes("INSERT INTO oauth_credentials"));
     expect(insert).toBeDefined();

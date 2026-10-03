@@ -184,6 +184,23 @@ TikTok's Business Messaging API remains distinct from its Marketing, Organic, an
 
 Production activation still requires TikTok Business Messaging API access/review, real Business Account authorization, provider webhook configuration pointing to Ishikeit, capability/permission verification, and a controlled human-originated end-to-end canary. No TikTok credentials are committed to this repository.
 
+
+## TikTok Marketing
+
+TikTok Marketing advertiser authorization is implemented separately from TikTok Business Messaging and remains inactive until the TikTok developer app is approved and production Marketing variables are configured.
+
+Current scope is deliberately limited to **Ad account management**. The runtime provides:
+
+- `POST /ops/tiktok/marketing/oauth/start` — create one-time advertiser authorization state and return the provider authorization URL
+- `GET /ishikeit/oauth/tiktok/advertiser/callback/` — consume state and persist encrypted advertiser credentials
+- `GET /ops/tiktok/marketing/oauth/status` — safe durable authorization status
+- `GET /ops/tiktok/marketing/oauth/verify` — re-check authorized advertiser IDs against durable credentials
+- `GET /ops/tiktok/marketing/advertisers/verify` — prove the granted Ad account management permission through TikTok's read-only `/open_api/v1.3/advertiser/info/` endpoint
+
+Marketing credentials use the distinct `tiktok-marketing` namespace. Access tokens are encrypted before database storage, and the Account Management proof returns only advertiser IDs and missing-ID diagnostics. No advertiser update, campaign, ad-group, ad, creative, budget, bid, audience, lead, or delivery mutation is implemented.
+
+The current TikTok portal labels the permission catalog as v2.0, but TikTok's official SDK still maps advertiser OAuth and advertiser-info calls to `/open_api/v1.3/`. Ishikeit therefore keeps `TIKTOK_BUSINESS_API_VERSION=v1.3` for these implemented calls until TikTok publishes an authoritative replacement contract.
+
 ## Telegram production
 
 Telegram messaging is production-active through `@ishinailbot` (`Ishi Nail Lab`).

@@ -232,6 +232,7 @@ const tiktokBusinessMessagingRead = (
   : new TikTokBusinessMessagingReadClient({
       businessId: env.TIKTOK_BUSINESS_ID,
       accessTokenProvider: tiktokAccessTokenManager,
+      imageCapabilityResolver: tiktokBusinessMessagingRead,
       apiVersion: env.TIKTOK_BUSINESS_API_VERSION,
       requestTimeoutMs: env.TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS
     });

@@ -1887,11 +1887,11 @@ TikTok API-version resolution while the app is under review:
 - revisit this only when TikTok publishes an authoritative v2.0 advertiser-auth endpoint contract or the approved app exposes a documented replacement.
 
 
-### TikTok Marketing Ad Account Management proof — implementation branch
+### TikTok Marketing Ad Account Management proof — deployed
 
 Credential-independent work continued while the TikTok developer app is under review.
 
-Branch: `feature/tiktok-marketing-advertiser-proof`
+PR #59 was squash-merged to `main` as `06621aa3a2b864380976011b4601f89e8b1872a7` and deployed by Hostinger.
 
 Implemented boundary:
 
@@ -1919,4 +1919,15 @@ Verification evidence so far:
 - Marketing mutation scan found no advertiser/campaign/ad-group/ad write endpoint in `src/marketing`;
 - changed-line scan found no secret-like literal additions.
 
-The next gate is Node 24 CI, then merge/deploy if clean.
+Final verification and production readback:
+
+- PR #59 Node 24 CI passed `npm run check`;
+- PHP lint and context-continuity CI jobs passed;
+- production `/health/capabilities` now reports `tiktokMarketingAdvertiserSchema: 1` alongside `tiktokMarketingOAuthSchema: 2`;
+- `/health/live` remains HTTP 200 / `ok`;
+- `/health/ready` remains HTTP 200 / `ready`;
+- processor and action-dispatch runtime flags remain enabled;
+- `/ops/tiktok/marketing/advertisers/verify` remains HTTP 404 while the TikTok app is under review and Marketing environment variables are unset;
+- `/ops/tiktok/marketing/oauth/status` and `/ops/tiktok/marketing/oauth/verify` likewise remain HTTP 404 in that intentionally inactive state.
+
+The next TikTok activation gate is provider approval plus the real App ID, App Secret, and generated Advertiser authorization URL. After those values are configured, run OAuth authorization first, then both read-only verification routes.

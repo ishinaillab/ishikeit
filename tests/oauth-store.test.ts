@@ -11,7 +11,7 @@ describe("PostgresOAuthCredentialStore", () => {
     const calls: Array<{ text: string; values?: readonly unknown[] }> = [];
     const executor: SqlExecutor = {
       query: vi.fn((text: string, values?: readonly unknown[]) => {
-        calls.push({ text, values });
+        calls.push(values === undefined ? { text } : { text, values });
         return Promise.resolve({ rows: [], rowCount: 0 } as never);
       })
     };

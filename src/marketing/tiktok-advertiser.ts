@@ -57,8 +57,11 @@ function providerCode(value: unknown): string | undefined {
     : undefined;
 }
 
-function isRetryable(status: number): boolean {
-  return status === 429 || status >= 500;
+function isRetryable(status: number, code: string | undefined): boolean {
+  return status === 429
+    || status >= 500
+    || code === "40100"
+    || code === "51065";
 }
 
 function normalizeAdvertiserIds(values: readonly string[]): readonly string[] {
@@ -121,7 +124,7 @@ implements TikTokMarketingAdvertiserClientLike {
       throw new TikTokMarketingAdvertiserRequestError(
         "TikTok Marketing advertiser info request was rejected",
         {
-          retryable: isRetryable(response.status),
+          retryable: isRetryable(response.status, code),
           stage: "advertiser_info",
           status: response.status,
           ...(code === undefined ? {} : { providerCode: code })

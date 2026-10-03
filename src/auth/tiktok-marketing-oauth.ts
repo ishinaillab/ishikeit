@@ -1,3 +1,6 @@
+import { createHash, randomBytes } from "node:crypto";
+import type { OAuthCredentialStore } from "./oauth-store.js";
+
 export type TikTokMarketingOAuthStage =
   | "token_exchange"
   | "advertiser_discovery";
@@ -208,5 +211,133 @@ export class TikTokMarketingOAuthClient implements TikTokMarketingOAuthClientLik
     }
 
     return body;
+  }
+}
+
+
+export interface TikTokMarketingOAuthController {
+  beginAuthorization(): Promise<{ authorizationUrl: string; expiresAt: string }>;
+  completeAuthorization(
+    state: string,
+    authCode: string
+  ): Promise<{ advertiserIds: readonly string[] }>;
+  status(): Promise<{ authorized: boolean; advertiserIds: readonly string[] }>;
+}
+
+export interface TikTokMarketingOAuthServiceOptions {
+  authorizationUrl: string;
+  redirectUri: string;
+  store: OAuthCredentialStore;
+  client: TikTokMarketingOAuthClientLike;
+  stateTtlSeconds?: number;
+  now?: () => Date;
+}
+
+export class TikTokMarketingOAuthService implements TikTokMarketingOAuthController {
+  readonly #authorizationUrl: URL;
+  readonly #redirectUri: string;
+  readonly #store: OAuthCredentialStore;
+  readonly #client: TikTokMarketingOAuthClientLike;
+  readonly #stateTtlSeconds: number;
+  readonly #now: () => Date;
+
+  constructor(options: TikTokMarketingOAuthServiceOptions) {
+    this.#authorizationUrl = new URL(options.authorizationUrl);
+    this.#redirectUri = options.redirectUri;
+    this.#store = options.store;
+    this.#client = options.client;
+    this.#stateTtlSeconds = options.stateTtlSeconds ?? 600;
+    this.#now = options.now ?? (() => new Date());
+  }
+
+  async beginAuthorization(): Promise<{
+    authorizationUrl: string;
+    expiresAt: string;
+  }> {
+    const state = randomBytes(32).toString("base64url");
+    const stateHash = createHash("sha256").update(state).digest("hex");
+    const expiresAt = new Date(
+      this.#now().getTime() + this.#stateTtlSeconds * 1000
+    );
+
+    await this.#store.createAuthorizationState(
+      "tiktok-marketing",
+      stateHash,
+      this.#redirectUri,
+      expiresAt
+    );
+
+    const url = new URL(this.#authorizationUrl);
+    url.searchParams.set("state", state);
+    return {
+      authorizationUrl: url.toString(),
+      expiresAt: expiresAt.toISOString()
+    };
+  }
+
+  async completeAuthorization(
+    state: string,
+    authCode: string
+  ): Promise<{ advertiserIds: readonly string[] }> {
+    if (!/^[A-Za-z0-9_-]{20,256}$/u.test(state)) {
+      throw new Error("TikTok Marketing OAuth state is invalid");
+    }
+    if (authCode.length < 8 || authCode.length > 2048) {
+      throw new Error("TikTok Marketing authorization code is invalid");
+    }
+
+    const stateHash = createHash("sha256").update(state).digest("hex");
+    const storedState = await this.#store.consumeAuthorizationState(
+      "tiktok-marketing",
+      stateHash
+    );
+    if (
+      storedState === undefined
+      || storedState.redirectUri !== this.#redirectUri
+    ) {
+      throw new Error(
+        "TikTok Marketing OAuth state is expired, invalid, or already consumed"
+      );
+    }
+
+    const token = await this.#client.exchangeAuthorizationCode(authCode);
+    const advertisers = await this.#client.listAuthorizedAdvertisers(
+      token.accessToken
+    );
+    if (advertisers.length === 0) {
+      throw new Error(
+        "TikTok Marketing authorization did not grant access to an advertiser"
+      );
+    }
+
+    const advertiserIds = advertisers
+      .map((advertiser) => advertiser.advertiserId)
+      .sort((a, b) => a.localeCompare(b));
+
+    for (const advertiserId of advertiserIds) {
+      await this.#store.put({
+        provider: "tiktok-marketing",
+        accountId: advertiserId,
+        accessToken: token.accessToken,
+        scopes: token.scopes ?? []
+      });
+    }
+
+    return { advertiserIds };
+  }
+
+  async status(): Promise<{
+    authorized: boolean;
+    advertiserIds: readonly string[];
+  }> {
+    const credentials = await this.#store.list("tiktok-marketing");
+    const advertiserIds = credentials
+      .map((credential) => credential.accountId)
+      .sort((a, b) => a.localeCompare(b));
+
+    return {
+      authorized: advertiserIds.length > 0,
+      advertiserIds
+    };
   }
 }

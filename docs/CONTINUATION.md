@@ -1878,4 +1878,10 @@ Production readback after PR #56:
 - `/ops/tiktok/marketing/oauth/status` remains HTTP 404 while Marketing environment variables are intentionally unset;
 - `/ops/tiktok/marketing/oauth/verify` likewise remains HTTP 404 until the approved TikTok app credentials and authorization URL are configured.
 
-Current official TikTok authorization documentation still specifies the `/oauth2/access_token/` flow and long-term advertiser token model, while the current portal permission inventory labels the Ad account management API family as v2.0. Do not change Ishikeit's configured API base version until TikTok's exact v2.0 authentication/advertiser endpoint base path is verified from authoritative documentation or live approved-app behavior.
+TikTok API-version resolution while the app is under review:
+
+- the current portal permission inventory labels **Ad account management** as API v2.0, but that catalog label does not by itself define the OAuth transport base path;
+- TikTok's current official `tiktok-business-api-sdk` `main` branch still maps advertiser token exchange to `POST /open_api/v1.3/oauth2/access_token/` and advertiser discovery to `GET /open_api/v1.3/oauth2/advertiser/get/`;
+- Ishikeit's tests already pin those exact advertiser-OAuth paths;
+- therefore keep `TIKTOK_BUSINESS_API_VERSION=v1.3` for the currently implemented OAuth flows and do not switch them to `v2.0` merely because the Scope of permission UI displays v2.0;
+- revisit this only when TikTok publishes an authoritative v2.0 advertiser-auth endpoint contract or the approved app exposes a documented replacement.

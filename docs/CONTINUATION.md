@@ -1933,11 +1933,11 @@ Final verification and production readback:
 The next TikTok activation gate is provider approval plus the real App ID, App Secret, and generated Advertiser authorization URL. After those values are configured, run OAuth authorization first, then both read-only verification routes.
 
 
-### TikTok Marketing safe advertiser summaries — implementation branch
+### TikTok Marketing safe advertiser summaries — deployed
 
 Credential-independent development continued while the TikTok developer app is under review.
 
-Branch: `feature/tiktok-marketing-advertiser-summary`
+PR #61 was squash-merged to `main` as `7f69e991b1160fa9c477cb0aa4c84a23988da896` and deployed by Hostinger.
 
 Implemented boundary:
 
@@ -1973,4 +1973,14 @@ Verification completed before PR:
 - changed-source scan found no flow of sensitive advertiser fields such as email, phone, address, license data, or balance;
 - changed-line scan found no secret-like literal additions.
 
-Next gate: PR and Node 24 CI. Do not merge/deploy without explicit production authorization because `main` auto-deploys on Hostinger.
+Final CI and production readback:
+
+- PR #61 Node 24 CI passed along with PHP lint and context continuity before merge;
+- production `/health/capabilities` now reports `tiktokMarketingAdvertiserSchema: 2` alongside `tiktokMarketingOAuthSchema: 2`;
+- production `/health/live` remains HTTP 200 / `ok`;
+- production `/health/ready` remains HTTP 200 / `ready`;
+- processor and action-dispatch runtime flags remain enabled;
+- `/ops/tiktok/marketing/advertisers` remains HTTP 404 while the TikTok app is under review and Marketing environment variables are intentionally unset;
+- `/ops/tiktok/marketing/advertisers/verify`, `/ops/tiktok/marketing/oauth/status`, and `/ops/tiktok/marketing/oauth/verify` likewise remain HTTP 404 in that intentionally inactive state.
+
+After TikTok approval and production configuration, complete advertiser OAuth first, then use the safe account-summary route plus both verification routes for the provider-backed activation proof.

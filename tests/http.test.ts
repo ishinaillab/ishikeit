@@ -63,7 +63,7 @@ describe("webhook routes", () => {
       wordpressBridgeApiSchema: 3,
       wordpressBridgeStorageSchema: "1.1.1",
       tiktokMarketingOAuthSchema: 2,
-      tiktokMarketingAdvertiserSchema: 1,
+      tiktokMarketingAdvertiserSchema: 2,
       runtime: {
         processorEnabled: false,
         actionDispatchEnabled: false,
@@ -421,7 +421,7 @@ describe("webhook routes", () => {
       appSecret: "secret",
       verifyToken: "verify-token-1234",
       tiktokMarketingAdvertisers: {
-        service: { verifyAccountManagement: vi.fn() }
+        service: { verifyAccountManagement: vi.fn(), listAccounts: vi.fn() }
       }
     })).toThrow(/TikTok Marketing advertiser operations require an operational bearer token/i);
 
@@ -440,7 +440,7 @@ describe("webhook routes", () => {
       verifyToken: "verify-token-1234",
       opsMetricsToken: token,
       tiktokMarketingAdvertisers: {
-        service: { verifyAccountManagement }
+        service: { verifyAccountManagement, listAccounts: vi.fn() }
       }
     });
 
@@ -472,6 +472,128 @@ describe("webhook routes", () => {
   });
 
 
+
+  it("lists safe TikTok Marketing advertiser summaries behind operational bearer auth", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const token = "o".repeat(32);
+    const listAccounts = vi.fn().mockResolvedValue({
+      accounts: [
+        {
+          advertiserId: "100",
+          name: "Ishi Ads",
+          status: "STATUS_ENABLE",
+          currency: "PHP",
+          timezone: "Asia/Manila",
+          country: "PH"
+        }
+      ]
+    });
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokMarketingAdvertisers: {
+        service: {
+          verifyAccountManagement: vi.fn(),
+          listAccounts
+        }
+      }
+    });
+
+    const unauthorized = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/advertisers"
+    });
+    expect(unauthorized.statusCode).toBe(401);
+    expect(unauthorized.headers["www-authenticate"]).toContain("Bearer");
+    expect(listAccounts).not.toHaveBeenCalled();
+
+    const result = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/advertisers",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(result.statusCode).toBe(200);
+    expect(result.headers["cache-control"]).toBe("private, no-store");
+    expect(result.json()).toEqual({
+      accounts: [
+        {
+          advertiserId: "100",
+          name: "Ishi Ads",
+          status: "STATUS_ENABLE",
+          currency: "PHP",
+          timezone: "Asia/Manila",
+          country: "PH"
+        }
+      ]
+    });
+    expect(result.body).not.toContain("token");
+    expect(result.body).not.toContain("secret");
+    expect(result.body).not.toContain("email");
+    expect(result.body).not.toContain("balance");
+
+    await server.close();
+  });
+
+  it("maps advertiser-summary authorization and provider failures safely", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const token = "o".repeat(32);
+
+    const notAuthorized = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokMarketingAdvertisers: {
+        service: {
+          verifyAccountManagement: vi.fn(),
+          listAccounts: vi.fn().mockRejectedValue(
+            new TikTokMarketingOAuthNotAuthorizedError()
+          )
+        }
+      }
+    });
+    const missing = await notAuthorized.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/advertisers",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(missing.statusCode).toBe(409);
+    expect(missing.json()).toEqual({ status: "not_authorized" });
+    await notAuthorized.close();
+
+    const unavailable = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokMarketingAdvertisers: {
+        service: {
+          verifyAccountManagement: vi.fn(),
+          listAccounts: vi.fn().mockRejectedValue(
+            new Error("provider echoed private-ad-account-data")
+          )
+        }
+      }
+    });
+    const failed = await unavailable.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/advertisers",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(failed.statusCode).toBe(503);
+    expect(failed.json()).toEqual({ status: "advertiser_list_unavailable" });
+    expect(failed.body).not.toContain("private-ad-account-data");
+    await unavailable.close();
+  });
+
   it("distinguishes missing TikTok Marketing authorization from advertiser-provider failure", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
     const token = "o".repeat(32);
@@ -487,7 +609,8 @@ describe("webhook routes", () => {
         service: {
           verifyAccountManagement: vi.fn().mockRejectedValue(
             new TikTokMarketingOAuthNotAuthorizedError()
-          )
+          ),
+          listAccounts: vi.fn()
         }
       }
     });
@@ -511,7 +634,8 @@ describe("webhook routes", () => {
         service: {
           verifyAccountManagement: vi.fn().mockRejectedValue(
             new Error("provider echoed marketing-access-secret")
-          )
+          ),
+          listAccounts: vi.fn()
         }
       }
     });

@@ -148,7 +148,12 @@ export interface TikTokMarketingAccountVerification {
   missingAdvertiserIds: readonly string[];
 }
 
-export class TikTokMarketingAdvertiserService {
+export interface TikTokMarketingAdvertiserController {
+  verifyAccountManagement(): Promise<TikTokMarketingAccountVerification>;
+}
+
+export class TikTokMarketingAdvertiserService
+implements TikTokMarketingAdvertiserController {
   readonly #store: OAuthCredentialStore;
   readonly #client: TikTokMarketingAdvertiserClientLike;
 

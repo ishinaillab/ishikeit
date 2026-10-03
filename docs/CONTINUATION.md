@@ -1302,3 +1302,82 @@ Continue building on the adapter/registry boundaries rather than redesigning the
 16. version and test each future provider adapter and media-capability contract independently
 
 Marketing API, lead management, and future providers must not be routed through the conversational message handler merely because they originate from Meta or TikTok.
+
+
+## Authoritative latest checkpoint — 2026-10-03 18:50 Asia/Manila
+
+This section is the current continuation source of truth. If any earlier Instagram checkpoint conflicts with this section, use this section.
+
+### Ishikeit repositories and production
+
+- App repository: `ishinaillab/ishikeit`.
+- Database repository: `ishinaillab/ishikeit-db`.
+- Retired `/ishinaillab/ishi` must not be used unless the user explicitly reintroduces it.
+- Current app `main` / production revision: `02b451ceacea67ccaf7eca6f78bf2450c318c1df` from PR #46, **Finalize Instagram App Review package**.
+- Hostinger build for `02b451c` completed successfully on 2026-10-03.
+- Production app URL: `https://apps.ishinaillab.com/`.
+- Production readiness endpoint: `GET /health/ready` returns 200.
+- Current database `main`: `94babed`, including `oauth_account_aliases`.
+- Supabase migration `20261003020000_oauth_account_aliases.sql` is applied.
+
+### Instagram OAuth and routing — complete
+
+- Instagram Business Login uses `https://www.instagram.com/oauth/authorize`.
+- Short token exchange uses `https://api.instagram.com/oauth/access_token`.
+- Long-lived/refresh flow uses `https://graph.instagram.com/access_token` and `/refresh_access_token`.
+- OAuth callback state is one-time, durable, and SHA-256 stored.
+- Large bare numeric `user_id` values are preserved losslessly.
+- The controlled Professional account is authorized successfully.
+- Authorized account handle: **@povnailstudio.ph**.
+- Professional account ID: `17841437646366614`.
+- OAuth subject/credential account ID is stored separately and linked by durable account alias; do not collapse these identities.
+- OAuth token is encrypted at rest with AES-256-GCM and has the expected ~60-day lifetime.
+- Required scopes are present: `instagram_business_basic`, `instagram_business_manage_messages`.
+- Account-level webhook subscriptions are reconciled automatically for `messages`, `standby`, and `messaging_handover`.
+- When the OAuth provider is configured, Instagram outbound sends are OAuth-only. The retired static Instagram token is not a fallback for unmapped accounts.
+- Revocation/data-deletion lifecycle is durable and alias-aware.
+- Deauthorize callback: `https://apps.ishinaillab.com/ishikeit/oauth/instagram/deauthorize/`.
+- Data deletion callback: `https://apps.ishinaillab.com/ishikeit/oauth/instagram/data-deletion/`.
+
+### Instagram App Review — final gate
+
+- Meta app ID: `1042452472116584`.
+- App name: **Ishikeit**.
+- App mode: live.
+- Business Verification: passes.
+- Privacy Policy requirement: passes.
+- Meta reports `can_submit=true`.
+- Submission status: `NO_SUBMISSION`.
+- Advanced Access grants: none yet.
+- Public reviewer page is live: `https://www.ishinaillab.com/instagram-connect-review/`.
+- WordPress page ID: `21471`, title **Connect Instagram**.
+- The reviewer page contains the production Connect Instagram button, permission explanations, concrete reviewer test steps, the live account handle, messaging behavior, and Privacy Policy link.
+- Submission-ready copy is maintained in `docs/meta-instagram-app-review.md`.
+- Production database contains historical successful published Instagram `message.send` actions, including successful sends on 2026-10-01, satisfying the successful-API-call evidence requirement.
+- Standard Access is insufficient for ordinary production customers because Meta documents that Standard Access testing is limited to people with app roles; Advanced Access is required for real non-role customers.
+- Remaining mandatory review artifact: a **real, uninterrupted screencast** showing public reviewer page -> Connect Instagram -> real authorization -> successful callback -> customer-initiated DM -> Ishikeit processing -> API reply visible in the same Instagram conversation.
+- Do not fabricate, synthesize, or mock the screencast.
+- Meta currently shows the contact email `admin@ishinaillab.com` as present but not verified. This is not blocking `can_submit=true`, but verify it if Meta prompts during the final checklist.
+- Final Meta Submit has not been performed. Do not claim the app is under review until the dashboard shows a real submission.
+
+### Current validation state
+
+- Local full release gate on current app code: lint passed.
+- Typecheck passed.
+- Test files: 29 passed.
+- Tests: 159 passed.
+- Production build passed.
+- `git diff --check` passed.
+- Public reviewer page: HTTP 200.
+- `/health/ready`: HTTP 200.
+- Production Instagram login route: HTTP 302 to Instagram with exact callback, fresh state, `force_reauth=true`, and scopes `instagram_business_basic,instagram_business_manage_messages`.
+
+### Other project continuity
+
+- TikTok adapter and OAuth lifecycle are implemented; activation remains blocked on TikTok **TikTok accounts** permission-scope review.
+- Secure TikTok handoff remains `C:\Users\MBDS\Downloads\ishikeit-tiktok-app.env`.
+- Keep `zdm1002_*` WordPress rollback tables for now.
+- Do not change Hostinger's internal shared-hosting primary-domain label from `povnailstudio.com` until rollback/archive implications are reverified.
+- Public canonical website remains `https://www.ishinaillab.com/`.
+- Direct ChatGPT Easy MCP may still have stale connector/session behavior after the domain migration; do not revert the site domain to fix that. WPVibe is the working WordPress connector.
+- Keep building future Meta Leads, Meta Marketing API, TikTok Marketing, and other providers as separate capability/operation families on the existing adapter/registry architecture.

@@ -1,160 +1,140 @@
 # Meta Instagram App Review package
 
-Updated: 2026-10-02
+Updated: 2026-10-03
 
-## Scope
+## Production state
 
 Ishikeit uses **Instagram API with Instagram Login** and requests only:
 
 - `instagram_business_basic`
 - `instagram_business_manage_messages`
 
-The production use case is customer support for an Instagram Professional account. Customers send Instagram DMs to the business. Ishikeit receives the messaging webhook, persists the event durably, sends the message to the configured AI service, creates a durable outbound action, and replies through the Instagram Messaging API.
+Current verified state:
 
+- Meta app: **Ishikeit** (`1042452472116584`)
+- App mode: live
+- Business Verification: passes
+- App Review: `NO_SUBMISSION`
+- `can_submit=true`
+- Advanced Access grants: none
+- Production app SHA: `ce25903aa21ff0fa23c6eacaa0971499c1a7c231`
+- Production health: ready
+- Authorized Instagram Professional account: **@povnailstudio.ph**
+- Professional account ID: `17841437646366614`
+- OAuth credential: encrypted at rest and approximately 60-day lifetime
+- Required scopes are present
+- Account-level webhook subscription is reconciled for `messages`, `standby`, and `messaging_handover`
+- Instagram routing is OAuth-only whenever the OAuth provider is configured; the retired static token is not used as fallback
+
+Public reviewer entry point:
+
+https://www.ishinaillab.com/instagram-connect-review/
 ## Why Advanced Access is required
 
-Meta distinguishes the Instagram Professional account being onboarded from the people whose data is delivered in messaging webhooks.
+Meta's current Instagram Messaging documentation states that apps with Standard Access can only interact with people who have a role on the app. Ishikeit's production users are ordinary Instagram customers who send Direct Messages to the business and do not have app roles.
 
-The Ishi Instagram Professional account is owned/managed by the business, but ordinary customers who send DMs do not have app roles. Meta's current Instagram Messaging webhook guidance states that webhook notifications containing data owned or managed by people without an app role require App Review / Advanced Access. Standard Access remains role-limited for those webhook notifications.
+Advanced Access is therefore required so Ishikeit can receive and respond to customer-initiated Instagram messages from non-role users in production.
+
+This is not for unsolicited outreach. The customer starts the conversation. Ishikeit receives the webhook, processes the message as customer support, and replies inside Meta's allowed messaging context.
 
 Official references:
 
 - https://developers.facebook.com/documentation/instagram-platform/app-review
 - https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-instagram-login/business-login
-- https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-instagram-login/messaging-api
-- https://developers.facebook.com/documentation/business-messaging/instagram-messaging/webhooks
+- https://developers.facebook.com/docs/instagram-platform/overview/
+- https://developers.facebook.com/docs/instagram-platform/self-messaging/
+- https://developers.facebook.com/documentation/development/create-an-app/other-app-types/instagram-apis
 
-## Current verified app state
-
-As of 2026-10-02:
-
-- Business Verification: passes
-- App Review: `NO_SUBMISSION`
-- `can_submit=true`
-- Advanced Access grants: none
-- compliance: clean
-- required compliance actions: none
-- open violations: none
-
-The OAuth lifecycle code is deployed but configuration-gated until the product-specific Instagram App ID and Instagram App Secret are supplied securely.
-## Permission justification copy
+## Permission justification
 
 ### `instagram_business_basic`
 
-Ishikeit uses `instagram_business_basic` to authenticate an Instagram Professional account through Business Login for Instagram, obtain the Instagram-scoped account ID returned by Meta, and bind the authorized professional account to its encrypted server-side credential. This account identity is required so Ishikeit can route messaging events and outbound replies to the correct authorized Instagram Professional account.
+Ishikeit uses `instagram_business_basic` to authenticate an Instagram Professional account through Business Login for Instagram, identify the authorized Professional account, and bind that routing identity to its encrypted server-side OAuth credential.
 
-The app does not use this permission for unrelated profile harvesting, advertising, or public-content collection.
+The permission is used only to support the authorized business account's messaging integration. Ishikeit does not use it for unrelated profile harvesting, advertising, or public-content collection.
 
 ### `instagram_business_manage_messages`
 
-Ishikeit uses `instagram_business_manage_messages` to receive Instagram Direct messaging webhook events for the authorized Instagram Professional account and to send replies to the customer who initiated the conversation.
+Ishikeit uses `instagram_business_manage_messages` to receive Instagram Direct message webhook events for the authorized Professional account and send replies to the Instagram user who initiated the conversation.
 
-The functionality is a customer-support messaging workflow. A customer initiates the conversation by messaging the business on Instagram. Ishikeit receives that event, processes it, and sends a reply through the authorized professional account using the Instagram Messaging API.
-
-The app does not initiate unsolicited conversations.
-
-## External reviewer entry point
-
-The production login route is:
-
-`https://apps.ishinaillab.com/ishikeit/oauth/instagram/login/`
-
-This route is intentionally unavailable until the product-specific Instagram OAuth configuration is activated. After activation it creates a one-time CSRF state and redirects the reviewer to Meta's Instagram authorization flow.
-
-The exact registered callback must be:
-
-`https://apps.ishinaillab.com/ishikeit/oauth/instagram/callback/`
-
-Business Login must also register:
-
-- Deauthorize callback URL: `https://apps.ishinaillab.com/ishikeit/oauth/instagram/deauthorize/`
-- Data deletion request URL: `https://apps.ishinaillab.com/ishikeit/oauth/instagram/data-deletion/`
-
-The production login route uses Meta's current Business Login endpoint, `https://www.instagram.com/oauth/authorize`, includes one-time CSRF `state`, and sends `force_reauth=true` as recommended for Business Login.
-
-Before submission, expose a clearly visible **Connect Instagram** link/button on a public reviewer-accessible web page. The link must launch the production login route above and must be visible in the submitted screencast.
+The use case is an automated customer-support experience for Ishi Nail Lab. Ishikeit does not initiate unsolicited conversations.
 ## Reviewer verification instructions
 
-Use a controlled Instagram Professional account that Meta reviewers are permitted to authorize for this submission.
+1. Open https://www.ishinaillab.com/instagram-connect-review/
+2. Click **Connect Instagram**.
+3. Complete Instagram Business Login using an Instagram Professional test account permitted for this review.
+4. Approve `instagram_business_basic` and `instagram_business_manage_messages`.
+5. Confirm Instagram redirects to Ishikeit's callback and the page reports successful authorization.
+6. To test the live Ishi Nail Lab experience, send a new Instagram Direct Message such as `Hello` to **@povnailstudio.ph** from a separate Instagram account permitted to participate in the review.
+7. Confirm the message reaches the Instagram conversation.
+8. Confirm Ishikeit receives the `messages` webhook, processes the customer-support message, and sends a reply through the Instagram Messaging API.
+9. Confirm the reply appears in the same Instagram conversation.
 
-1. Open the public reviewer-accessible page containing the **Connect Instagram** link.
-2. Click **Connect Instagram**. The link opens the production Ishikeit Instagram login route and redirects to Instagram's authorization window.
-3. Sign in to the Instagram Professional account supplied for review and approve the requested permissions.
-4. Confirm that Instagram redirects to the exact Ishikeit callback and that the page reports successful authorization.
-5. From a separate Instagram user account, send a new direct message to the authorized Instagram Professional account.
-6. Confirm that the message arrives in Instagram and is delivered to Ishikeit's webhook.
-7. Confirm that Ishikeit processes the message and sends a reply.
-8. Confirm that the reply is visible in the Instagram conversation.
+No Ishikeit login is required to open the reviewer page. Do not provide production secrets, database credentials, OAuth tokens, or operational bearer tokens to reviewers.
 
-Do not provide production secrets, database credentials, API tokens, or operational bearer tokens to the reviewer. Provide only reviewer/test account credentials if Meta's review form requires them.
+Production OAuth endpoints:
 
-## Screencast requirements
+- Login: https://apps.ishinaillab.com/ishikeit/oauth/instagram/login/
+- Callback: https://apps.ishinaillab.com/ishikeit/oauth/instagram/callback/
+- Deauthorize: https://apps.ishinaillab.com/ishikeit/oauth/instagram/deauthorize/
+- Data deletion: https://apps.ishinaillab.com/ishikeit/oauth/instagram/data-deletion/
 
-Record one uninterrupted end-to-end flow that visibly demonstrates:
+## Screencast script
 
-1. the public web page with the visible **Connect Instagram** link
-2. clicking the link
-3. Instagram's authorization screen
-4. the requested permissions being granted
-5. the redirect back to Ishikeit and successful authorization result
-6. a customer account sending a DM to the authorized professional account
-7. the incoming DM appearing in the professional account's Instagram inbox
-8. Ishikeit handling the event
-9. the API-generated reply appearing in the same Instagram conversation
+Record one uninterrupted English-language flow showing:
 
-Do not use mocked screenshots, fabricated provider responses, edited success states, or synthetic reviewer evidence.
+1. The public reviewer page and visible **Connect Instagram** button.
+2. Clicking **Connect Instagram**.
+3. Instagram's authorization UI.
+4. The requested permissions being granted.
+5. The redirect back to Ishikeit and the successful authorization message.
+6. A separate Instagram user sending a new DM to the authorized business account.
+7. The incoming message appearing in the business's Instagram inbox.
+8. The automated Ishikeit reply appearing in the same conversation.
 
+Use the real production app and real review/test accounts. Do not use mocked screenshots, fabricated provider responses, or edited success states.
 ## API-call evidence
 
-Meta's App Review guidance notes that certain Advanced Access requests require at least one successful API call.
+Meta requires at least one successful API call for certain Advanced Access requests.
 
-Ishikeit's production database already contains successful Instagram `message.send` actions with Meta provider message IDs, including a successful send recorded on 2026-10-01. This can support the API-call requirement, but the submitted screencast must still demonstrate the current authorization and messaging flow actually used for review.
-## Meta Dashboard completion checklist
+Ishikeit's production database contains successful published Instagram `message.send` actions for this Meta app, including a successful publish on **2026-10-01** and multiple earlier successful sends. These are durable outbox records, not simulated responses.
 
-Before starting the submission:
+The current OAuth routing path has also been verified against Meta with the newly authorized Professional account: Meta accepted the OAuth token and Professional-account routing identity. A canary to an existing first-party conversation was rejected only because that conversation was outside the 24-hour response window, which confirms routing/authentication were accepted.
 
-- Instagram > API setup with Instagram login > Business login settings:
-  - copy the product-specific **Instagram App ID**
-  - copy the product-specific **Instagram App Secret**
-  - register the exact OAuth redirect URI shown above
-  - register the exact deauthorize callback URL shown above
-  - register the exact data deletion request URL shown above
-  - confirm the generated Business Login / Embed URL uses the intended permissions
-- App settings:
-  - app icon: present
-  - Privacy Policy URL: present and publicly reachable
-  - app category: present
-  - business email: present
-- App Review:
-  - request `instagram_business_basic`
-  - request `instagram_business_manage_messages`
-  - confirm external testability
-  - provide the reviewer instructions above
-  - provide reviewer credentials only when genuinely needed
-  - upload the real end-to-end screencast
-  - verify at least one successful API call requirement is satisfied
-- Do not add unrelated permissions merely because Meta offers them.
+The account-level `POST /me/subscribed_apps` reconciliation also succeeds for `messages`, `standby`, and `messaging_handover`.
 
-## Activation gate
+## App settings checklist
 
-The secure local handoff is:
+Verified:
 
-`C:\Users\MBDS\Downloads\ishikeit-instagram-app.env`
+- App icon: present
+- Privacy Policy URL: https://www.ishinaillab.com/privacy-policy
+- Terms URL: https://www.ishinaillab.com/terms-conditions
+- Data deletion URL: https://www.ishinaillab.com/meta-data-deletion
+- Category: Messaging
+- Business Verification: passes
+- Base domains include `apps.ishinaillab.com` and `www.ishinaillab.com`
 
-The Hostinger promotion helper is:
+Attention before final submission:
 
-`C:\Users\MBDS\Downloads\hostinger-mcp-client\activate_instagram_oauth_env.mjs`
+- Meta currently reports the app contact email as present but not verified. This does not currently block `can_submit=true`, but the email should be verified before or during the final App Review checklist if Meta prompts for it.
+- Request only `instagram_business_basic` and `instagram_business_manage_messages`. Do not add unrelated permissions.
+- If Meta automatically adds the Human Agent feature, do not claim a 7-day human-agent use case unless Ishikeit actually implements and demonstrates it.
 
-The helper must not run until the product App ID and App Secret placeholders have been replaced with the real Instagram product values. It validates the values, preserves the existing production environment, adds the Instagram OAuth keys, verifies the resulting live key set, and requests a restart without printing secrets.
+## Final submission gate
 
-After activation, verify all of the following before recording any screencast:
+The technical integration is ready for App Review. The remaining review artifact is the real screencast required by Meta's dashboard.
 
-- `GET /health/ready` returns 200
-- `GET /ishikeit/oauth/instagram/login/` redirects to `www.instagram.com/oauth/authorize` with `force_reauth=true`
-- the redirect contains the configured Instagram product App ID
-- the redirect URI exactly matches the registered callback including trailing slash
-- requested scopes are exactly `instagram_business_basic,instagram_business_manage_messages`
-- callback state can be consumed only once
-- protected OAuth status returns account/scope/expiry metadata without tokens
-- existing Ishi production messaging remains operational
-- a controlled authorized-account customer DM is ingested and receives a successful reply
+Before clicking Submit:
+
+- reviewer page is publicly reachable
+- production OAuth login succeeds
+- required scopes are present
+- deauthorization and data-deletion callbacks are live
+- account-level webhook subscription is active
+- successful Instagram API-call history exists
+- permission descriptions above are copied into the request
+- reviewer verification instructions above are supplied
+- the real end-to-end screencast is uploaded
+
+Do not submit a mocked or incomplete recording. Do not reauthorize the production account merely to recreate routing aliases or webhook subscriptions; startup reconciliation is idempotent.

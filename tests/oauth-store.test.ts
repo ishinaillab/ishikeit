@@ -10,9 +10,9 @@ describe("PostgresOAuthCredentialStore", () => {
   it("persists an absent access expiry as SQL NULL", async () => {
     const calls: Array<{ text: string; values?: readonly unknown[] }> = [];
     const executor: SqlExecutor = {
-      query: vi.fn(async (text: string, values?: readonly unknown[]) => {
+      query: vi.fn((text: string, values?: readonly unknown[]) => {
         calls.push({ text, values });
-        return { rows: [], rowCount: 0 } as never;
+        return Promise.resolve({ rows: [], rowCount: 0 } as never);
       })
     };
     const db = {

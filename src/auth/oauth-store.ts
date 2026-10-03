@@ -8,7 +8,7 @@ export interface OAuthCredential {
   accessToken: string;
   refreshToken?: string;
   scopes: readonly string[];
-  accessExpiresAt: Date;
+  accessExpiresAt?: Date;
   refreshExpiresAt?: Date;
   tokenVersion: number;
 }
@@ -56,7 +56,7 @@ interface CredentialRow extends pg.QueryResultRow {
   refresh_token_iv: Buffer | null;
   refresh_token_tag: Buffer | null;
   scopes: string[];
-  access_expires_at: Date;
+  access_expires_at: Date | null;
   refresh_expires_at: Date | null;
   token_version: number;
 }
@@ -193,7 +193,7 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
           refresh?.iv ?? null,
           refresh?.tag ?? null,
           [...credential.scopes],
-          credential.accessExpiresAt,
+          credential.accessExpiresAt ?? null,
           credential.refreshExpiresAt ?? null
         ]
       );
@@ -360,7 +360,7 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
       accessToken,
       ...(refreshToken === undefined ? {} : { refreshToken }),
       scopes: row.scopes,
-      accessExpiresAt: row.access_expires_at,
+      ...(row.access_expires_at === null ? {} : { accessExpiresAt: row.access_expires_at }),
       ...(row.refresh_expires_at === null ? {} : { refreshExpiresAt: row.refresh_expires_at }),
       tokenVersion: row.token_version
     };

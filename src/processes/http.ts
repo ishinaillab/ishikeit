@@ -28,7 +28,7 @@ import { CredentialCipher } from "../auth/credential-cipher.js";
 import { PostgresOAuthCredentialStore } from "../auth/oauth-store.js";
 import { TikTokOAuthClient, TikTokOAuthService } from "../auth/tiktok-oauth.js";
 import { TikTokAccessTokenManager, tiktokCredentialCanRefresh } from "../auth/tiktok-token-manager.js";
-import { InstagramOAuthClient, InstagramOAuthService } from "../auth/instagram-oauth.js";
+import { INSTAGRAM_WEBHOOK_FIELDS, InstagramOAuthClient, InstagramOAuthService } from "../auth/instagram-oauth.js";
 import { InstagramAccessTokenManager } from "../auth/instagram-token-manager.js";
 import { PostgresInstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 
@@ -160,28 +160,34 @@ async function tiktokAuthorizationReady(): Promise<boolean> {
   }
 }
 
-async function reconcileInstagramAccountAlias(): Promise<void> {
+async function reconcileInstagramOAuthAccount(): Promise<void> {
   if (oauthStore === undefined || instagramOAuthClient === undefined) return;
   const credential = await oauthStore.latest("instagram");
   if (credential === undefined) return;
-  const aliases = await oauthStore.aliasesForCredential(
-    "instagram",
-    credential.accountId
-  );
-  if (aliases.length > 0) return;
 
   try {
+    const accessToken = instagramAccessTokenManager === undefined
+      ? credential.accessToken
+      : await instagramAccessTokenManager.getAccessToken(credential.accountId)
+        ?? credential.accessToken;
     const professionalAccountId = await instagramOAuthClient
-      .resolveProfessionalAccountId(credential.accessToken);
+      .resolveProfessionalAccountId(accessToken);
     await oauthStore.putAccountAlias(
       "instagram",
       professionalAccountId,
       credential.accountId,
       "instagram_professional_account"
     );
-    logger.info("Instagram OAuth account alias reconciled");
+    await instagramOAuthClient.ensureWebhookSubscription(
+      accessToken,
+      INSTAGRAM_WEBHOOK_FIELDS
+    );
+    logger.info("Instagram OAuth account routing and webhook subscription reconciled");
   } catch (error) {
-    logger.warn({ err: error }, "Instagram OAuth account alias reconciliation failed");
+    logger.warn(
+      { err: error },
+      "Instagram OAuth account routing or webhook subscription reconciliation failed"
+    );
   }
 }
 
@@ -368,7 +374,7 @@ async function main(): Promise<void> {
     if (instagramDataLifecycle !== undefined && !await instagramDataLifecycle.ready()) {
       throw new Error("Instagram data lifecycle schema is not ready");
     }
-    await reconcileInstagramAccountAlias();
+    await reconcileInstagramOAuthAccount();
     if (!await tiktokAuthorizationReady()) {
       throw new Error("TikTok Business Account activation requires a usable durable OAuth credential");
     }

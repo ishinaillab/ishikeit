@@ -10,7 +10,8 @@ describe("InstagramAccessTokenManager", () => {
       exchangeAuthorizationCode: vi.fn(),
       exchangeLongLived: vi.fn(),
       refresh: vi.fn(),
-      resolveProfessionalAccountId: vi.fn()
+      resolveProfessionalAccountId: vi.fn(),
+      ensureWebhookSubscription: vi.fn()
     };
     const manager = new InstagramAccessTokenManager({ store, client });
     await expect(manager.getAccessToken("missing")).resolves.toBeUndefined();
@@ -31,7 +32,8 @@ describe("InstagramAccessTokenManager", () => {
       exchangeAuthorizationCode: vi.fn(),
       exchangeLongLived: vi.fn(),
       refresh,
-      resolveProfessionalAccountId: vi.fn()
+      resolveProfessionalAccountId: vi.fn(),
+      ensureWebhookSubscription: vi.fn()
     };
     const manager = new InstagramAccessTokenManager({
       store,
@@ -63,7 +65,8 @@ describe("InstagramAccessTokenManager", () => {
       exchangeAuthorizationCode: vi.fn(),
       exchangeLongLived: vi.fn(),
       refresh: vi.fn(),
-      resolveProfessionalAccountId: vi.fn()
+      resolveProfessionalAccountId: vi.fn(),
+      ensureWebhookSubscription: vi.fn()
     };
     const manager = new InstagramAccessTokenManager({
       store,
@@ -97,7 +100,8 @@ describe("InstagramAccessTokenManager", () => {
       exchangeAuthorizationCode: vi.fn(),
       exchangeLongLived: vi.fn(),
       refresh,
-      resolveProfessionalAccountId: vi.fn()
+      resolveProfessionalAccountId: vi.fn(),
+      ensureWebhookSubscription: vi.fn()
     };
     const manager = new InstagramAccessTokenManager({
       store,
@@ -129,7 +133,8 @@ describe("InstagramAccessTokenManager", () => {
       exchangeAuthorizationCode: vi.fn(),
       exchangeLongLived: vi.fn(),
       refresh,
-      resolveProfessionalAccountId: vi.fn()
+      resolveProfessionalAccountId: vi.fn(),
+      ensureWebhookSubscription: vi.fn()
     };
     const manager = new InstagramAccessTokenManager({
       store,
@@ -150,7 +155,8 @@ describe("InstagramAccessTokenManager", () => {
       exchangeAuthorizationCode: vi.fn(),
       exchangeLongLived: vi.fn(),
       refresh: vi.fn(),
-      resolveProfessionalAccountId: vi.fn()
+      resolveProfessionalAccountId: vi.fn(),
+      ensureWebhookSubscription: vi.fn()
     };
     const manager = new InstagramAccessTokenManager({ store, client });
 

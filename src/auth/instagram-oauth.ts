@@ -11,6 +11,12 @@ export const INSTAGRAM_REVIEW_SCOPES = [
   "instagram_business_manage_messages"
 ] as const;
 
+export const INSTAGRAM_WEBHOOK_FIELDS = [
+  "messages",
+  "standby",
+  "messaging_handover"
+] as const;
+
 interface InstagramOAuthClientOptions {
   appId: string;
   appSecret: string;
@@ -38,6 +44,10 @@ export interface InstagramOAuthClientLike {
   exchangeLongLived(accessToken: string): Promise<InstagramLongLivedTokenResult>;
   refresh(accessToken: string): Promise<InstagramLongLivedTokenResult>;
   resolveProfessionalAccountId(accessToken: string): Promise<string>;
+  ensureWebhookSubscription(
+    accessToken: string,
+    fields?: readonly string[]
+  ): Promise<void>;
 }
 
 export interface InstagramOAuthStatus {
@@ -89,7 +99,8 @@ export type InstagramOAuthFlowStage =
   | "short_token_exchange"
   | "long_token_exchange"
   | "account_resolution"
-  | "credential_persistence";
+  | "credential_persistence"
+  | "webhook_subscription";
 
 export class InstagramOAuthFlowError extends Error {
   readonly stage: InstagramOAuthFlowStage;
@@ -286,6 +297,33 @@ export class InstagramOAuthClient implements InstagramOAuthClientLike {
     return professionalAccountId;
   }
 
+  async ensureWebhookSubscription(
+    accessToken: string,
+    fields: readonly string[] = INSTAGRAM_WEBHOOK_FIELDS
+  ): Promise<void> {
+    if (fields.length === 0) {
+      throw new InstagramOAuthRequestError(
+        "Instagram webhook subscription requires at least one field",
+        { retryable: false, reason: "webhook_fields_missing" }
+      );
+    }
+
+    const url = new URL(
+      `https://graph.instagram.com/${this.#graphApiVersion}/me/subscribed_apps`
+    );
+    url.searchParams.set("subscribed_fields", fields.join(","));
+    const body = await this.#request(url.toString(), {
+      method: "POST",
+      headers: { authorization: `Bearer ${accessToken}` }
+    });
+    if (body.success !== true) {
+      throw new InstagramOAuthRequestError(
+        "Instagram webhook subscription response did not confirm success",
+        { retryable: false, reason: "webhook_subscription_failed" }
+      );
+    }
+  }
+
   async #longLivedRequest(url: URL): Promise<InstagramLongLivedTokenResult> {
     const body = await this.#request(url.toString(), { method: "GET" });
     const accessToken = stringValue(body.access_token);
@@ -458,6 +496,15 @@ export class InstagramOAuthService implements InstagramOAuthController {
       );
     } catch (error) {
       throw new InstagramOAuthFlowError("credential_persistence", error);
+    }
+
+    try {
+      await this.#client.ensureWebhookSubscription(
+        long.accessToken,
+        INSTAGRAM_WEBHOOK_FIELDS
+      );
+    } catch (error) {
+      throw new InstagramOAuthFlowError("webhook_subscription", error);
     }
 
     return {

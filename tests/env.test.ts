@@ -92,6 +92,120 @@ describe("environment", () => {
     })).toThrow(/query string/i);
   });
 
+
+  it("configures TikTok Marketing OAuth independently from Business Messaging authorization URLs", () => {
+    const env = loadEnvironment({
+      ...productionBase,
+      OPS_METRICS_TOKEN: "o".repeat(32),
+      OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: Buffer.alloc(32, 9).toString("base64"),
+      TIKTOK_BUSINESS_APP_ID: "app-123",
+      TIKTOK_BUSINESS_APP_SECRET: "s".repeat(32),
+      TIKTOK_MARKETING_AUTHORIZATION_URL:
+        "https://business-api.tiktok.com/portal/marketing-auth?app_id=app-123",
+      TIKTOK_MARKETING_REDIRECT_URI:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/"
+    });
+
+    expect(env.TIKTOK_BUSINESS_AUTHORIZATION_URL).toBeUndefined();
+    expect(env.TIKTOK_MARKETING_OAUTH_STATE_TTL_SECONDS).toBe(600);
+    expect(env.TIKTOK_MARKETING_OAUTH_REQUEST_TIMEOUT_MS).toBe(10000);
+    expect(env.TIKTOK_BUSINESS_API_VERSION).toBe("v1.3");
+  });
+
+  it("requires Marketing OAuth URLs as one protected pair", () => {
+    const base = {
+      ...productionBase,
+      OPS_METRICS_TOKEN: "o".repeat(32),
+      OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: Buffer.alloc(32, 9).toString("base64"),
+      TIKTOK_BUSINESS_APP_ID: "app-123",
+      TIKTOK_BUSINESS_APP_SECRET: "s".repeat(32)
+    };
+
+    expect(() => loadEnvironment({
+      ...base,
+      TIKTOK_MARKETING_AUTHORIZATION_URL:
+        "https://business-api.tiktok.com/portal/marketing-auth?app_id=app-123"
+    })).toThrow(/Marketing OAuth/i);
+
+    expect(() => loadEnvironment({
+      ...base,
+      TIKTOK_MARKETING_REDIRECT_URI:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/"
+    })).toThrow(/Marketing OAuth/i);
+  });
+
+  it("requires shared TikTok app credentials, encryption, and ops auth for Marketing OAuth", () => {
+    const urls = {
+      TIKTOK_MARKETING_AUTHORIZATION_URL:
+        "https://business-api.tiktok.com/portal/marketing-auth?app_id=app-123",
+      TIKTOK_MARKETING_REDIRECT_URI:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/"
+    };
+
+    expect(() => loadEnvironment({
+      ...productionBase,
+      ...urls,
+      OPS_METRICS_TOKEN: "o".repeat(32),
+      OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: Buffer.alloc(32, 9).toString("base64")
+    })).toThrow(/app/i);
+
+    expect(() => loadEnvironment({
+      ...productionBase,
+      ...urls,
+      OPS_METRICS_TOKEN: "o".repeat(32),
+      TIKTOK_BUSINESS_APP_ID: "app-123",
+      TIKTOK_BUSINESS_APP_SECRET: "s".repeat(32)
+    })).toThrow(/encryption/i);
+
+    expect(() => loadEnvironment({
+      ...productionBase,
+      ...urls,
+      OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: Buffer.alloc(32, 9).toString("base64"),
+      TIKTOK_BUSINESS_APP_ID: "app-123",
+      TIKTOK_BUSINESS_APP_SECRET: "s".repeat(32)
+    })).toThrow(/OPS_METRICS_TOKEN/i);
+  });
+
+  it("rejects unsafe TikTok Marketing OAuth URLs in production", () => {
+    const base = {
+      ...productionBase,
+      OPS_METRICS_TOKEN: "o".repeat(32),
+      OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: Buffer.alloc(32, 9).toString("base64"),
+      TIKTOK_BUSINESS_APP_ID: "app-123",
+      TIKTOK_BUSINESS_APP_SECRET: "s".repeat(32),
+      TIKTOK_MARKETING_REDIRECT_URI:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/"
+    };
+
+    expect(() => loadEnvironment({
+      ...base,
+      TIKTOK_MARKETING_AUTHORIZATION_URL:
+        "http://business-api.tiktok.com/portal/marketing-auth"
+    })).toThrow(/HTTPS/i);
+
+    expect(() => loadEnvironment({
+      ...base,
+      TIKTOK_MARKETING_AUTHORIZATION_URL:
+        "https://example.com/portal/marketing-auth"
+    })).toThrow(/official TikTok host/i);
+
+    expect(() => loadEnvironment({
+      ...base,
+      TIKTOK_MARKETING_AUTHORIZATION_URL:
+        "https://business-api.tiktok.com/portal/marketing-auth",
+      TIKTOK_MARKETING_REDIRECT_URI:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/?x=1"
+    })).toThrow(/query string/i);
+
+    expect(() => loadEnvironment({
+      ...base,
+      TIKTOK_MARKETING_AUTHORIZATION_URL:
+        "https://business-api.tiktok.com/portal/marketing-auth",
+      TIKTOK_MARKETING_REDIRECT_URI:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback"
+    })).toThrow(/slash/i);
+  });
+
   it("requires Instagram OAuth product settings as one protected set", () => {
     expect(() => loadEnvironment({
       ...productionBase,

@@ -217,6 +217,31 @@ export function buildServer(deps: ServerDeps) {
     const opsToken = deps.opsMetricsToken;
 
     server.get(
+      "/ops/tiktok/marketing/advertisers",
+      async (req, reply) => {
+        if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+          return reply
+            .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+            .code(401)
+            .send({ status: "unauthorized" });
+        }
+        reply.header("cache-control", "private, no-store");
+        try {
+          return await tiktokMarketingAdvertisers.service.listAccounts();
+        } catch (error) {
+          if (error instanceof TikTokMarketingOAuthNotAuthorizedError) {
+            return reply.code(409).send({ status: "not_authorized" });
+          }
+          deps.logger.warn(
+            { errorClass: error instanceof Error ? error.name : "unknown" },
+            "TikTok Marketing advertiser listing failed"
+          );
+          return reply.code(503).send({ status: "advertiser_list_unavailable" });
+        }
+      }
+    );
+
+    server.get(
       "/ops/tiktok/marketing/advertisers/verify",
       async (req, reply) => {
         if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {

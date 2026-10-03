@@ -448,6 +448,7 @@ describe("webhook routes", () => {
       verifyToken: "verify-token-1234",
       tiktokBusinessMessagingRead: {
         service: {
+          resolveConversationType: vi.fn(),
           checkImageSendCapability: vi.fn(),
           listConversations: vi.fn(),
           listMessages: vi.fn()

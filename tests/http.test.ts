@@ -72,7 +72,7 @@ describe("webhook routes", () => {
       tiktokMarketingAdvertiserSchema: 2,
       tiktokBusinessMessagingReadSchema: 1,
       tiktokBusinessMessagingWebhookSchema: 1,
-      tiktokBusinessMessagingImageSendSchema: 1,
+      tiktokBusinessMessagingImageSendSchema: 2,
       runtime: {
         processorEnabled: false,
         actionDispatchEnabled: false,

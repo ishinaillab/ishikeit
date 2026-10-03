@@ -335,6 +335,22 @@ All three routes require the existing operational bearer token and return `Cache
 
 Conversation responses keep only conversation ID, last-message timestamp, pagination state, and cursor. Message history intentionally drops TikTok usernames, participant identifiers/display names/profile images, referrals, and provider media IDs. It retains message ID, conversation ID, timestamp, message type, source/role metadata, automatic-message type, text content when present, and referenced-message ID. This minimized shape is sufficient for operations and future webhook-gap reconciliation without unnecessarily broadening exposure of TikTok account data.
 
+### TikTok Business Messaging webhook control plane
+
+TikTok Business Messaging webhook configuration is app-level, not per-Business-Account. Ishikeit manages only the `DIRECT_MESSAGE` subscription that delivers `im_*` events to the existing authenticated ingress route.
+
+- expected callback: `https://apps.ishinaillab.com/ishikeit/webhooks/tiktok`
+- provider read: `GET /open_api/v1.3/business/webhook/list/` with `app_id`, `secret`, and `event_type=DIRECT_MESSAGE`
+- provider reconcile write: `POST /open_api/v1.3/business/webhook/update/` with the same app identity, `DIRECT_MESSAGE`, and expected callback
+- operational status: `GET /ops/tiktok/messaging/webhook/status`
+- operational reconcile: `POST /ops/tiktok/messaging/webhook/reconcile`
+
+Both operational routes require the existing bearer credential and return `Cache-Control: private, no-store`. They are registered only when the shared TikTok app credentials plus `TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL` are configured; Business Account OAuth and `TIKTOK_BUSINESS_ID` are not prerequisites because the provider subscription applies to all businesses that authorize the developer app.
+
+Reconcile is intentionally convergent and non-destructive: it reads current provider state, performs no write when the callback already matches, otherwise creates/updates the single `DIRECT_MESSAGE` subscription, and then reads provider state again. It never auto-deletes a webhook subscription. Provider errors are reduced to generic operational 503 responses and logs contain only error class, never App Secret/provider response text.
+
+Webhook configuration drift does not fail `/health/ready`; it is surfaced explicitly through the protected status endpoint. This avoids coupling general service readiness to an external provider-control-plane read while still giving operators a deterministic activation/recovery workflow.
+
 ### TikTok OAuth lifecycle
 
 TikTok Business Account authorization is modeled separately from messaging. Static production access tokens are not used because TikTok Business Account access tokens are short-lived.

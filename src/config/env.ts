@@ -57,12 +57,16 @@ const schema = z.object({
   TIKTOK_BUSINESS_APP_SECRET: z.string().min(16).max(512).optional(),
   TIKTOK_BUSINESS_AUTHORIZATION_URL: z.string().url().optional(),
   TIKTOK_BUSINESS_REDIRECT_URI: z.string().url().optional(),
+  TIKTOK_MARKETING_AUTHORIZATION_URL: z.string().url().optional(),
+  TIKTOK_MARKETING_REDIRECT_URI: z.string().url().optional(),
   TIKTOK_BUSINESS_ID: z.string().min(1).max(256).optional(),
   TIKTOK_BUSINESS_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default("v1.3"),
   TIKTOK_WEBHOOK_MAX_AGE_SECONDS: z.coerce.number().int().min(30).max(900).default(300),
   TIKTOK_OAUTH_STATE_TTL_SECONDS: z.coerce.number().int().min(60).max(1800).default(600),
   TIKTOK_TOKEN_REFRESH_SKEW_SECONDS: z.coerce.number().int().min(60).max(3600).default(300),
   TIKTOK_OAUTH_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
+  TIKTOK_MARKETING_OAUTH_STATE_TTL_SECONDS: z.coerce.number().int().min(60).max(1800).default(600),
+  TIKTOK_MARKETING_OAUTH_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
 }).superRefine((value, ctx) => {
   if ((value.TELEGRAM_BOT_TOKEN === undefined) !== (value.TELEGRAM_WEBHOOK_SECRET === undefined)) {
@@ -73,34 +77,96 @@ const schema = z.object({
     });
   }
 
-  const tiktokOAuthProviderKeys = [
+  const tiktokAppKeys = [
     "TIKTOK_BUSINESS_APP_ID",
-    "TIKTOK_BUSINESS_APP_SECRET",
-    "TIKTOK_BUSINESS_AUTHORIZATION_URL",
-    "TIKTOK_BUSINESS_REDIRECT_URI"
+    "TIKTOK_BUSINESS_APP_SECRET"
   ] as const;
-  const configuredTikTokOAuthKeys = tiktokOAuthProviderKeys.filter(
+  const configuredTikTokAppKeys = tiktokAppKeys.filter(
     (key) => value[key] !== undefined
   );
-  const tiktokOAuthConfigured =
-    configuredTikTokOAuthKeys.length === tiktokOAuthProviderKeys.length;
+  const tiktokAppConfigured = configuredTikTokAppKeys.length === tiktokAppKeys.length;
 
-  if (
-    configuredTikTokOAuthKeys.length !== 0
-    && !tiktokOAuthConfigured
-  ) {
-    for (const key of tiktokOAuthProviderKeys) {
+  if (configuredTikTokAppKeys.length !== 0 && !tiktokAppConfigured) {
+    for (const key of tiktokAppKeys) {
       if (value[key] === undefined) {
         ctx.addIssue({
           code: "custom",
           path: [key],
-          message: "TikTok OAuth application settings must be configured together"
+          message: "TikTok app credentials must be configured together"
         });
       }
     }
   }
 
-  if (tiktokOAuthConfigured && value.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 === undefined) {
+  const tiktokBusinessOAuthUrlKeys = [
+    "TIKTOK_BUSINESS_AUTHORIZATION_URL",
+    "TIKTOK_BUSINESS_REDIRECT_URI"
+  ] as const;
+  const configuredTikTokBusinessOAuthUrlKeys = tiktokBusinessOAuthUrlKeys.filter(
+    (key) => value[key] !== undefined
+  );
+  const tiktokBusinessOAuthUrlsConfigured =
+    configuredTikTokBusinessOAuthUrlKeys.length === tiktokBusinessOAuthUrlKeys.length;
+
+  if (
+    configuredTikTokBusinessOAuthUrlKeys.length !== 0
+    && !tiktokBusinessOAuthUrlsConfigured
+  ) {
+    for (const key of tiktokBusinessOAuthUrlKeys) {
+      if (value[key] === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: [key],
+          message: "TikTok Business Messaging OAuth URLs must be configured together"
+        });
+      }
+    }
+  }
+
+  const tiktokMarketingOAuthUrlKeys = [
+    "TIKTOK_MARKETING_AUTHORIZATION_URL",
+    "TIKTOK_MARKETING_REDIRECT_URI"
+  ] as const;
+  const configuredTikTokMarketingOAuthUrlKeys = tiktokMarketingOAuthUrlKeys.filter(
+    (key) => value[key] !== undefined
+  );
+  const tiktokMarketingOAuthUrlsConfigured =
+    configuredTikTokMarketingOAuthUrlKeys.length === tiktokMarketingOAuthUrlKeys.length;
+
+  if (
+    configuredTikTokMarketingOAuthUrlKeys.length !== 0
+    && !tiktokMarketingOAuthUrlsConfigured
+  ) {
+    for (const key of tiktokMarketingOAuthUrlKeys) {
+      if (value[key] === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: [key],
+          message: "TikTok Marketing OAuth URLs must be configured together"
+        });
+      }
+    }
+  }
+
+  const tiktokBusinessOAuthConfigured =
+    tiktokAppConfigured && tiktokBusinessOAuthUrlsConfigured;
+  const tiktokMarketingOAuthConfigured =
+    tiktokAppConfigured && tiktokMarketingOAuthUrlsConfigured;
+  const anyTikTokOAuthConfigured =
+    tiktokBusinessOAuthConfigured || tiktokMarketingOAuthConfigured;
+
+  if (
+    (tiktokBusinessOAuthUrlsConfigured || tiktokMarketingOAuthUrlsConfigured)
+    && !tiktokAppConfigured
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["TIKTOK_BUSINESS_APP_ID"],
+      message: "TikTok OAuth requires the shared TikTok app credentials"
+    });
+  }
+
+  if (anyTikTokOAuthConfigured && value.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 === undefined) {
     ctx.addIssue({
       code: "custom",
       path: ["OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64"],
@@ -108,7 +174,7 @@ const schema = z.object({
     });
   }
 
-  if (tiktokOAuthConfigured && value.OPS_METRICS_TOKEN === undefined) {
+  if (anyTikTokOAuthConfigured && value.OPS_METRICS_TOKEN === undefined) {
     ctx.addIssue({
       code: "custom",
       path: ["OPS_METRICS_TOKEN"],
@@ -116,11 +182,11 @@ const schema = z.object({
     });
   }
 
-  if (value.TIKTOK_BUSINESS_ID !== undefined && !tiktokOAuthConfigured) {
+  if (value.TIKTOK_BUSINESS_ID !== undefined && !tiktokBusinessOAuthConfigured) {
     ctx.addIssue({
       code: "custom",
       path: ["TIKTOK_BUSINESS_ID"],
-      message: "TikTok Business Account activation requires the complete OAuth application configuration"
+      message: "TikTok Business Account activation requires the complete Business Messaging OAuth configuration"
     });
   }
 
@@ -159,14 +225,22 @@ const schema = z.object({
   }
 
   if (value.NODE_ENV === "production") {
-    for (const key of ["TIKTOK_BUSINESS_AUTHORIZATION_URL", "TIKTOK_BUSINESS_REDIRECT_URI"] as const) {
+    for (const key of [
+      "TIKTOK_BUSINESS_AUTHORIZATION_URL",
+      "TIKTOK_BUSINESS_REDIRECT_URI",
+      "TIKTOK_MARKETING_AUTHORIZATION_URL",
+      "TIKTOK_MARKETING_REDIRECT_URI"
+    ] as const) {
       const raw = value[key];
       if (raw !== undefined) {
         const url = new URL(raw);
         if (url.protocol !== "https:") {
           ctx.addIssue({ code: "custom", path: [key], message: "TikTok production OAuth URLs must use HTTPS" });
         }
-        if (key === "TIKTOK_BUSINESS_REDIRECT_URI" && !url.pathname.endsWith("/")) {
+        if (
+          (key === "TIKTOK_BUSINESS_REDIRECT_URI" || key === "TIKTOK_MARKETING_REDIRECT_URI")
+          && !url.pathname.endsWith("/")
+        ) {
           ctx.addIssue({ code: "custom", path: [key], message: "TikTok redirect URI path must end with a slash" });
         }
       }
@@ -250,6 +324,20 @@ export function loadEnvironment(input: NodeJS.ProcessEnv = process.env): Environ
     const url = new URL(parsed.TIKTOK_BUSINESS_REDIRECT_URI);
     if (url.search !== "" || url.hash !== "") {
       throw new Error("TIKTOK_BUSINESS_REDIRECT_URI must not include a query string or fragment");
+    }
+  }
+
+  if (parsed.TIKTOK_MARKETING_AUTHORIZATION_URL !== undefined) {
+    const url = new URL(parsed.TIKTOK_MARKETING_AUTHORIZATION_URL);
+    if (!(url.hostname === "tiktok.com" || url.hostname.endsWith(".tiktok.com"))) {
+      throw new Error("TIKTOK_MARKETING_AUTHORIZATION_URL must use an official TikTok host");
+    }
+  }
+
+  if (parsed.TIKTOK_MARKETING_REDIRECT_URI !== undefined) {
+    const url = new URL(parsed.TIKTOK_MARKETING_REDIRECT_URI);
+    if (url.search !== "" || url.hash !== "") {
+      throw new Error("TIKTOK_MARKETING_REDIRECT_URI must not include a query string or fragment");
     }
   }
 

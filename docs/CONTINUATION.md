@@ -1851,11 +1851,13 @@ Next TikTok steps:
 6. do not enable Marketing mutations because none are implemented.
 
 
-### TikTok Marketing live access verification — pending merge
+### TikTok Marketing live access verification — deployed
 
 Credential-independent implementation work continued while the TikTok developer app is under review.
 
-Added on branch `feature/tiktok-marketing-verify-access`:
+PR #56 was squash-merged to `main` as `ae499489ee5df17105474db3e0bd608f9ea9c6b6` and deployed by Hostinger while the TikTok developer app remains under review.
+
+Deployed behavior:
 
 - protected read-only `GET /ops/tiktok/marketing/oauth/verify`;
 - reuses the stored encrypted `tiktok-marketing` access token;
@@ -1866,5 +1868,14 @@ Added on branch `feature/tiktok-marketing-verify-access`:
 - returns generic `503 verification_unavailable` for provider/transport verification failure;
 - performs no automatic credential deletion/reconciliation and no Marketing mutation;
 - bumps `tiktokMarketingOAuthSchema` from 1 to 2.
+
+Production readback after PR #56:
+
+- `/health/capabilities` now reports `tiktokMarketingOAuthSchema: 2`;
+- `/health/live` remains HTTP 200 / `ok`;
+- `/health/ready` remains HTTP 200 / `ready`;
+- processor and action-dispatch runtime flags remain enabled;
+- `/ops/tiktok/marketing/oauth/status` remains HTTP 404 while Marketing environment variables are intentionally unset;
+- `/ops/tiktok/marketing/oauth/verify` likewise remains HTTP 404 until the approved TikTok app credentials and authorization URL are configured.
 
 Current official TikTok authorization documentation still specifies the `/oauth2/access_token/` flow and long-term advertiser token model, while the current portal permission inventory labels the Ad account management API family as v2.0. Do not change Ishikeit's configured API base version until TikTok's exact v2.0 authentication/advertiser endpoint base path is verified from authoritative documentation or live approved-app behavior.

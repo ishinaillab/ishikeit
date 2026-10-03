@@ -204,7 +204,7 @@ export class TikTokMarketingOAuthClient implements TikTokMarketingOAuthClientLik
         {
           retryable: retryable(response.status, code),
           stage,
-          ...(response.status >= 400 ? { status: response.status } : {}),
+          status: response.status,
           ...(code === undefined ? {} : { providerCode: code })
         }
       );

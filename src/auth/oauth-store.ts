@@ -22,6 +22,7 @@ export interface OAuthCredentialStore {
   ready(): Promise<boolean>;
   get(provider: string, accountId: string): Promise<OAuthCredential | undefined>;
   latest(provider: string): Promise<OAuthCredential | undefined>;
+  list(provider: string): Promise<readonly OAuthCredential[]>;
   put(credential: Omit<OAuthCredential, "tokenVersion">): Promise<void>;
   putAccountAlias(provider: string, aliasAccountId: string, credentialAccountId: string, aliasKind: string): Promise<void>;
   resolveCredentialAccountId(provider: string, accountId: string): Promise<string | undefined>;
@@ -134,6 +135,20 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
     );
     const row = result.rows[0];
     return row === undefined ? undefined : this.#decode(row);
+  }
+
+  async list(provider: string): Promise<readonly OAuthCredential[]> {
+    const result = await this.db.query<CredentialRow>(
+      `SELECT provider,account_id,
+              access_token_ciphertext,access_token_iv,access_token_tag,
+              refresh_token_ciphertext,refresh_token_iv,refresh_token_tag,
+              scopes,access_expires_at,refresh_expires_at,token_version
+       FROM oauth_credentials
+       WHERE provider=$1
+       ORDER BY updated_at ASC, account_id ASC`,
+      [provider]
+    );
+    return result.rows.map((row) => this.#decode(row));
   }
 
   async put(credential: Omit<OAuthCredential, "tokenVersion">): Promise<void> {

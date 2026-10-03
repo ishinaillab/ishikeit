@@ -16,6 +16,55 @@ export interface InstagramAccessTokenManagerOptions {
   now?: () => Date;
 }
 
+export interface InstagramAccessTokenRouterOptions {
+  oauthProvider?: AccountAccessTokenProvider | undefined;
+  managedAccessToken?: string | undefined;
+  client: Pick<InstagramOAuthClientLike, "resolveProfessionalAccountId">;
+}
+
+export class InstagramAccessTokenRouter implements AccountAccessTokenProvider {
+  readonly #oauthProvider: AccountAccessTokenProvider | undefined;
+  readonly #managedAccessToken: string | undefined;
+  readonly #client: Pick<InstagramOAuthClientLike, "resolveProfessionalAccountId">;
+  #managedAccountIdPromise: Promise<string> | undefined;
+
+  constructor(options: InstagramAccessTokenRouterOptions) {
+    this.#oauthProvider = options.oauthProvider;
+    this.#managedAccessToken = options.managedAccessToken;
+    this.#client = options.client;
+  }
+
+  async getAccessToken(accountId: string): Promise<string | undefined> {
+    if (this.#oauthProvider !== undefined) {
+      const oauthToken = await this.#oauthProvider.getAccessToken(accountId);
+      if (oauthToken !== undefined) return oauthToken;
+    }
+
+    if (this.#managedAccessToken === undefined) return undefined;
+
+    const managedAccountId = await this.#managedAccountId();
+    return managedAccountId === accountId ? this.#managedAccessToken : undefined;
+  }
+
+  async #managedAccountId(): Promise<string> {
+    this.#managedAccountIdPromise ??= this.#client
+      .resolveProfessionalAccountId(this.#managedAccessToken!)
+      .catch((error) => {
+        this.#managedAccountIdPromise = undefined;
+        throw new AccessTokenError(
+          "Configured Instagram managed-account token could not be validated",
+          {
+            retryable: error instanceof InstagramOAuthRequestError
+              ? error.retryable
+              : true,
+            cause: error
+          }
+        );
+      });
+    return this.#managedAccountIdPromise;
+  }
+}
+
 export class InstagramAccessTokenManager implements AccountAccessTokenProvider {
   readonly #store: OAuthCredentialStore;
   readonly #client: InstagramOAuthClientLike;

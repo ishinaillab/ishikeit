@@ -1381,3 +1381,29 @@ This section is the current continuation source of truth. If any earlier Instagr
 - Public canonical website remains `https://www.ishinaillab.com/`.
 - Direct ChatGPT Easy MCP may still have stale connector/session behavior after the domain migration; do not revert the site domain to fix that. WPVibe is the working WordPress connector.
 - Keep building future Meta Leads, Meta Marketing API, TikTok Marketing, and other providers as separate capability/operation families on the existing adapter/registry architecture.
+
+
+### Instagram managed-account token regression repair — 2026-10-03
+
+Root cause confirmed from production data and Git history:
+
+- Instagram inbound webhooks and AI processing continued to work.
+- New replies for webhook Professional account `17841438662359631` were dead-lettered locally before any Meta API request because PR #44 removed the managed-account token fallback whenever an OAuth provider was configured.
+- The only durable OAuth alias currently stored belongs to a different Professional account, so the sender had no credential for the webhook account.
+- The previous managed token in `META_INSTAGRAM_ACCESS_TOKEN` had been the working send path in the earlier build, but the currently configured value is no longer valid at Meta and must not be treated as usable merely because it exists.
+
+Repair in PR #49:
+
+- Added `InstagramAccessTokenRouter`.
+- Durable OAuth remains first priority.
+- A configured App Dashboard / managed-account token is now eligible only after Meta `/me` resolves its Professional account ID and that ID exactly matches the outbound webhook account ID.
+- A revoked durable OAuth credential still fails closed and does not fall through to the managed token.
+- Startup reconciliation now iterates all stored Instagram OAuth credentials instead of only `latest("instagram")`, preserving multi-account behavior.
+- OAuth credential storage, revocation, deletion, and refresh semantics are unchanged.
+
+Validation:
+
+- focused Instagram token-routing and Meta sender tests: 18/18 passed.
+- full local gate: lint passed, typecheck passed, 29 test files / 162 tests passed, production build passed, `git diff --check` passed.
+- Meta's current Instagram API guidance supports App Dashboard access tokens for owned/managed Professional accounts and requires the sending token to be requested by the Professional account that can send messages.
+- Production still needs a fresh valid managed-account token for the actual business Professional account before the repaired fallback can send; the old configured managed token currently fails Meta `/me` validation with Graph code 100.

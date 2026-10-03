@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { InstagramAccessTokenManager } from "../src/auth/instagram-token-manager.js";
+import { InstagramAccessTokenManager, InstagramAccessTokenRouter } from "../src/auth/instagram-token-manager.js";
 import type { InstagramOAuthClientLike } from "../src/auth/instagram-oauth.js";
 import { MemoryOAuthStore } from "./support/memory-oauth-store.js";
 
@@ -163,5 +163,59 @@ describe("InstagramAccessTokenManager", () => {
     await expect(manager.getAccessToken("ig-revoked")).rejects.toMatchObject({
       retryable: false
     });
+  });
+});
+
+
+describe("InstagramAccessTokenRouter", () => {
+  it("prefers a durable OAuth credential without inspecting the managed token", async () => {
+    const oauthProvider = { getAccessToken: vi.fn().mockResolvedValue("oauth-token") };
+    const resolveProfessionalAccountId = vi.fn();
+    const router = new InstagramAccessTokenRouter({
+      oauthProvider,
+      managedAccessToken: "managed-token",
+      client: { resolveProfessionalAccountId }
+    });
+
+    await expect(router.getAccessToken("business-account")).resolves.toBe("oauth-token");
+    expect(oauthProvider.getAccessToken).toHaveBeenCalledWith("business-account");
+    expect(resolveProfessionalAccountId).not.toHaveBeenCalled();
+  });
+
+  it("uses a managed App Dashboard token only for the professional account it represents", async () => {
+    const oauthProvider = { getAccessToken: vi.fn().mockResolvedValue(undefined) };
+    const resolveProfessionalAccountId = vi.fn().mockResolvedValue("business-account");
+    const router = new InstagramAccessTokenRouter({
+      oauthProvider,
+      managedAccessToken: "managed-token",
+      client: { resolveProfessionalAccountId }
+    });
+
+    await expect(router.getAccessToken("business-account")).resolves.toBe("managed-token");
+    await expect(router.getAccessToken("other-account")).resolves.toBeUndefined();
+    expect(resolveProfessionalAccountId).toHaveBeenCalledTimes(1);
+    expect(resolveProfessionalAccountId).toHaveBeenCalledWith("managed-token");
+  });
+
+  it("does not fall through to a managed token when OAuth routing rejects a revoked account", async () => {
+    const oauthProvider = {
+      getAccessToken: vi.fn().mockRejectedValue(
+        new (await import("../src/auth/token-provider.js")).AccessTokenError(
+          "revoked",
+          { retryable: false }
+        )
+      )
+    };
+    const resolveProfessionalAccountId = vi.fn().mockResolvedValue("business-account");
+    const router = new InstagramAccessTokenRouter({
+      oauthProvider,
+      managedAccessToken: "managed-token",
+      client: { resolveProfessionalAccountId }
+    });
+
+    await expect(router.getAccessToken("business-account")).rejects.toMatchObject({
+      retryable: false
+    });
+    expect(resolveProfessionalAccountId).not.toHaveBeenCalled();
   });
 });

@@ -1785,9 +1785,18 @@ Use this post-transfer section as the final deployment source of truth for the n
 Current implementation work is isolated on:
 
 - application branch: `feature/tiktok-marketing-oauth`
-- database branch: `ishinaillab/ishikeit-db:feature/nullable-oauth-access-expiry`
+- database migration source branch was: `ishinaillab/ishikeit-db:feature/nullable-oauth-access-expiry`
 
-This work is **not yet merged or deployed** and does not supersede the production revision recorded below.
+Application work is **not yet merged or deployed** and does not supersede the production revision recorded below.
+
+Database dependency is now satisfied in production:
+
+- database PR #7 merged as `c879024a971688bb019aebe7551020b9287f1735`;
+- linked Supabase project: `ishikeit-db` / `vhmrliqemkfxblzsoyaz`;
+- linked `supabase db lint --level error --fail-on error`: no schema errors;
+- dry-run before apply listed exactly `20261004010000_nullable_oauth_access_expiry.sql`;
+- live `supabase db push --linked --skip-vault` applied that migration successfully;
+- linked migration history now records `20261004010000` on both local and remote sides.
 
 Approved boundary:
 
@@ -1809,16 +1818,15 @@ Approved boundary:
 - no TikTok Marketing action adapter or mutation operation is implemented in this milestone.
 - campaign, ad-group, ad, creative, budget, bid, audience, lead, and delivery-changing calls remain explicitly out of scope.
 
-The database migration currently staged in `ishikeit-db` is:
+The database migration now applied in production is:
 
 - `supabase/migrations/20261004010000_nullable_oauth_access_expiry.sql`
 
-Deployment dependency:
+Remaining deployment sequence:
 
-1. validate/merge/apply the nullable-expiry database migration;
-2. only then merge/deploy the application branch;
-3. initially deploy with Marketing OAuth runtime variables unset;
-4. verify existing messaging and health remain unchanged;
-5. configure the Marketing authorization URL/redirect;
-6. complete a real advertiser authorization and a read-only provider proof;
-7. do not enable Marketing mutations because none are implemented.
+1. merge/deploy the application branch;
+2. initially deploy with Marketing OAuth runtime variables unset;
+3. verify existing messaging and health remain unchanged;
+4. configure the Marketing authorization URL/redirect;
+5. complete a real advertiser authorization and a read-only provider proof;
+6. do not enable Marketing mutations because none are implemented.

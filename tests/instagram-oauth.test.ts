@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   INSTAGRAM_REVIEW_SCOPES,
+  INSTAGRAM_WEBHOOK_FIELDS,
   InstagramOAuthClient,
   InstagramOAuthFlowError,
   InstagramOAuthRequestError,
@@ -112,6 +113,32 @@ describe("InstagramOAuthClient", () => {
     expect(profileUrl.searchParams.get("access_token")).toBe("long-access");
   });
 
+  it("enables the authorized account for the active Instagram webhook fields", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), { status: 200 })
+    );
+    const client = new InstagramOAuthClient({
+      appId: "123456789012345",
+      appSecret: "instagram-secret-123456",
+      graphApiVersion: "v26.0",
+      fetchImpl
+    });
+
+    await expect(client.ensureWebhookSubscription("long-access"))
+      .resolves.toBeUndefined();
+
+    const [request, init] = fetchImpl.mock.calls[0]!;
+    const url = new URL(requestUrl(request));
+    expect(url.origin + url.pathname)
+      .toBe("https://graph.instagram.com/v26.0/me/subscribed_apps");
+    expect(url.searchParams.get("subscribed_fields"))
+      .toBe(INSTAGRAM_WEBHOOK_FIELDS.join(","));
+    expect(url.searchParams.has("access_token")).toBe(false);
+    expect(init?.method).toBe("POST");
+    expect(new Headers(init?.headers).get("authorization"))
+      .toBe("Bearer long-access");
+  });
+
   it("uses the current refresh endpoint and classifies provider failures", async () => {
     const refreshFetch = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       access_token: "refreshed-access",
@@ -191,6 +218,7 @@ describe("InstagramOAuthService", () => {
   it("uses one-time CSRF state and persists only the long-lived token", async () => {
     const store = new MemoryOAuthStore();
     const now = new Date();
+    const ensureWebhookSubscription = vi.fn().mockResolvedValue(undefined);
     const client: InstagramOAuthClientLike = {
       exchangeAuthorizationCode: vi.fn().mockResolvedValue({
         accessToken: "short-secret",
@@ -202,7 +230,8 @@ describe("InstagramOAuthService", () => {
         accessExpiresInSeconds: 5_184_000
       }),
       refresh: vi.fn(),
-      resolveProfessionalAccountId: vi.fn().mockResolvedValue("17841499999999999")
+      resolveProfessionalAccountId: vi.fn().mockResolvedValue("17841499999999999"),
+      ensureWebhookSubscription
     };
     const service = new InstagramOAuthService({
       appId: "123456789012345",
@@ -241,6 +270,10 @@ describe("InstagramOAuthService", () => {
     await expect(
       store.resolveCredentialAccountId("instagram", "17841499999999999")
     ).resolves.toBe("17841430000000000");
+    expect(ensureWebhookSubscription).toHaveBeenCalledWith(
+      "long-secret",
+      INSTAGRAM_WEBHOOK_FIELDS
+    );
 
     await expect(service.completeAuthorization(state!, "authorization-code"))
       .rejects.toThrow(/already consumed|invalid|expired/i);
@@ -259,7 +292,8 @@ describe("InstagramOAuthService", () => {
       ),
       exchangeLongLived: vi.fn(),
       refresh: vi.fn(),
-      resolveProfessionalAccountId: vi.fn()
+      resolveProfessionalAccountId: vi.fn(),
+      ensureWebhookSubscription: vi.fn()
     };
     const service = new InstagramOAuthService({
       appId: "123456789012345",

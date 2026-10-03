@@ -1226,7 +1226,7 @@ After the stage-diagnostic revision is merged and deployed, run one fresh contro
 
 ## Instagram OAuth activation and routing-identity reconciliation - 2026-10-03
 
-A controlled Instagram Professional account authorization now completes successfully. The durable credential is AES-256-GCM encrypted at rest, includes `instagram_business_basic` and `instagram_business_manage_messages`, has the expected approximately 60-day expiry, and has no revocation tombstone. The successful callback produced no warning/error logs. Meta's Instagram `messages` webhook subscription remains enabled.
+A controlled Instagram Professional account authorization now completes successfully. The durable credential is AES-256-GCM encrypted at rest, includes `instagram_business_basic` and `instagram_business_manage_messages`, has the expected approximately 60-day expiry, and has no revocation tombstone. The successful callback produced no warning/error logs. Meta's app-level Instagram webhook subscription is enabled for `messages`, `standby`, and `messaging_handover`; Meta's current Instagram Login webhook flow additionally requires each authorized Professional account to enable those fields through `POST /me/subscribed_apps`, which is now part of OAuth onboarding and startup reconciliation.
 
 The successful flow exposed an important identity distinction that must be preserved:
 
@@ -1235,6 +1235,14 @@ The successful flow exposed an important identity distinction that must be prese
 - These IDs are not interchangeable and must not be used as a single credential key.
 
 The application now keeps the encrypted credential under its OAuth subject ID and resolves provider-routing IDs through a durable alias. The token manager is alias-aware, refresh locks remain keyed to the credential identity, revocation through either identity resolves to the same credential, and data deletion removes retained Instagram rows for both the OAuth subject and all known routing aliases. Startup reconciliation calls Instagram `/me?fields=user_id` for already-authorized credentials so the successful production authorization does not need to be repeated.
+
+Canary findings:
+
+- the alias-aware OAuth send path reached Meta successfully; a send to the known first-party `@ishinaillab` conversation was rejected only by the 24-hour messaging-window rule (`HTTP 403`, Graph subcode `2534022`), proving the OAuth token and Professional-account routing identity were accepted.
+- the retired static `META_INSTAGRAM_ACCESS_TOKEN` path is no longer usable. Both direct probes and a real production outbox action returned Graph code `100` (`Unsupported request - method type: post`). Do not use that static credential as evidence for current Instagram functionality.
+- Meta's dashboard webhook-test control only validates app-level delivery setup; it does not replace the required account-level `subscribed_apps` enablement for a newly OAuth-authorized Instagram Professional account.
+- OAuth completion now enables exactly the active app-level Instagram fields: `messages`, `standby`, and `messaging_handover`. Startup reconciliation repeats the call idempotently with a current/refreshed OAuth token, so already-authorized accounts are repaired automatically.
+- the exact account-level subscription call was exercised against the already-authorized production credential before merge and Meta returned success for all three fields; no token value was logged or exposed.
 
 Database migration:
 
@@ -1251,7 +1259,16 @@ Application validation for the alias change:
 - production build: passed
 - `git diff --check`: passed
 
-Next Instagram execution order: deploy the alias-aware application, verify startup reconciliation populated the Professional-account alias for the existing credential, then run a controlled outbound/self-message canary through the OAuth token path and trace any resulting webhook/outbox activity. Do not reauthorize merely to create the alias.
+Current account-level webhook-subscription validation:
+
+- lint: passed
+- typecheck: passed
+- test files: 29 passed
+- tests: 159 passed
+- production build: passed
+- focused live Meta subscription call: passed for `messages`, `standby`, and `messaging_handover`
+
+Next Instagram execution order: merge/deploy the account-level webhook-subscription repair, verify startup reconciliation logs a successful routing/subscription reconciliation, then run the next controlled inbound-message canary through the OAuth account when a valid Meta messaging context is available. Do not reauthorize merely to recreate the alias or subscription.
 
 ## Current next work
 

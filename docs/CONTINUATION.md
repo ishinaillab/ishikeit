@@ -1822,4 +1822,3 @@ Deployment dependency:
 5. configure the Marketing authorization URL/redirect;
 6. complete a real advertiser authorization and a read-only provider proof;
 7. do not enable Marketing mutations because none are implemented.
-

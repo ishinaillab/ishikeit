@@ -3,11 +3,24 @@ import { TikTokMarketingOAuthNotAuthorizedError } from "../auth/tiktok-marketing
 
 export type TikTokMarketingAdvertiserStage = "advertiser_info";
 
+export interface TikTokMarketingAdvertiserAccount {
+  advertiserId: string;
+  name?: string;
+  status?: string;
+  currency?: string;
+  timezone?: string;
+  country?: string;
+}
+
 export interface TikTokMarketingAdvertiserClientLike {
   getAdvertiserIds(
     accessToken: string,
     advertiserIds: readonly string[]
   ): Promise<readonly string[]>;
+  getAdvertiserAccounts(
+    accessToken: string,
+    advertiserIds: readonly string[]
+  ): Promise<readonly TikTokMarketingAdvertiserAccount[]>;
 }
 
 interface TikTokMarketingAdvertiserClientOptions {
@@ -79,6 +92,93 @@ implements TikTokMarketingAdvertiserClientLike {
     this.#apiVersion = options.apiVersion ?? "v1.3";
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
     this.#fetch = options.fetchImpl ?? fetch;
+  }
+
+  async getAdvertiserAccounts(
+    accessToken: string,
+    advertiserIds: readonly string[]
+  ): Promise<readonly TikTokMarketingAdvertiserAccount[]> {
+    const requestedIds = normalizeAdvertiserIds(advertiserIds);
+    if (requestedIds.length === 0) {
+      throw new TikTokMarketingAdvertiserRequestError(
+        "TikTok Marketing advertiser info requires at least one advertiser ID",
+        { retryable: false, stage: "advertiser_info" }
+      );
+    }
+
+    const url = new URL(
+      `https://business-api.tiktok.com/open_api/${this.#apiVersion}/advertiser/info/`
+    );
+    for (const advertiserId of requestedIds) {
+      url.searchParams.append("advertiser_ids", advertiserId);
+    }
+    for (const field of [
+      "advertiser_id",
+      "country",
+      "currency",
+      "name",
+      "status",
+      "timezone"
+    ]) {
+      url.searchParams.append("fields", field);
+    }
+
+    let response: Response;
+    try {
+      response = await this.#fetch(url, {
+        method: "GET",
+        headers: {
+          accept: "application/json",
+          "Access-Token": accessToken
+        },
+        signal: AbortSignal.timeout(this.#requestTimeoutMs)
+      });
+    } catch (error) {
+      throw new TikTokMarketingAdvertiserRequestError(
+        "TikTok Marketing advertiser info request failed before a response was received",
+        { retryable: true, stage: "advertiser_info", cause: error }
+      );
+    }
+
+    const raw: unknown = await response.json().catch(() => ({}));
+    const body = record(raw) ?? {};
+    const code = providerCode(body.code);
+    if (!response.ok || (code !== undefined && code !== "0")) {
+      throw new TikTokMarketingAdvertiserRequestError(
+        "TikTok Marketing advertiser info request was rejected",
+        {
+          retryable: isRetryable(response.status, code),
+          stage: "advertiser_info",
+          status: response.status,
+          ...(code === undefined ? {} : { providerCode: code })
+        }
+      );
+    }
+
+    const data = record(body.data);
+    const list = Array.isArray(data?.list) ? data.list : [];
+    const accounts = new Map<string, TikTokMarketingAdvertiserAccount>();
+    for (const rawAdvertiser of list) {
+      const advertiser = record(rawAdvertiser);
+      const advertiserId = nonEmptyString(advertiser?.advertiser_id);
+      if (advertiserId === undefined || accounts.has(advertiserId)) continue;
+
+      const account: TikTokMarketingAdvertiserAccount = { advertiserId };
+      const name = nonEmptyString(advertiser?.name);
+      const status = nonEmptyString(advertiser?.status);
+      const currency = nonEmptyString(advertiser?.currency);
+      const timezone = nonEmptyString(advertiser?.timezone);
+      const country = nonEmptyString(advertiser?.country);
+      if (name !== undefined) account.name = name;
+      if (status !== undefined) account.status = status;
+      if (currency !== undefined) account.currency = currency;
+      if (timezone !== undefined) account.timezone = timezone;
+      if (country !== undefined) account.country = country;
+      accounts.set(advertiserId, account);
+    }
+
+    return [...accounts.values()]
+      .sort((a, b) => a.advertiserId.localeCompare(b.advertiserId));
   }
 
   async getAdvertiserIds(
@@ -153,6 +253,9 @@ export interface TikTokMarketingAccountVerification {
 
 export interface TikTokMarketingAdvertiserController {
   verifyAccountManagement(): Promise<TikTokMarketingAccountVerification>;
+  listAccounts(): Promise<{
+    accounts: readonly TikTokMarketingAdvertiserAccount[];
+  }>;
 }
 
 export class TikTokMarketingAdvertiserService
@@ -166,6 +269,42 @@ implements TikTokMarketingAdvertiserController {
   }) {
     this.#store = options.store;
     this.#client = options.client;
+  }
+
+  async listAccounts(): Promise<{
+    accounts: readonly TikTokMarketingAdvertiserAccount[];
+  }> {
+    const credentials = await this.#store.list("tiktok-marketing");
+    if (credentials.length === 0) {
+      throw new TikTokMarketingOAuthNotAuthorizedError();
+    }
+
+    const idsByToken = new Map<string, string[]>();
+    for (const credential of credentials) {
+      const advertiserIds = idsByToken.get(credential.accessToken) ?? [];
+      advertiserIds.push(credential.accountId);
+      idsByToken.set(credential.accessToken, advertiserIds);
+    }
+
+    const accounts = new Map<string, TikTokMarketingAdvertiserAccount>();
+    for (const [accessToken, advertiserIds] of idsByToken) {
+      const requestedIds = normalizeAdvertiserIds(advertiserIds);
+      const requestedSet = new Set(requestedIds);
+      const returned = await this.#client.getAdvertiserAccounts(
+        accessToken,
+        requestedIds
+      );
+      for (const account of returned) {
+        if (requestedSet.has(account.advertiserId) && !accounts.has(account.advertiserId)) {
+          accounts.set(account.advertiserId, account);
+        }
+      }
+    }
+
+    return {
+      accounts: [...accounts.values()]
+        .sort((a, b) => a.advertiserId.localeCompare(b.advertiserId))
+    };
   }
 
   async verifyAccountManagement(): Promise<TikTokMarketingAccountVerification> {

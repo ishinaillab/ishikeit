@@ -1780,14 +1780,16 @@ Current working messaging status remains unchanged after deployment:
 Use this post-transfer section as the final deployment source of truth for the next chat.
 
 
-### TikTok Marketing OAuth foundation — implementation branch, not yet deployed
+### TikTok Marketing OAuth foundation — deployed; provider authorization not yet configured
 
-Current implementation work is isolated on:
+Implementation/deployment state:
 
-- application branch: `feature/tiktok-marketing-oauth`
-- database migration source branch was: `ishinaillab/ishikeit-db:feature/nullable-oauth-access-expiry`
-
-Application PR #53 is merged to `main` as `07e11245b9a51544c52e0015b9d867eaf106b7b6`. Hostinger does not expose a deployment SHA through GitHub, so a read-only runtime capability marker `tiktokMarketingOAuthSchema: 1` is being added to `/health/capabilities` as the deployment readback signal.
+- database migration source branch was: `ishinaillab/ishikeit-db:feature/nullable-oauth-access-expiry`;
+- database PR #7 merged as `c879024a971688bb019aebe7551020b9287f1735`;
+- application PR #53 merged as `07e11245b9a51544c52e0015b9d867eaf106b7b6`;
+- deployment-marker PR #54 merged as `062cf52d0bca62916c36c9324ccf493e315c5bd1`;
+- production `GET /health/capabilities` now returns `tiktokMarketingOAuthSchema: 1`, proving the Hostinger runtime includes the TikTok Marketing OAuth foundation;
+- at the same production readback, `/health/ready` remained `ready`, and both processor/action-dispatch runtime flags remained enabled.
 
 Database dependency is now satisfied in production:
 
@@ -1822,11 +1824,28 @@ The database migration now applied in production is:
 
 - `supabase/migrations/20261004010000_nullable_oauth_access_expiry.sql`
 
-Remaining deployment sequence:
+Production readback after deployment:
 
-1. merge/deploy the application branch;
-2. initially deploy with Marketing OAuth runtime variables unset;
-3. verify existing messaging and health remain unchanged;
-4. configure the Marketing authorization URL/redirect;
-5. complete a real advertiser authorization and a read-only provider proof;
+- `GET /health/live` -> HTTP 200;
+- `GET /health/ready` -> HTTP 200 / `ready`;
+- Meta webhook negative-path probe -> HTTP 401, confirming the existing Meta ingress route remains registered/protected;
+- Telegram webhook negative-path probe -> HTTP 401, confirming the existing Telegram ingress route remains registered/protected;
+- `GET /ops/instagram/oauth/status` without bearer auth -> HTTP 401 with Bearer challenge, preserving the existing protected Instagram OAuth surface;
+- `GET /ops/tiktok/oauth/status` -> HTTP 404 because TikTok Business Messaging OAuth remains unconfigured;
+- `GET /ops/tiktok/marketing/oauth/status` -> HTTP 404 because TikTok Marketing OAuth runtime variables remain unset;
+- TikTok webhook negative-path probe -> HTTP 404 for the same unconfigured TikTok runtime state.
+
+Secure local handoff status:
+
+- `C:\\Users\\MBDS\\Downloads\\ishikeit-tiktok-app.env` now contains the new Marketing OAuth variable placeholders/callback settings;
+- `TIKTOK_BUSINESS_APP_ID`, `TIKTOK_BUSINESS_APP_SECRET`, `TIKTOK_BUSINESS_AUTHORIZATION_URL`, and `TIKTOK_MARKETING_AUTHORIZATION_URL` remain unpopulated placeholders;
+- no secret values are stored in repository documentation.
+
+Next TikTok steps:
+
+1. populate the shared TikTok app ID/secret and the provider-generated authorization URL(s) in the secure local handoff / production environment;
+2. configure `TIKTOK_MARKETING_AUTHORIZATION_URL` and the registered advertiser callback;
+3. verify the protected Marketing start/status routes become available;
+4. complete a real advertiser authorization;
+5. verify encrypted `tiktok-marketing` advertiser credentials and perform a read-only provider-backed proof;
 6. do not enable Marketing mutations because none are implemented.

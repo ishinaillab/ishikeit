@@ -100,7 +100,8 @@ describe("TikTokBusinessWebhookClient", () => {
     expect(init?.method).toBe("POST");
     expect(new Headers(init?.headers).get("content-type"))
       .toContain("application/json");
-    expect(JSON.parse(String(init?.body))).toEqual({
+    expect(typeof init?.body).toBe("string");
+    expect(JSON.parse(init?.body as string)).toEqual({
       app_id: "app-123",
       secret: "super-secret-value",
       event_type: "DIRECT_MESSAGE",

@@ -249,6 +249,160 @@ describe("webhook routes", () => {
     await server.close();
   });
 
+
+  it("gates TikTok Marketing OAuth routes and requires operational bearer auth", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const absent = makeServer({ ingest });
+    const absentStart = await absent.inject({
+      method: "POST",
+      url: "/ops/tiktok/marketing/oauth/start"
+    });
+    const absentCallback = await absent.inject({
+      method: "GET",
+      url: "/ishikeit/oauth/tiktok/advertiser/callback/?state=opaque_state_1234567890&auth_code=auth-code-123"
+    });
+    expect(absentStart.statusCode).toBe(404);
+    expect(absentCallback.statusCode).toBe(404);
+    await absent.close();
+
+    expect(() => buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      tiktokMarketingOAuth: {
+        service: {
+          beginAuthorization: vi.fn(),
+          status: vi.fn(),
+          completeAuthorization: vi.fn()
+        }
+      }
+    })).toThrow(/operational bearer token/i);
+  });
+
+  it("protects TikTok Marketing OAuth operations and completes advertiser auth with auth_code", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const beginAuthorization = vi.fn().mockResolvedValue({
+      authorizationUrl:
+        "https://business-api.tiktok.com/portal/marketing-auth?state=opaque",
+      expiresAt: "2026-10-04T02:20:00.000Z"
+    });
+    const status = vi.fn().mockResolvedValue({
+      authorized: true,
+      advertiserIds: ["100", "200"]
+    });
+    const completeAuthorization = vi.fn().mockResolvedValue({
+      advertiserIds: ["100", "200"]
+    });
+    const token = "o".repeat(32);
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokMarketingOAuth: {
+        service: { beginAuthorization, status, completeAuthorization }
+      }
+    });
+
+    const unauthorized = await server.inject({
+      method: "POST",
+      url: "/ops/tiktok/marketing/oauth/start"
+    });
+    expect(unauthorized.statusCode).toBe(401);
+    expect(unauthorized.headers["www-authenticate"]).toContain("Bearer");
+    expect(beginAuthorization).not.toHaveBeenCalled();
+
+    const started = await server.inject({
+      method: "POST",
+      url: "/ops/tiktok/marketing/oauth/start",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(started.statusCode).toBe(200);
+    expect(started.headers["cache-control"]).toBe("private, no-store");
+    expect(started.json()).toMatchObject({
+      status: "authorization_required",
+      expiresAt: "2026-10-04T02:20:00.000Z"
+    });
+
+    const statusResult = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/oauth/status",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(statusResult.statusCode).toBe(200);
+    expect(statusResult.headers["cache-control"]).toBe("private, no-store");
+    expect(statusResult.json()).toEqual({
+      authorized: true,
+      advertiserIds: ["100", "200"]
+    });
+    expect(statusResult.body).not.toContain("token");
+    expect(statusResult.body).not.toContain("secret");
+
+    const callback = await server.inject({
+      method: "GET",
+      url: "/ishikeit/oauth/tiktok/advertiser/callback/?state=opaque_state_1234567890&auth_code=authoritative-auth-code&code=wrong-code"
+    });
+    expect(callback.statusCode).toBe(200);
+    expect(callback.headers["cache-control"]).toBe("no-store");
+    expect(callback.body).toContain("2 advertiser");
+    expect(callback.body).not.toContain("access");
+    expect(callback.body).not.toContain("secret");
+    expect(completeAuthorization).toHaveBeenCalledWith(
+      "opaque_state_1234567890",
+      "authoritative-auth-code"
+    );
+
+    await server.close();
+  });
+
+  it("rejects incomplete or failed TikTok Marketing callbacks without exposing provider data", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const completeAuthorization = vi.fn().mockRejectedValue(
+      new Error("provider failure access-token-secret auth-code-secret")
+    );
+    const token = "o".repeat(32);
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokMarketingOAuth: {
+        service: {
+          beginAuthorization: vi.fn(),
+          status: vi.fn(),
+          completeAuthorization
+        }
+      }
+    });
+
+    const codeOnly = await server.inject({
+      method: "GET",
+      url: "/ishikeit/oauth/tiktok/advertiser/callback/?state=opaque_state_1234567890&code=legacy-code"
+    });
+    expect(codeOnly.statusCode).toBe(400);
+    expect(completeAuthorization).not.toHaveBeenCalled();
+
+    const failed = await server.inject({
+      method: "GET",
+      url: "/ishikeit/oauth/tiktok/advertiser/callback/?state=opaque_state_1234567890&auth_code=auth-code-123"
+    });
+    expect(failed.statusCode).toBe(400);
+    expect(failed.headers["cache-control"]).toBe("no-store");
+    expect(failed.body).toBe(
+      "TikTok advertiser authorization could not be completed. Start a new authorization request."
+    );
+    expect(failed.body).not.toContain("access-token-secret");
+    expect(failed.body).not.toContain("auth-code-secret");
+
+    await server.close();
+  });
+
   it("exposes the Instagram review login, callback, and protected status without tokens", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
     const beginAuthorization = vi.fn().mockResolvedValue({

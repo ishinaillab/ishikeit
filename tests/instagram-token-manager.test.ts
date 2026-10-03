@@ -24,7 +24,7 @@ describe("InstagramAccessTokenManager", () => {
       accountId: "ig-1",
       accessToken: "token-without-expiry",
       scopes: ["instagram_business_basic"]
-    } as never);
+    });
     const refresh = vi.fn();
     const client: InstagramOAuthClientLike = {
       exchangeAuthorizationCode: vi.fn(),

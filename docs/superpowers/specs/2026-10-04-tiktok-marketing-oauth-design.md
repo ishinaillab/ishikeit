@@ -63,6 +63,8 @@ Authoritative references used for this design:
 - TikTok API for Business — Deprecated Endpoints, doc ID `1740579480076290`
 - TikTok official Business API SDK — Authentication API (`/open_api/v1.3/oauth2/access_token/` and advertiser-list operation)
 
+The generated SDK still contains older refresh-token wording around the shared authentication endpoint. For Marketing OAuth lifetime/refresh behavior, the current TikTok provider documentation and current deprecation notice are authoritative over stale generated SDK prose.
+
 Implementation must re-check the live TikTok reference immediately before coding request/response parsers. Where current provider documentation does not guarantee a response field, code must not infer it.
 
 ## 4. Architectural decision
@@ -204,26 +206,27 @@ If later production evidence shows that a single Marketing grant routinely spans
 
 ## 9. Configuration contract
 
-Add separate environment settings; do not overload the current Business Messaging variables.
+The advertiser authorization belongs to the same TikTok API for Business developer app already represented by `TIKTOK_BUSINESS_APP_ID` and `TIKTOK_BUSINESS_APP_SECRET`. Reuse those app credentials rather than introducing duplicate Marketing app-ID/app-secret variables.
 
-Proposed names:
+Add only Marketing-specific configuration:
 
-`TIKTOK_MARKETING_APP_ID`  
-`TIKTOK_MARKETING_APP_SECRET`  
 `TIKTOK_MARKETING_AUTHORIZATION_URL`  
 `TIKTOK_MARKETING_REDIRECT_URI`  
-`TIKTOK_MARKETING_API_VERSION` (default `v1.3`)  
 `TIKTOK_MARKETING_OAUTH_STATE_TTL_SECONDS` (default 600)  
 `TIKTOK_MARKETING_OAUTH_REQUEST_TIMEOUT_MS` (default 10000)
+
+Reuse `TIKTOK_BUSINESS_API_VERSION` (currently default `v1.3`) unless TikTok documents a different Marketing API version contract at implementation time.
 
 The redirect URI is fixed for production to:
 
 `https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/`
 
-Configuration is all-or-nothing. Partial Marketing OAuth configuration is a startup validation error.
+Marketing OAuth is considered configured only when the existing TikTok developer app ID/secret plus both Marketing-specific URL settings are present. A partial Marketing OAuth configuration is a startup validation error. The existing Business Messaging account-holder authorization URL is **not** required merely to enable Marketing OAuth.
 
 Production validation must require:
 
+- existing `TIKTOK_BUSINESS_APP_ID`;
+- existing `TIKTOK_BUSINESS_APP_SECRET`;
 - HTTPS advertiser authorization URL;
 - official TikTok host for the generated authorization URL;
 - HTTPS redirect URI;
@@ -232,7 +235,7 @@ Production validation must require:
 - `OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64`;
 - `OPS_METRICS_TOKEN`.
 
-Business Messaging configuration remains independent.
+Business Messaging authorization and Marketing authorization remain independently enableable even though they share the same developer-app identity.
 
 ## 10. Provider client behavior
 
@@ -291,14 +294,14 @@ Do not change:
 - AES-256-GCM credential encryption through the existing cipher;
 - no tokens/secrets in Git or committed docs;
 - no tokens in logs;
-- app secret included in logger redaction;
+- the shared TikTok developer app secret remains included in logger redaction;
 - operational start/status protected by bearer auth;
 - callback and ops responses use `no-store`;
 - strict request timeout;
 - bounded provider error messages;
 - no Marketing mutation endpoints in this milestone.
 
-The Marketing app secret must be added to the logger's secret-redaction sources without removing any current redaction.
+No second Marketing app secret is introduced. Existing redaction of `TIKTOK_BUSINESS_APP_SECRET` must remain effective for both OAuth families.
 
 ## 13. TDD and regression coverage
 
@@ -366,7 +369,7 @@ No new campaign/action adapter is part of this change.
 1. Merge and apply the database migration first.
 2. Merge application support with Marketing OAuth environment unset.
 3. Verify existing production health and the four currently working messaging platforms are unaffected.
-4. Add Marketing OAuth app settings to Hostinger secret storage.
+4. Add only the Marketing advertiser authorization URL and redirect URI/settings to Hostinger while reusing the existing TikTok developer app ID/secret.
 5. Verify protected start/status routes and generated authorization URL without exposing credentials.
 6. Complete one real advertiser authorization interactively.
 7. Verify advertiser-scoped encrypted credential rows and protected status.

@@ -1743,3 +1743,38 @@ Start the next chat from these priorities:
 6. do not reintroduce the retired `/ishinaillab/ishi` project.
 
 This checkpoint is authoritative until a later explicit transfer checkpoint supersedes it.
+
+
+### Post-transfer deployment readback — final correction
+
+This section supersedes the deployment distinction inside the immediately preceding transfer checkpoint.
+
+After PR #51 merged, Hostinger completed two newer builds:
+
+- `01a10267-7d32-70e3-9ae4-61ae7424e7d1`
+  - completed
+  - commit `21296010cb3b89570556a936fe2a63636e2422e6` (PR #50)
+- `01a1028e-5c9d-7210-852f-01a231d34743`
+  - completed
+  - commit `10d00803e00307416b5cc8549906d825c19fc174` (PR #51)
+
+Therefore the current deployed production revision at transfer is:
+
+- `10d00803e00307416b5cc8549906d825c19fc174`
+
+This means the PR #50 startup-hardening logic is now live in production.
+
+Post-deploy health verification:
+
+- `GET https://apps.ishinaillab.com/health/live` -> `{"status":"ok"}`
+- `GET https://apps.ishinaillab.com/health/ready` -> `{"status":"ready"}`
+
+Current working messaging status remains unchanged after deployment:
+
+- Messenger working
+- Instagram working
+- WhatsApp working
+- Telegram working
+- both **povnailstudio.com.ph** and **povnailstudio.ph** receive replies from **ishinaillab**
+
+Use this post-transfer section as the final deployment source of truth for the next chat.

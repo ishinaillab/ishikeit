@@ -1964,4 +1964,13 @@ TDD evidence so far:
 - HTTP RED: missing summary route plus expected advertiser schema bump;
 - HTTP + advertiser GREEN: 32/32 focused tests.
 
-Next gate: full repository check, diff/isolation/secret review, then PR/Node 24 CI.
+Verification completed before PR:
+
+- full repository gate passed: lint, typecheck, 32 test files / 207 tests, and build;
+- `git diff --check` passed;
+- messaging-isolation scan found no advertiser-summary crossover into adapters/channels/media/dispatch;
+- Marketing mutation scan found no advertiser/campaign/ad-group/ad write endpoint in `src/marketing`;
+- changed-source scan found no flow of sensitive advertiser fields such as email, phone, address, license data, or balance;
+- changed-line scan found no secret-like literal additions.
+
+Next gate: PR and Node 24 CI. Do not merge/deploy without explicit production authorization because `main` auto-deploys on Hostinger.

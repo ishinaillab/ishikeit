@@ -376,9 +376,10 @@ describe("TikTokMarketingOAuthService", () => {
   it("rejects live verification when no Marketing credential is stored", async () => {
     const { MemoryOAuthStore } = await import("./support/memory-oauth-store.js");
     const store = new MemoryOAuthStore();
+    const listAuthorizedAdvertisers = vi.fn();
     const client: TikTokMarketingOAuthClientLike = {
       exchangeAuthorizationCode: vi.fn(),
-      listAuthorizedAdvertisers: vi.fn()
+      listAuthorizedAdvertisers
     };
     const service = new TikTokMarketingOAuthService({
       authorizationUrl: "https://business-api.tiktok.com/portal/auth?app_id=app-123",

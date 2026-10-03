@@ -1787,7 +1787,7 @@ Current implementation work is isolated on:
 - application branch: `feature/tiktok-marketing-oauth`
 - database migration source branch was: `ishinaillab/ishikeit-db:feature/nullable-oauth-access-expiry`
 
-Application work is **not yet merged or deployed** and does not supersede the production revision recorded below.
+Application PR #53 is merged to `main` as `07e11245b9a51544c52e0015b9d867eaf106b7b6`. Hostinger does not expose a deployment SHA through GitHub, so a read-only runtime capability marker `tiktokMarketingOAuthSchema: 1` is being added to `/health/capabilities` as the deployment readback signal.
 
 Database dependency is now satisfied in production:
 

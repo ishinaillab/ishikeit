@@ -78,7 +78,7 @@ describe("MetaSender", () => {
     });
   });
 
-  it("prefers a durable Instagram OAuth credential and preserves the static-token fallback", async () => {
+  it("uses durable Instagram OAuth exclusively when a provider is configured", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
       JSON.stringify({ id: "ig-message-1" }), { status: 200 }
     ));
@@ -87,7 +87,7 @@ describe("MetaSender", () => {
       .mockResolvedValueOnce(undefined);
     const sender = new MetaSender({
       graphApiVersion: "v26.0",
-      instagramAccessToken: "static-token",
+      instagramAccessToken: "retired-static-token",
       instagramAccessTokenProvider: { getAccessToken },
       instagramGraphHost: "graph.instagram.com",
       fetchImpl
@@ -102,14 +102,16 @@ describe("MetaSender", () => {
     expect((fetchImpl.mock.calls[0]?.[1]?.headers as Record<string, string>).authorization)
       .toBe("Bearer oauth-token");
 
-    await sender.send({
+    await expect(sender.send({
       ...base,
       channel: "instagram",
-      accountId: "production-ig"
+      accountId: "unmapped-ig"
+    })).rejects.toMatchObject({
+      retryable: false,
+      message: "No Meta access token is configured for instagram"
     });
-    expect(getAccessToken).toHaveBeenNthCalledWith(2, "production-ig");
-    expect((fetchImpl.mock.calls[1]?.[1]?.headers as Record<string, string>).authorization)
-      .toBe("Bearer static-token");
+    expect(getAccessToken).toHaveBeenNthCalledWith(2, "unmapped-ig");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("sends WhatsApp media using Cloud API media objects", async () => {

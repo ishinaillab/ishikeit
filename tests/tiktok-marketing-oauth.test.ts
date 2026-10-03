@@ -1,7 +1,10 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   TikTokMarketingOAuthClient,
-  TikTokMarketingOAuthRequestError
+  TikTokMarketingOAuthRequestError,
+  TikTokMarketingOAuthService,
+  type TikTokMarketingOAuthClientLike
 } from "../src/auth/tiktok-marketing-oauth.js";
 
 function requestUrl(value: string | URL | Request): string {
@@ -187,5 +190,203 @@ describe("TikTokMarketingOAuthClient", () => {
         providerCode: "40001",
         stage: "token_exchange"
       });
+  });
+});
+
+
+describe("TikTokMarketingOAuthService", () => {
+  it("creates one-time state under the tiktok-marketing namespace and preserves only its hash", async () => {
+    const { MemoryOAuthStore } = await import("./support/memory-oauth-store.js");
+    const store = new MemoryOAuthStore();
+    const now = new Date("2026-10-04T00:00:00.000Z");
+    const client: TikTokMarketingOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn(),
+      listAuthorizedAdvertisers: vi.fn()
+    };
+    const service = new TikTokMarketingOAuthService({
+      authorizationUrl:
+        "https://business-api.tiktok.com/portal/auth?app_id=app-123&state=replace-me",
+      redirectUri:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/",
+      store,
+      client,
+      stateTtlSeconds: 600,
+      now: () => now
+    });
+
+    const started = await service.beginAuthorization();
+    const url = new URL(started.authorizationUrl);
+    const state = url.searchParams.get("state");
+    expect(state).toMatch(/^[A-Za-z0-9_-]+$/u);
+    expect(state).not.toBe("replace-me");
+    expect(started.expiresAt).toBe("2026-10-04T00:10:00.000Z");
+
+    const stateHash = createHash("sha256").update(state!).digest("hex");
+    expect([...store.states.keys()]).toEqual([stateHash]);
+    expect(store.states.get(stateHash)).toMatchObject({
+      provider: "tiktok-marketing",
+      redirectUri:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/",
+      expiresAt: new Date("2026-10-04T00:10:00.000Z"),
+      consumed: false
+    });
+    expect([...store.states.keys()]).not.toContain(state);
+  });
+
+  it("rejects invalid or replayed state before another provider exchange", async () => {
+    const { MemoryOAuthStore } = await import("./support/memory-oauth-store.js");
+    const store = new MemoryOAuthStore();
+    const exchangeAuthorizationCode = vi.fn().mockResolvedValue({
+      accessToken: "marketing-access"
+    });
+    const listAuthorizedAdvertisers = vi.fn().mockResolvedValue([
+      { advertiserId: "100" }
+    ]);
+    const service = new TikTokMarketingOAuthService({
+      authorizationUrl: "https://business-api.tiktok.com/portal/auth?app_id=app-123",
+      redirectUri:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/",
+      store,
+      client: { exchangeAuthorizationCode, listAuthorizedAdvertisers }
+    });
+
+    await expect(service.completeAuthorization("invalid", "auth-code-123"))
+      .rejects.toThrow(/state/i);
+    expect(exchangeAuthorizationCode).not.toHaveBeenCalled();
+
+    const started = await service.beginAuthorization();
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    await expect(service.completeAuthorization(state, "auth-code-123"))
+      .resolves.toEqual({ advertiserIds: ["100"] });
+    await expect(service.completeAuthorization(state, "auth-code-123"))
+      .rejects.toThrow(/consumed|expired|invalid/i);
+    expect(exchangeAuthorizationCode).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a token that authorizes no advertisers and persists nothing", async () => {
+    const { MemoryOAuthStore } = await import("./support/memory-oauth-store.js");
+    const store = new MemoryOAuthStore();
+    const client: TikTokMarketingOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn().mockResolvedValue({
+        accessToken: "marketing-access"
+      }),
+      listAuthorizedAdvertisers: vi.fn().mockResolvedValue([])
+    };
+    const service = new TikTokMarketingOAuthService({
+      authorizationUrl: "https://business-api.tiktok.com/portal/auth?app_id=app-123",
+      redirectUri:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/",
+      store,
+      client
+    });
+
+    const started = await service.beginAuthorization();
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    await expect(service.completeAuthorization(state, "auth-code-123"))
+      .rejects.toThrow(/advertiser/i);
+    await expect(store.list("tiktok-marketing")).resolves.toEqual([]);
+  });
+
+  it("persists one non-expiring Marketing credential per verified advertiser", async () => {
+    const { MemoryOAuthStore } = await import("./support/memory-oauth-store.js");
+    const store = new MemoryOAuthStore();
+    const client: TikTokMarketingOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn().mockResolvedValue({
+        accessToken: "marketing-access"
+      }),
+      listAuthorizedAdvertisers: vi.fn().mockResolvedValue([
+        { advertiserId: "200", advertiserName: "Second" },
+        { advertiserId: "100", advertiserName: "First" }
+      ])
+    };
+    const service = new TikTokMarketingOAuthService({
+      authorizationUrl: "https://business-api.tiktok.com/portal/auth?app_id=app-123",
+      redirectUri:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/",
+      store,
+      client
+    });
+
+    const started = await service.beginAuthorization();
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    await expect(service.completeAuthorization(state, "auth-code-123"))
+      .resolves.toEqual({ advertiserIds: ["100", "200"] });
+
+    await expect(store.list("tiktok-marketing")).resolves.toEqual([
+      {
+        provider: "tiktok-marketing",
+        accountId: "200",
+        accessToken: "marketing-access",
+        scopes: [],
+        tokenVersion: 1
+      },
+      {
+        provider: "tiktok-marketing",
+        accountId: "100",
+        accessToken: "marketing-access",
+        scopes: [],
+        tokenVersion: 1
+      }
+    ]);
+    await expect(store.list("tiktok")).resolves.toEqual([]);
+  });
+
+  it("persists verified scopes and exposes only advertiser IDs in status", async () => {
+    const { MemoryOAuthStore } = await import("./support/memory-oauth-store.js");
+    const store = new MemoryOAuthStore();
+    const client: TikTokMarketingOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn().mockResolvedValue({
+        accessToken: "marketing-access-secret",
+        scopes: ["advertiser.info"]
+      }),
+      listAuthorizedAdvertisers: vi.fn().mockResolvedValue([
+        { advertiserId: "200" },
+        { advertiserId: "100" }
+      ])
+    };
+    const service = new TikTokMarketingOAuthService({
+      authorizationUrl: "https://business-api.tiktok.com/portal/auth?app_id=app-123",
+      redirectUri:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/",
+      store,
+      client
+    });
+
+    const started = await service.beginAuthorization();
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    await service.completeAuthorization(state, "auth-code-123");
+
+    const status = await service.status();
+    expect(status).toEqual({
+      authorized: true,
+      advertiserIds: ["100", "200"]
+    });
+    expect(JSON.stringify(status)).not.toContain("marketing-access-secret");
+    expect(JSON.stringify(status)).not.toContain("advertiser.info");
+
+    await expect(store.get("tiktok-marketing", "100")).resolves.toMatchObject({
+      scopes: ["advertiser.info"]
+    });
+  });
+
+  it("reports unauthorized status when no Marketing credentials exist", async () => {
+    const { MemoryOAuthStore } = await import("./support/memory-oauth-store.js");
+    const store = new MemoryOAuthStore();
+    const client: TikTokMarketingOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn(),
+      listAuthorizedAdvertisers: vi.fn()
+    };
+    const service = new TikTokMarketingOAuthService({
+      authorizationUrl: "https://business-api.tiktok.com/portal/auth?app_id=app-123",
+      redirectUri:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/",
+      store,
+      client
+    });
+
+    await expect(service.status()).resolves.toEqual({
+      authorized: false,
+      advertiserIds: []
+    });
   });
 });

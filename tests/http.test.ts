@@ -63,6 +63,7 @@ describe("webhook routes", () => {
       wordpressBridgeApiSchema: 3,
       wordpressBridgeStorageSchema: "1.1.1",
       tiktokMarketingOAuthSchema: 2,
+      tiktokMarketingAdvertiserSchema: 1,
       runtime: {
         processorEnabled: false,
         actionDispatchEnabled: false,
@@ -401,6 +402,74 @@ describe("webhook routes", () => {
     await server.close();
   });
 
+
+
+  it("protects the TikTok Marketing Ad Account Management proof", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const absent = makeServer({ ingest });
+    const absentResult = await absent.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/advertisers/verify"
+    });
+    expect(absentResult.statusCode).toBe(404);
+    await absent.close();
+
+    expect(() => buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      tiktokMarketingAdvertisers: {
+        service: { verifyAccountManagement: vi.fn() }
+      }
+    })).toThrow(/TikTok Marketing advertiser operations require an operational bearer token/i);
+
+    const verifyAccountManagement = vi.fn().mockResolvedValue({
+      verified: true,
+      storedAdvertiserIds: ["100", "200"],
+      verifiedAdvertiserIds: ["100", "200"],
+      missingAdvertiserIds: []
+    });
+    const token = "o".repeat(32);
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokMarketingAdvertisers: {
+        service: { verifyAccountManagement }
+      }
+    });
+
+    const unauthorized = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/advertisers/verify"
+    });
+    expect(unauthorized.statusCode).toBe(401);
+    expect(unauthorized.headers["www-authenticate"]).toContain("Bearer");
+    expect(verifyAccountManagement).not.toHaveBeenCalled();
+
+    const verified = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/advertisers/verify",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(verified.statusCode).toBe(200);
+    expect(verified.headers["cache-control"]).toBe("private, no-store");
+    expect(verified.json()).toEqual({
+      verified: true,
+      storedAdvertiserIds: ["100", "200"],
+      verifiedAdvertiserIds: ["100", "200"],
+      missingAdvertiserIds: []
+    });
+    expect(verified.body).not.toContain("token");
+    expect(verified.body).not.toContain("secret");
+
+    await server.close();
+  });
 
   it("maps TikTok Marketing verification state safely without exposing provider errors", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();

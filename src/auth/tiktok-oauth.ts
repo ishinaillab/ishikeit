@@ -322,7 +322,9 @@ export class TikTokOAuthService implements TikTokOAuthController {
       authorized: true,
       businessId: credential.accountId,
       scopes: credential.scopes,
-      accessExpiresAt: credential.accessExpiresAt.toISOString(),
+      ...(credential.accessExpiresAt === undefined
+        ? {}
+        : { accessExpiresAt: credential.accessExpiresAt.toISOString() }),
       ...(credential.refreshExpiresAt === undefined
         ? {}
         : { refreshExpiresAt: credential.refreshExpiresAt.toISOString() }),

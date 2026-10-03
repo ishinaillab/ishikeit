@@ -9,5 +9,6 @@ export const runtimeContract = Object.freeze({
   tiktokMarketingOAuthSchema: 2,
   tiktokMarketingAdvertiserSchema: 2,
   tiktokBusinessMessagingReadSchema: 1,
-  tiktokBusinessMessagingWebhookSchema: 1
+  tiktokBusinessMessagingWebhookSchema: 1,
+  tiktokBusinessMessagingImageSendSchema: 1
 });

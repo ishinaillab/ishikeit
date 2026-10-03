@@ -57,6 +57,7 @@ const schema = z.object({
   TIKTOK_BUSINESS_APP_SECRET: z.string().min(16).max(512).optional(),
   TIKTOK_BUSINESS_AUTHORIZATION_URL: z.string().url().optional(),
   TIKTOK_BUSINESS_REDIRECT_URI: z.string().url().optional(),
+  TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL: z.string().url().optional(),
   TIKTOK_MARKETING_AUTHORIZATION_URL: z.string().url().optional(),
   TIKTOK_MARKETING_REDIRECT_URI: z.string().url().optional(),
   TIKTOK_BUSINESS_ID: z.string().min(1).max(256).optional(),
@@ -96,6 +97,28 @@ const schema = z.object({
         });
       }
     }
+  }
+
+  const tiktokBusinessWebhookConfigured =
+    value.TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL !== undefined;
+
+  if (tiktokBusinessWebhookConfigured && !tiktokAppConfigured) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL"],
+      message: "TikTok Business Messaging webhook management requires TikTok app credentials"
+    });
+  }
+
+  if (
+    tiktokBusinessWebhookConfigured
+    && value.OPS_METRICS_TOKEN === undefined
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["OPS_METRICS_TOKEN"],
+      message: "TikTok Business Messaging webhook management requires OPS_METRICS_TOKEN"
+    });
   }
 
   const tiktokBusinessOAuthUrlKeys = [
@@ -228,6 +251,7 @@ const schema = z.object({
     for (const key of [
       "TIKTOK_BUSINESS_AUTHORIZATION_URL",
       "TIKTOK_BUSINESS_REDIRECT_URI",
+      "TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL",
       "TIKTOK_MARKETING_AUTHORIZATION_URL",
       "TIKTOK_MARKETING_REDIRECT_URI"
     ] as const) {
@@ -324,6 +348,15 @@ export function loadEnvironment(input: NodeJS.ProcessEnv = process.env): Environ
     const url = new URL(parsed.TIKTOK_BUSINESS_REDIRECT_URI);
     if (url.search !== "" || url.hash !== "") {
       throw new Error("TIKTOK_BUSINESS_REDIRECT_URI must not include a query string or fragment");
+    }
+  }
+
+  if (parsed.TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL !== undefined) {
+    const url = new URL(parsed.TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL);
+    if (url.search !== "" || url.hash !== "") {
+      throw new Error(
+        "TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL must not include a query string or fragment"
+      );
     }
   }
 

@@ -201,9 +201,10 @@ describe("TikTokMarketingOAuthService", () => {
     const { MemoryOAuthStore } = await import("./support/memory-oauth-store.js");
     const store = new MemoryOAuthStore();
     const now = new Date("2026-10-04T00:00:00.000Z");
+    const listAuthorizedAdvertisers = vi.fn();
     const client: TikTokMarketingOAuthClientLike = {
       exchangeAuthorizationCode: vi.fn(),
-      listAuthorizedAdvertisers: vi.fn()
+      listAuthorizedAdvertisers
     };
     const service = new TikTokMarketingOAuthService({
       authorizationUrl:
@@ -389,7 +390,7 @@ describe("TikTokMarketingOAuthService", () => {
 
     await expect(service.verifyAccess())
       .rejects.toBeInstanceOf(TikTokMarketingOAuthNotAuthorizedError);
-    expect(client.listAuthorizedAdvertisers).not.toHaveBeenCalled();
+    expect(listAuthorizedAdvertisers).not.toHaveBeenCalled();
   });
 
   it("verifies live advertiser access and reports store drift without mutating credentials", async () => {

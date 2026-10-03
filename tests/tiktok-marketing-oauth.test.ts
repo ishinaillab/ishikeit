@@ -315,14 +315,14 @@ describe("TikTokMarketingOAuthService", () => {
     await expect(store.list("tiktok-marketing")).resolves.toEqual([
       {
         provider: "tiktok-marketing",
-        accountId: "200",
+        accountId: "100",
         accessToken: "marketing-access",
         scopes: [],
         tokenVersion: 1
       },
       {
         provider: "tiktok-marketing",
-        accountId: "100",
+        accountId: "200",
         accessToken: "marketing-access",
         scopes: [],
         tokenVersion: 1

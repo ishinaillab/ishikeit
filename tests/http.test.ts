@@ -8,6 +8,7 @@ import {
   TikTokBusinessMessagingReadError,
   TikTokBusinessMessagingValidationError
 } from "../src/messaging/tiktok-business-read.js";
+import { TikTokBusinessWebhookRequestError } from "../src/messaging/tiktok-webhook-config.js";
 import type { InboundStore } from "../src/persistence/inbound.js";
 
 function makeServer(store: InboundStore, webhookBodyLimit?: number) {
@@ -70,6 +71,7 @@ describe("webhook routes", () => {
       tiktokMarketingOAuthSchema: 2,
       tiktokMarketingAdvertiserSchema: 2,
       tiktokBusinessMessagingReadSchema: 1,
+      tiktokBusinessMessagingWebhookSchema: 1,
       runtime: {
         processorEnabled: false,
         actionDispatchEnabled: false,
@@ -259,6 +261,163 @@ describe("webhook routes", () => {
   });
 
 
+
+
+  it("gates TikTok Business Messaging webhook operations and requires operational bearer auth", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const absent = makeServer({ ingest });
+    const absentStatus = await absent.inject({
+      method: "GET",
+      url: "/ops/tiktok/messaging/webhook/status"
+    });
+    const absentReconcile = await absent.inject({
+      method: "POST",
+      url: "/ops/tiktok/messaging/webhook/reconcile"
+    });
+    expect(absentStatus.statusCode).toBe(404);
+    expect(absentReconcile.statusCode).toBe(404);
+    await absent.close();
+
+    expect(() => buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      tiktokBusinessMessagingWebhook: {
+        service: {
+          status: vi.fn(),
+          reconcile: vi.fn()
+        }
+      }
+    })).toThrow(/TikTok Business Messaging webhook operations require an operational bearer token/i);
+  });
+
+  it("serves protected TikTok Business Messaging webhook status and reconcile", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const token = "o".repeat(32);
+    const callbackUrl =
+      "https://apps.ishinaillab.com/ishikeit/webhooks/tiktok";
+    const status = vi.fn().mockResolvedValue({
+      configured: true,
+      matchesExpected: false,
+      expectedCallbackUrl: callbackUrl,
+      callbackUrl: "https://old.example/webhook"
+    });
+    const reconcile = vi.fn().mockResolvedValue({
+      changed: true,
+      configured: true,
+      matchesExpected: true,
+      expectedCallbackUrl: callbackUrl,
+      callbackUrl
+    });
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokBusinessMessagingWebhook: {
+        service: { status, reconcile }
+      }
+    });
+
+    const unauthorized = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/messaging/webhook/status"
+    });
+    expect(unauthorized.statusCode).toBe(401);
+    expect(unauthorized.headers["www-authenticate"]).toContain("Bearer");
+    expect(status).not.toHaveBeenCalled();
+
+    const current = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/messaging/webhook/status",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(current.statusCode).toBe(200);
+    expect(current.headers["cache-control"]).toBe("private, no-store");
+    expect(current.json()).toEqual({
+      configured: true,
+      matchesExpected: false,
+      expectedCallbackUrl: callbackUrl,
+      callbackUrl: "https://old.example/webhook"
+    });
+    expect(current.body).not.toContain("secret");
+
+    const reconciled = await server.inject({
+      method: "POST",
+      url: "/ops/tiktok/messaging/webhook/reconcile",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(reconciled.statusCode).toBe(200);
+    expect(reconciled.headers["cache-control"]).toBe("private, no-store");
+    expect(reconciled.json()).toEqual({
+      changed: true,
+      configured: true,
+      matchesExpected: true,
+      expectedCallbackUrl: callbackUrl,
+      callbackUrl
+    });
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(reconciled.body).not.toContain("secret");
+
+    await server.close();
+  });
+
+  it("maps TikTok Business Messaging webhook provider failures without exposing provider data", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const token = "o".repeat(32);
+    const providerError = new TikTokBusinessWebhookRequestError(
+      "provider echoed super-secret-value",
+      {
+        retryable: true,
+        stage: "webhook_get",
+        status: 503,
+        providerCode: "51065"
+      }
+    );
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokBusinessMessagingWebhook: {
+        service: {
+          status: vi.fn().mockRejectedValue(providerError),
+          reconcile: vi.fn().mockRejectedValue(providerError)
+        }
+      }
+    });
+    const headers = { authorization: "Bearer " + token };
+
+    const statusResult = await server.inject({
+      method: "GET",
+      url: "/ops/tiktok/messaging/webhook/status",
+      headers
+    });
+    expect(statusResult.statusCode).toBe(503);
+    expect(statusResult.json()).toEqual({
+      status: "webhook_configuration_unavailable"
+    });
+    expect(statusResult.body).not.toContain("super-secret-value");
+
+    const reconcileResult = await server.inject({
+      method: "POST",
+      url: "/ops/tiktok/messaging/webhook/reconcile",
+      headers
+    });
+    expect(reconcileResult.statusCode).toBe(503);
+    expect(reconcileResult.json()).toEqual({
+      status: "webhook_reconcile_unavailable"
+    });
+    expect(reconcileResult.body).not.toContain("super-secret-value");
+
+    await server.close();
+  });
 
   it("gates TikTok Business Messaging read routes and requires operational bearer auth", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();

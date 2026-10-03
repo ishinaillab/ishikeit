@@ -8,5 +8,6 @@ export const runtimeContract = Object.freeze({
   wordpressBridgeStorageSchema: "1.1.1",
   tiktokMarketingOAuthSchema: 2,
   tiktokMarketingAdvertiserSchema: 2,
-  tiktokBusinessMessagingReadSchema: 1
+  tiktokBusinessMessagingReadSchema: 1,
+  tiktokBusinessMessagingWebhookSchema: 1
 });

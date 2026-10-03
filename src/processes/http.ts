@@ -37,6 +37,10 @@ import {
 } from "../marketing/tiktok-advertiser.js";
 import { TikTokAccessTokenManager, tiktokCredentialCanRefresh } from "../auth/tiktok-token-manager.js";
 import { TikTokBusinessMessagingReadClient } from "../messaging/tiktok-business-read.js";
+import {
+  TikTokBusinessWebhookClient,
+  TikTokBusinessWebhookService
+} from "../messaging/tiktok-webhook-config.js";
 import { INSTAGRAM_WEBHOOK_FIELDS, InstagramOAuthClient, InstagramOAuthService } from "../auth/instagram-oauth.js";
 import { InstagramAccessTokenManager, InstagramAccessTokenRouter } from "../auth/instagram-token-manager.js";
 import { PostgresInstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
@@ -62,6 +66,11 @@ const tiktokOAuthConfigured = (
   && env.TIKTOK_BUSINESS_AUTHORIZATION_URL !== undefined
   && env.TIKTOK_BUSINESS_REDIRECT_URI !== undefined
   && env.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined
+);
+const tiktokBusinessWebhookConfigured = (
+  env.TIKTOK_BUSINESS_APP_ID !== undefined
+  && env.TIKTOK_BUSINESS_APP_SECRET !== undefined
+  && env.TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL !== undefined
 );
 const tiktokMarketingOAuthConfigured = (
   env.TIKTOK_BUSINESS_APP_ID !== undefined
@@ -200,6 +209,21 @@ const tiktokAccessTokenManager = (
       client: tiktokOAuthClient,
       refreshSkewSeconds: env.TIKTOK_TOKEN_REFRESH_SKEW_SECONDS
     });
+const tiktokBusinessWebhookClient = !tiktokBusinessWebhookConfigured
+  ? undefined
+  : new TikTokBusinessWebhookClient({
+      appId: env.TIKTOK_BUSINESS_APP_ID!,
+      appSecret: env.TIKTOK_BUSINESS_APP_SECRET!,
+      apiVersion: env.TIKTOK_BUSINESS_API_VERSION,
+      requestTimeoutMs: env.TIKTOK_OAUTH_REQUEST_TIMEOUT_MS
+    });
+const tiktokBusinessWebhookService = tiktokBusinessWebhookClient === undefined
+  ? undefined
+  : new TikTokBusinessWebhookService({
+      expectedCallbackUrl: env.TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL!,
+      client: tiktokBusinessWebhookClient
+    });
+
 const tiktokBusinessMessagingRead = (
   tiktokAccessTokenManager === undefined
   || env.TIKTOK_BUSINESS_ID === undefined
@@ -312,6 +336,13 @@ const server = buildServer({
   verifyToken: env.META_WEBHOOK_VERIFY_TOKEN,
   ...(telegram === undefined ? {} : { telegram }),
   ...(tiktok === undefined ? {} : { tiktok }),
+  ...(tiktokBusinessWebhookService === undefined
+    ? {}
+    : {
+        tiktokBusinessMessagingWebhook: {
+          service: tiktokBusinessWebhookService
+        }
+      }),
   ...(tiktokBusinessMessagingRead === undefined
     ? {}
     : {

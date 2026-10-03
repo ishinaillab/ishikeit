@@ -93,6 +93,67 @@ describe("environment", () => {
   });
 
 
+
+  it("configures TikTok Business Messaging webhook management independently from OAuth", () => {
+    const env = loadEnvironment({
+      ...productionBase,
+      OPS_METRICS_TOKEN: "o".repeat(32),
+      TIKTOK_BUSINESS_APP_ID: "app-123",
+      TIKTOK_BUSINESS_APP_SECRET: "s".repeat(32),
+      TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL:
+        "https://apps.ishinaillab.com/ishikeit/webhooks/tiktok"
+    });
+
+    expect(env.TIKTOK_BUSINESS_AUTHORIZATION_URL).toBeUndefined();
+    expect(env.TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL).toBe(
+      "https://apps.ishinaillab.com/ishikeit/webhooks/tiktok"
+    );
+  });
+
+  it("requires app credentials and ops auth when TikTok Business Messaging webhook management is enabled", () => {
+    expect(() => loadEnvironment({
+      ...productionBase,
+      OPS_METRICS_TOKEN: "o".repeat(32),
+      TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL:
+        "https://apps.ishinaillab.com/ishikeit/webhooks/tiktok"
+    })).toThrow(/app credentials/i);
+
+    expect(() => loadEnvironment({
+      ...productionBase,
+      TIKTOK_BUSINESS_APP_ID: "app-123",
+      TIKTOK_BUSINESS_APP_SECRET: "s".repeat(32),
+      TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL:
+        "https://apps.ishinaillab.com/ishikeit/webhooks/tiktok"
+    })).toThrow(/OPS_METRICS_TOKEN/i);
+  });
+
+  it("rejects unsafe TikTok Business Messaging webhook callback URLs in production", () => {
+    const base = {
+      ...productionBase,
+      OPS_METRICS_TOKEN: "o".repeat(32),
+      TIKTOK_BUSINESS_APP_ID: "app-123",
+      TIKTOK_BUSINESS_APP_SECRET: "s".repeat(32)
+    };
+
+    expect(() => loadEnvironment({
+      ...base,
+      TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL:
+        "http://apps.ishinaillab.com/ishikeit/webhooks/tiktok"
+    })).toThrow(/HTTPS/i);
+
+    expect(() => loadEnvironment({
+      ...base,
+      TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL:
+        "https://apps.ishinaillab.com/ishikeit/webhooks/tiktok?x=1"
+    })).toThrow(/query string/i);
+
+    expect(() => loadEnvironment({
+      ...base,
+      TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL:
+        "https://apps.ishinaillab.com/ishikeit/webhooks/tiktok#fragment"
+    })).toThrow(/fragment/i);
+  });
+
   it("configures TikTok Marketing OAuth independently from Business Messaging authorization URLs", () => {
     const env = loadEnvironment({
       ...productionBase,

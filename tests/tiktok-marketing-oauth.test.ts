@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   TikTokMarketingOAuthClient,
+  TikTokMarketingOAuthNotAuthorizedError,
   TikTokMarketingOAuthRequestError,
   TikTokMarketingOAuthService,
   type TikTokMarketingOAuthClientLike
@@ -368,6 +369,110 @@ describe("TikTokMarketingOAuthService", () => {
     await expect(store.get("tiktok-marketing", "100")).resolves.toMatchObject({
       scopes: ["advertiser.info"]
     });
+  });
+
+
+  it("rejects live verification when no Marketing credential is stored", async () => {
+    const { MemoryOAuthStore } = await import("./support/memory-oauth-store.js");
+    const store = new MemoryOAuthStore();
+    const client: TikTokMarketingOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn(),
+      listAuthorizedAdvertisers: vi.fn()
+    };
+    const service = new TikTokMarketingOAuthService({
+      authorizationUrl: "https://business-api.tiktok.com/portal/auth?app_id=app-123",
+      redirectUri:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/",
+      store,
+      client
+    });
+
+    await expect(service.verifyAccess())
+      .rejects.toBeInstanceOf(TikTokMarketingOAuthNotAuthorizedError);
+    expect(client.listAuthorizedAdvertisers).not.toHaveBeenCalled();
+  });
+
+  it("verifies live advertiser access and reports store drift without mutating credentials", async () => {
+    const { MemoryOAuthStore } = await import("./support/memory-oauth-store.js");
+    const store = new MemoryOAuthStore();
+    await store.put({
+      provider: "tiktok-marketing",
+      accountId: "100",
+      accessToken: "marketing-access-secret",
+      scopes: []
+    });
+    await store.put({
+      provider: "tiktok-marketing",
+      accountId: "200",
+      accessToken: "marketing-access-secret",
+      scopes: []
+    });
+    const listAuthorizedAdvertisers = vi.fn().mockResolvedValue([
+      { advertiserId: "100", advertiserName: "First" },
+      { advertiserId: "300", advertiserName: "Newly authorized" }
+    ]);
+    const client: TikTokMarketingOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn(),
+      listAuthorizedAdvertisers
+    };
+    const service = new TikTokMarketingOAuthService({
+      authorizationUrl: "https://business-api.tiktok.com/portal/auth?app_id=app-123",
+      redirectUri:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/",
+      store,
+      client
+    });
+
+    await expect(service.verifyAccess()).resolves.toEqual({
+      verified: true,
+      inSync: false,
+      authorizedAdvertiserIds: ["100", "300"],
+      storedAdvertiserIds: ["100", "200"],
+      staleStoredAdvertiserIds: ["200"],
+      untrackedAuthorizedAdvertiserIds: ["300"]
+    });
+    expect(listAuthorizedAdvertisers).toHaveBeenCalledWith("marketing-access-secret");
+    await expect(store.list("tiktok-marketing")).resolves.toEqual([
+      expect.objectContaining({ accountId: "100", tokenVersion: 1 }),
+      expect.objectContaining({ accountId: "200", tokenVersion: 1 })
+    ]);
+  });
+
+  it("reports an in-sync read-only verification without leaking token or scopes", async () => {
+    const { MemoryOAuthStore } = await import("./support/memory-oauth-store.js");
+    const store = new MemoryOAuthStore();
+    await store.put({
+      provider: "tiktok-marketing",
+      accountId: "100",
+      accessToken: "marketing-access-secret",
+      scopes: ["advertiser.info"]
+    });
+    const client: TikTokMarketingOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn(),
+      listAuthorizedAdvertisers: vi.fn().mockResolvedValue([
+        { advertiserId: "100", advertiserName: "First" }
+      ])
+    };
+    const service = new TikTokMarketingOAuthService({
+      authorizationUrl: "https://business-api.tiktok.com/portal/auth?app_id=app-123",
+      redirectUri:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/",
+      store,
+      client
+    });
+
+    const result = await service.verifyAccess();
+    expect(result).toEqual({
+      verified: true,
+      inSync: true,
+      authorizedAdvertiserIds: ["100"],
+      storedAdvertiserIds: ["100"],
+      staleStoredAdvertiserIds: [],
+      untrackedAuthorizedAdvertiserIds: []
+    });
+    expect(JSON.stringify(result)).not.toContain("marketing-access-secret");
+    expect(JSON.stringify(result)).not.toContain("advertiser.info");
+    expect(JSON.stringify(result)).not.toContain("First");
   });
 
   it("reports unauthorized status when no Marketing credentials exist", async () => {

@@ -137,10 +137,10 @@ describe("TikTokMarketingAdvertiserService", () => {
       scopes: []
     });
     const getAdvertiserIds = vi.fn()
-      .mockImplementation(async (accessToken: string, advertiserIds: readonly string[]) => {
-        if (accessToken === "grant-a") return ["100", "200"];
-        if (accessToken === "grant-b") return ["300"];
-        return [];
+      .mockImplementation((accessToken: string) => {
+        if (accessToken === "grant-a") return Promise.resolve(["100", "200"]);
+        if (accessToken === "grant-b") return Promise.resolve(["300"]);
+        return Promise.resolve([]);
       });
     const service = new TikTokMarketingAdvertiserService({
       store,

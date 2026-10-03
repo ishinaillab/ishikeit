@@ -215,6 +215,22 @@ export class TikTokMarketingOAuthClient implements TikTokMarketingOAuthClientLik
 }
 
 
+export interface TikTokMarketingAccessVerification {
+  verified: boolean;
+  inSync: boolean;
+  authorizedAdvertiserIds: readonly string[];
+  storedAdvertiserIds: readonly string[];
+  staleStoredAdvertiserIds: readonly string[];
+  untrackedAuthorizedAdvertiserIds: readonly string[];
+}
+
+export class TikTokMarketingOAuthNotAuthorizedError extends Error {
+  constructor() {
+    super("TikTok Marketing OAuth is not authorized");
+    this.name = "TikTokMarketingOAuthNotAuthorizedError";
+  }
+}
+
 export interface TikTokMarketingOAuthController {
   beginAuthorization(): Promise<{ authorizationUrl: string; expiresAt: string }>;
   completeAuthorization(
@@ -222,6 +238,7 @@ export interface TikTokMarketingOAuthController {
     authCode: string
   ): Promise<{ advertiserIds: readonly string[] }>;
   status(): Promise<{ authorized: boolean; advertiserIds: readonly string[] }>;
+  verifyAccess(): Promise<TikTokMarketingAccessVerification>;
 }
 
 export interface TikTokMarketingOAuthServiceOptions {
@@ -324,6 +341,43 @@ export class TikTokMarketingOAuthService implements TikTokMarketingOAuthControll
     }
 
     return { advertiserIds };
+  }
+
+  async verifyAccess(): Promise<TikTokMarketingAccessVerification> {
+    const credentials = await this.#store.list("tiktok-marketing");
+    if (credentials.length === 0) {
+      throw new TikTokMarketingOAuthNotAuthorizedError();
+    }
+
+    const latest = credentials[credentials.length - 1]!;
+    const advertisers = await this.#client.listAuthorizedAdvertisers(
+      latest.accessToken
+    );
+    const authorizedAdvertiserIds = advertisers
+      .map((advertiser) => advertiser.advertiserId)
+      .sort((a, b) => a.localeCompare(b));
+    const storedAdvertiserIds = credentials
+      .map((credential) => credential.accountId)
+      .sort((a, b) => a.localeCompare(b));
+    const authorizedSet = new Set(authorizedAdvertiserIds);
+    const storedSet = new Set(storedAdvertiserIds);
+    const staleStoredAdvertiserIds = storedAdvertiserIds.filter(
+      (advertiserId) => !authorizedSet.has(advertiserId)
+    );
+    const untrackedAuthorizedAdvertiserIds = authorizedAdvertiserIds.filter(
+      (advertiserId) => !storedSet.has(advertiserId)
+    );
+
+    return {
+      verified: authorizedAdvertiserIds.length > 0,
+      inSync:
+        staleStoredAdvertiserIds.length === 0
+        && untrackedAuthorizedAdvertiserIds.length === 0,
+      authorizedAdvertiserIds,
+      storedAdvertiserIds,
+      staleStoredAdvertiserIds,
+      untrackedAuthorizedAdvertiserIds
+    };
   }
 
   async status(): Promise<{

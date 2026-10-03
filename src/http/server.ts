@@ -13,7 +13,10 @@ import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
 import { verifyBearerAuthorization } from "../security/bearer.js";
 import type { TikTokOAuthController } from "../auth/tiktok-oauth.js";
-import type { TikTokMarketingOAuthController } from "../auth/tiktok-marketing-oauth.js";
+import {
+  TikTokMarketingOAuthNotAuthorizedError,
+  type TikTokMarketingOAuthController
+} from "../auth/tiktok-marketing-oauth.js";
 import { instagramOAuthFailureDiagnostic, type InstagramOAuthController } from "../auth/instagram-oauth.js";
 import type { InstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 import { verifyMetaSignedRequest } from "../security/meta-signed-request.js";
@@ -236,6 +239,28 @@ export function buildServer(deps: ServerDeps) {
           "TikTok Marketing OAuth status failed"
         );
         return reply.code(503).send({ status: "oauth_unavailable" });
+      }
+    });
+
+    server.get("/ops/tiktok/marketing/oauth/verify", async (req, reply) => {
+      if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+        return reply
+          .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401)
+          .send({ status: "unauthorized" });
+      }
+      reply.header("cache-control", "private, no-store");
+      try {
+        return await tiktokMarketingOAuth.service.verifyAccess();
+      } catch (error) {
+        if (error instanceof TikTokMarketingOAuthNotAuthorizedError) {
+          return reply.code(409).send({ status: "not_authorized" });
+        }
+        deps.logger.warn(
+          { errorClass: error instanceof Error ? error.name : "unknown" },
+          "TikTok Marketing OAuth live verification failed"
+        );
+        return reply.code(503).send({ status: "verification_unavailable" });
       }
     });
 

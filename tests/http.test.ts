@@ -471,6 +471,63 @@ describe("webhook routes", () => {
     await server.close();
   });
 
+
+  it("distinguishes missing TikTok Marketing authorization from advertiser-provider failure", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const token = "o".repeat(32);
+
+    const notAuthorized = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokMarketingAdvertisers: {
+        service: {
+          verifyAccountManagement: vi.fn().mockRejectedValue(
+            new TikTokMarketingOAuthNotAuthorizedError()
+          )
+        }
+      }
+    });
+    const missing = await notAuthorized.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/advertisers/verify",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(missing.statusCode).toBe(409);
+    expect(missing.json()).toEqual({ status: "not_authorized" });
+    await notAuthorized.close();
+
+    const unavailable = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "secret",
+      verifyToken: "verify-token-1234",
+      opsMetricsToken: token,
+      tiktokMarketingAdvertisers: {
+        service: {
+          verifyAccountManagement: vi.fn().mockRejectedValue(
+            new Error("provider echoed marketing-access-secret")
+          )
+        }
+      }
+    });
+    const failed = await unavailable.inject({
+      method: "GET",
+      url: "/ops/tiktok/marketing/advertisers/verify",
+      headers: { authorization: "Bearer " + token }
+    });
+    expect(failed.statusCode).toBe(503);
+    expect(failed.json()).toEqual({
+      status: "advertiser_verification_unavailable"
+    });
+    expect(failed.body).not.toContain("marketing-access-secret");
+    await unavailable.close();
+  });
+
   it("maps TikTok Marketing verification state safely without exposing provider errors", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
     const token = "o".repeat(32);

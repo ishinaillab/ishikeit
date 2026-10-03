@@ -31,6 +31,10 @@ import {
   TikTokMarketingOAuthClient,
   TikTokMarketingOAuthService
 } from "../auth/tiktok-marketing-oauth.js";
+import {
+  TikTokMarketingAdvertiserClient,
+  TikTokMarketingAdvertiserService
+} from "../marketing/tiktok-advertiser.js";
 import { TikTokAccessTokenManager, tiktokCredentialCanRefresh } from "../auth/tiktok-token-manager.js";
 import { INSTAGRAM_WEBHOOK_FIELDS, InstagramOAuthClient, InstagramOAuthService } from "../auth/instagram-oauth.js";
 import { InstagramAccessTokenManager, InstagramAccessTokenRouter } from "../auth/instagram-token-manager.js";
@@ -120,6 +124,21 @@ const tiktokMarketingOAuthService = (
       store: oauthStore,
       client: tiktokMarketingOAuthClient,
       stateTtlSeconds: env.TIKTOK_MARKETING_OAUTH_STATE_TTL_SECONDS
+    });
+const tiktokMarketingAdvertiserClient = !tiktokMarketingOAuthConfigured
+  ? undefined
+  : new TikTokMarketingAdvertiserClient({
+      apiVersion: env.TIKTOK_BUSINESS_API_VERSION,
+      requestTimeoutMs: env.TIKTOK_MARKETING_OAUTH_REQUEST_TIMEOUT_MS
+    });
+const tiktokMarketingAdvertiserService = (
+  oauthStore === undefined
+  || tiktokMarketingAdvertiserClient === undefined
+)
+  ? undefined
+  : new TikTokMarketingAdvertiserService({
+      store: oauthStore,
+      client: tiktokMarketingAdvertiserClient
     });
 const instagramOAuthClient = !instagramOAuthConfigured
   ? undefined
@@ -295,6 +314,13 @@ const server = buildServer({
     : {
         tiktokMarketingOAuth: {
           service: tiktokMarketingOAuthService
+        }
+      }),
+  ...(tiktokMarketingAdvertiserService === undefined
+    ? {}
+    : {
+        tiktokMarketingAdvertisers: {
+          service: tiktokMarketingAdvertiserService
         }
       }),
   ...(instagramOAuthService === undefined

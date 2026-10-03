@@ -347,6 +347,24 @@ TikTok-specific image upload/send, templates, automatic messages, Comment-to-Mes
 
 Production activation requires TikTok's applicable Business Messaging access/security/privacy review, app OAuth configuration, Business Account authorization, provider webhook configuration pointing to `/ishikeit/webhooks/tiktok`, capability/scope checks, and a controlled human-originated end-to-end canary. No TikTok credential is committed to the repository.
 
+
+## TikTok Marketing advertiser authorization and Account Management proof
+
+TikTok Marketing advertiser authorization is a separate capability family from TikTok Business Messaging. It reuses the same TikTok API for Business developer app identity but stores credentials under the distinct `tiktok-marketing` namespace, uses the advertiser callback `/ishikeit/oauth/tiktok/advertiser/callback/`, and never routes through `tiktok / messaging / message.send`.
+
+The current Marketing milestone requests only **Ad account management**. Authorization uses the provider's advertiser OAuth flow and stores one encrypted credential row per verified advertiser ID. Access expiry is optional because the current advertiser-token contract does not require Ishikeit to fabricate an expiry value.
+
+Operational verification is deliberately split into two read-only checks:
+
+- `GET /ops/tiktok/marketing/oauth/verify` re-runs advertiser discovery and verifies the durable OAuth grant is still coherent with stored advertiser IDs.
+- `GET /ops/tiktok/marketing/advertisers/verify` calls TikTok Account Management `GET /open_api/v1.3/advertiser/info/` with the stored advertiser IDs and `Access-Token` header. This proves the granted **Ad account management** permission itself rather than merely proving the OAuth token can be enumerated.
+
+The advertiser proof requests no optional `fields` parameter and returns only advertiser IDs plus missing-ID diagnostics. Provider account names, balances, currencies, timezones, scopes, and access tokens are intentionally not exposed by this proof. Multiple distinct OAuth grants are verified against the advertiser IDs stored with each token. The proof performs no credential reconciliation, deletion, advertiser update, campaign mutation, or other write.
+
+Both Marketing operational proof routes are configuration-gated behind the complete Marketing OAuth setup and the existing operational bearer credential. They remain absent until TikTok approves the app and production Marketing variables are configured. `/health/ready` does not require a completed advertiser authorization.
+
+TikTok's current official SDK continues to map both advertiser OAuth and Account Management advertiser-info calls to `/open_api/v1.3/`. A portal permission catalog label of v2.0 must not be used by itself to rewrite these transport paths.
+
 ## Telegram Bot API adapter
 
 Telegram is the first non-Meta messaging adapter and does not introduce a Telegram-specific durable core.

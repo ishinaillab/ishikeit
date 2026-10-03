@@ -17,6 +17,7 @@ import {
   TikTokMarketingOAuthNotAuthorizedError,
   type TikTokMarketingOAuthController
 } from "../auth/tiktok-marketing-oauth.js";
+import type { TikTokMarketingAdvertiserController } from "../marketing/tiktok-advertiser.js";
 import { instagramOAuthFailureDiagnostic, type InstagramOAuthController } from "../auth/instagram-oauth.js";
 import type { InstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 import { verifyMetaSignedRequest } from "../security/meta-signed-request.js";
@@ -43,6 +44,9 @@ export interface ServerDeps {
   };
   tiktokMarketingOAuth?: {
     service: TikTokMarketingOAuthController;
+  };
+  tiktokMarketingAdvertisers?: {
+    service: TikTokMarketingAdvertiserController;
   };
   instagramOAuth?: {
     service: InstagramOAuthController;
@@ -95,6 +99,14 @@ export function buildServer(deps: ServerDeps) {
   }
   if (deps.tiktokMarketingOAuth !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("TikTok Marketing OAuth operations require an operational bearer token");
+  }
+  if (
+    deps.tiktokMarketingAdvertisers !== undefined
+    && deps.opsMetricsToken === undefined
+  ) {
+    throw new Error(
+      "TikTok Marketing advertiser operations require an operational bearer token"
+    );
   }
 
   if (deps.metrics !== undefined && deps.opsMetricsToken !== undefined) {
@@ -195,6 +207,41 @@ export function buildServer(deps: ServerDeps) {
           .send("TikTok authorization could not be completed. Start a new authorization request.");
       }
     });
+  }
+
+  if (
+    deps.tiktokMarketingAdvertisers !== undefined
+    && deps.opsMetricsToken !== undefined
+  ) {
+    const tiktokMarketingAdvertisers = deps.tiktokMarketingAdvertisers;
+    const opsToken = deps.opsMetricsToken;
+
+    server.get(
+      "/ops/tiktok/marketing/advertisers/verify",
+      async (req, reply) => {
+        if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+          return reply
+            .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+            .code(401)
+            .send({ status: "unauthorized" });
+        }
+        reply.header("cache-control", "private, no-store");
+        try {
+          return await tiktokMarketingAdvertisers.service.verifyAccountManagement();
+        } catch (error) {
+          if (error instanceof TikTokMarketingOAuthNotAuthorizedError) {
+            return reply.code(409).send({ status: "not_authorized" });
+          }
+          deps.logger.warn(
+            { errorClass: error instanceof Error ? error.name : "unknown" },
+            "TikTok Marketing advertiser verification failed"
+          );
+          return reply
+            .code(503)
+            .send({ status: "advertiser_verification_unavailable" });
+        }
+      }
+    );
   }
 
   if (deps.tiktokMarketingOAuth !== undefined && deps.opsMetricsToken !== undefined) {

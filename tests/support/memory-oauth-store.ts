@@ -29,6 +29,12 @@ export class MemoryOAuthStore implements OAuthCredentialStore {
     return Promise.resolve(values.at(-1));
   }
 
+  list(provider: string): Promise<readonly OAuthCredential[]> {
+    return Promise.resolve(
+      [...this.credentials.values()].filter((item) => item.provider === provider)
+    );
+  }
+
   put(credential: Omit<OAuthCredential, "tokenVersion">): Promise<void> {
     const key = credential.provider + ":" + credential.accountId;
     const previous = this.credentials.get(key);

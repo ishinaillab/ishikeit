@@ -29,7 +29,7 @@ import { PostgresOAuthCredentialStore } from "../auth/oauth-store.js";
 import { TikTokOAuthClient, TikTokOAuthService } from "../auth/tiktok-oauth.js";
 import { TikTokAccessTokenManager, tiktokCredentialCanRefresh } from "../auth/tiktok-token-manager.js";
 import { INSTAGRAM_WEBHOOK_FIELDS, InstagramOAuthClient, InstagramOAuthService } from "../auth/instagram-oauth.js";
-import { InstagramAccessTokenManager } from "../auth/instagram-token-manager.js";
+import { InstagramAccessTokenManager, InstagramAccessTokenRouter } from "../auth/instagram-token-manager.js";
 import { PostgresInstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 
 const env = loadEnvironment();
@@ -123,6 +123,14 @@ const instagramAccessTokenManager = (
       refreshSkewSeconds: env.META_INSTAGRAM_TOKEN_REFRESH_SKEW_SECONDS
     });
 
+const instagramAccessTokenRouter = instagramOAuthClient === undefined
+  ? instagramAccessTokenManager
+  : new InstagramAccessTokenRouter({
+      oauthProvider: instagramAccessTokenManager,
+      managedAccessToken: env.META_INSTAGRAM_ACCESS_TOKEN,
+      client: instagramOAuthClient
+    });
+
 const tiktokAccessTokenManager = (
   oauthStore === undefined
   || tiktokOAuthClient === undefined
@@ -160,34 +168,38 @@ async function tiktokAuthorizationReady(): Promise<boolean> {
   }
 }
 
-async function reconcileInstagramOAuthAccount(): Promise<void> {
+async function reconcileInstagramOAuthAccounts(): Promise<void> {
   if (oauthStore === undefined || instagramOAuthClient === undefined) return;
-  const credential = await oauthStore.latest("instagram");
-  if (credential === undefined) return;
+  const credentials = await oauthStore.list("instagram");
 
-  try {
-    const accessToken = instagramAccessTokenManager === undefined
-      ? credential.accessToken
-      : await instagramAccessTokenManager.getAccessToken(credential.accountId)
-        ?? credential.accessToken;
-    const professionalAccountId = await instagramOAuthClient
-      .resolveProfessionalAccountId(accessToken);
-    await oauthStore.putAccountAlias(
-      "instagram",
-      professionalAccountId,
-      credential.accountId,
-      "instagram_professional_account"
-    );
-    await instagramOAuthClient.ensureWebhookSubscription(
-      accessToken,
-      INSTAGRAM_WEBHOOK_FIELDS
-    );
-    logger.info("Instagram OAuth account routing and webhook subscription reconciled");
-  } catch (error) {
-    logger.warn(
-      { err: error },
-      "Instagram OAuth account routing or webhook subscription reconciliation failed"
-    );
+  for (const credential of credentials) {
+    try {
+      const accessToken = instagramAccessTokenManager === undefined
+        ? credential.accessToken
+        : await instagramAccessTokenManager.getAccessToken(credential.accountId)
+          ?? credential.accessToken;
+      const professionalAccountId = await instagramOAuthClient
+        .resolveProfessionalAccountId(accessToken);
+      await oauthStore.putAccountAlias(
+        "instagram",
+        professionalAccountId,
+        credential.accountId,
+        "instagram_professional_account"
+      );
+      await instagramOAuthClient.ensureWebhookSubscription(
+        accessToken,
+        INSTAGRAM_WEBHOOK_FIELDS
+      );
+      logger.info(
+        { professionalAccountId },
+        "Instagram OAuth account routing and webhook subscription reconciled"
+      );
+    } catch (error) {
+      logger.warn(
+        { err: error, credentialAccountId: credential.accountId },
+        "Instagram OAuth account routing or webhook subscription reconciliation failed"
+      );
+    }
   }
 }
 
@@ -251,7 +263,7 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
     graphApiVersion: env.META_GRAPH_API_VERSION,
     messengerAccessToken: env.META_MESSENGER_ACCESS_TOKEN,
     instagramAccessToken: env.META_INSTAGRAM_ACCESS_TOKEN,
-    ...(instagramAccessTokenManager === undefined ? {} : { instagramAccessTokenProvider: instagramAccessTokenManager }),
+    ...(instagramAccessTokenRouter === undefined ? {} : { instagramAccessTokenProvider: instagramAccessTokenRouter }),
     whatsappAccessToken: env.META_WHATSAPP_ACCESS_TOKEN,
     instagramGraphHost: env.META_INSTAGRAM_GRAPH_HOST,
     requestTimeoutMs: env.META_OUTBOUND_REQUEST_TIMEOUT_MS
@@ -374,7 +386,7 @@ async function main(): Promise<void> {
     if (instagramDataLifecycle !== undefined && !await instagramDataLifecycle.ready()) {
       throw new Error("Instagram data lifecycle schema is not ready");
     }
-    await reconcileInstagramOAuthAccount();
+    await reconcileInstagramOAuthAccounts();
     if (!await tiktokAuthorizationReady()) {
       throw new Error("TikTok Business Account activation requires a usable durable OAuth credential");
     }

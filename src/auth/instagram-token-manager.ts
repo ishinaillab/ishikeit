@@ -95,6 +95,12 @@ export class InstagramAccessTokenManager implements AccountAccessTokenProvider {
       }
       return undefined;
     }
+    if (credential.accessExpiresAt === undefined) {
+      throw new AccessTokenError(
+        "Instagram OAuth credential does not contain an access expiry; reauthorization is required",
+        { retryable: false }
+      );
+    }
 
     const now = this.#now();
     if (credential.accessExpiresAt.getTime() <= now.getTime()) {
@@ -133,6 +139,12 @@ export class InstagramAccessTokenManager implements AccountAccessTokenProvider {
       throw new AccessTokenError("Instagram account is not authorized", {
         retryable: false
       });
+    }
+    if (current.accessExpiresAt === undefined) {
+      throw new AccessTokenError(
+        "Instagram OAuth credential does not contain an access expiry; reauthorization is required",
+        { retryable: false }
+      );
     }
 
     const now = this.#now();

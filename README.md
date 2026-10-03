@@ -195,11 +195,12 @@ Current scope is deliberately limited to **Ad account management**. The runtime 
 - `GET /ishikeit/oauth/tiktok/advertiser/callback/` — consume state and persist encrypted advertiser credentials
 - `GET /ops/tiktok/marketing/oauth/status` — safe durable authorization status
 - `GET /ops/tiktok/marketing/oauth/verify` — re-check authorized advertiser IDs against durable credentials
-- `GET /ops/tiktok/marketing/advertisers/verify` — prove the granted Ad account management permission through TikTok's read-only `/open_api/v1.3/advertiser/info/` endpoint
+- `GET /ops/tiktok/marketing/advertisers/verify` — prove the granted Ad account management permission through TikTok's read-only `/advertiser/info/` endpoint
+- `GET /ops/tiktok/marketing/advertisers` — return a bearer-protected safe account summary containing only advertiser ID, name, status, currency, timezone, and country
 
-Marketing credentials use the distinct `tiktok-marketing` namespace. Access tokens are encrypted before database storage, and the Account Management proof returns only advertiser IDs and missing-ID diagnostics. No advertiser update, campaign, ad-group, ad, creative, budget, bid, audience, lead, or delivery mutation is implemented.
+Marketing credentials use the distinct `tiktok-marketing` namespace. Access tokens are encrypted before database storage. The verification endpoint returns only advertiser IDs and missing-ID diagnostics; the account-summary endpoint requests an explicit field allowlist and drops sensitive provider fields such as email, phone, address, license data, and balance. No advertiser update, campaign, ad-group, ad, creative, budget, bid, audience, lead, or delivery mutation is implemented.
 
-The current TikTok portal labels the permission catalog as v2.0, but TikTok's official SDK still maps advertiser OAuth and advertiser-info calls to `/open_api/v1.3/`. Ishikeit therefore keeps `TIKTOK_BUSINESS_API_VERSION=v1.3` for these implemented calls until TikTok publishes an authoritative replacement contract.
+TikTok's v2.0 guide states that endpoints with only a URL-version change can be omitted from the v2.0 API reference. At the same time, TikTok's current official SDK and TikTok for Business MCP registry still expose the advertiser OAuth and advertiser-info operations at v1.3. Ishikeit therefore keeps the version configuration explicit rather than inferring a migration from the portal label or from documentation omission; the production value remains v1.3 until endpoint-specific v2.0 behavior is verified.
 
 ## Telegram production
 

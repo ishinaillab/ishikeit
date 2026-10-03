@@ -34,7 +34,7 @@ describe("TikTokAccessTokenManager", () => {
       scopes: [],
       refreshExpiresAt: new Date(now.getTime() + 1000),
       tokenVersion: 1
-    } as never, now)).toBe(false);
+    }, now)).toBe(false);
     expect(tiktokCredentialCanRefresh({
       provider: "tiktok",
       accountId: "business-1",
@@ -54,7 +54,7 @@ describe("TikTokAccessTokenManager", () => {
       accessToken: "access-without-expiry",
       refreshToken: "refresh-current",
       scopes: ["business.messaging"]
-    } as never);
+    });
     const refresh = vi.fn();
     const client: TikTokOAuthClientLike = {
       exchangeAuthorizationCode: vi.fn(),

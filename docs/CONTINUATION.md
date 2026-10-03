@@ -1313,7 +1313,7 @@ This section is the current continuation source of truth. If any earlier Instagr
 - App repository: `ishinaillab/ishikeit`.
 - Database repository: `ishinaillab/ishikeit-db`.
 - Retired `/ishinaillab/ishi` must not be used unless the user explicitly reintroduces it.
-- Current app `main` / production revision: `02b451ceacea67ccaf7eca6f78bf2450c318c1df` from PR #46, **Finalize Instagram App Review package**.
+- Last code-bearing application revision in current `main` ancestry: `02b451ceacea67ccaf7eca6f78bf2450c318c1df` from PR #46, **Finalize Instagram App Review package**. Later documentation-only checkpoint commits do not change application behavior.
 - Hostinger build for `02b451c` completed successfully on 2026-10-03.
 - Production app URL: `https://apps.ishinaillab.com/`.
 - Production readiness endpoint: `GET /health/ready` returns 200.

@@ -7,6 +7,11 @@ function bodyAsJson(body: BodyInit | null | undefined): Record<string, unknown> 
   return JSON.parse(body) as Record<string, unknown>;
 }
 
+function requestUrl(value: string | URL | Request): string {
+  if (typeof value === "string") return value;
+  return value instanceof URL ? value.toString() : value.url;
+}
+
 describe("TikTokBusinessSender", () => {
   it("sends text to a conversation and returns the provider message ID", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
@@ -95,7 +100,7 @@ describe("TikTokBusinessSender", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
 
     const [downloadUrl, downloadInit] = fetchImpl.mock.calls[0]!;
-    expect(String(downloadUrl)).toBe("https://cdn.example.test/nails.jpg");
+    expect(requestUrl(downloadUrl)).toBe("https://cdn.example.test/nails.jpg");
     expect(downloadInit?.method).toBe("GET");
     expect(downloadInit?.redirect).toBe("manual");
 

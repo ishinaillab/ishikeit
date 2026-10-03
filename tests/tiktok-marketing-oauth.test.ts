@@ -4,6 +4,11 @@ import {
   TikTokMarketingOAuthRequestError
 } from "../src/auth/tiktok-marketing-oauth.js";
 
+function requestUrl(value: string | URL | Request): string {
+  if (typeof value === "string") return value;
+  return value instanceof URL ? value.toString() : value.url;
+}
+
 function requestBody(init: RequestInit | undefined): Record<string, unknown> {
   if (typeof init?.body !== "string") throw new Error("expected JSON body");
   return JSON.parse(init.body) as Record<string, unknown>;
@@ -102,7 +107,7 @@ describe("TikTokMarketingOAuthClient", () => {
     ]);
 
     const [urlValue, init] = fetchImpl.mock.calls[0]!;
-    const url = new URL(String(urlValue));
+    const url = new URL(requestUrl(urlValue));
     expect(url.origin + url.pathname)
       .toBe("https://business-api.tiktok.com/open_api/v1.3/oauth2/advertiser/get/");
     expect(url.searchParams.get("app_id")).toBe("app-123");

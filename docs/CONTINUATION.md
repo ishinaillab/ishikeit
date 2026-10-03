@@ -703,8 +703,24 @@ Latest local application validation:
 - lint: passed
 - typecheck: passed
 - test files: 26 passed
-- tests: 132 passed
+- tests: 139 passed
 - build: passed
+- `git diff --check`: passed
+
+### TikTok OAuth lifecycle merge/deployment verification — 2026-10-02
+
+- application PR #29 squash-merged to `main`
+- merged application revision: `135d6856f10517ce9ff7eb658e9e4db175b3cb41`
+- PR CI passed Node, PHP lint, and context-continuity
+- merged-main CI passed
+- Hostinger automatic build `01a0f8ed-aee7-711d-a25e-e2436b574d2c` completed for that exact revision
+- post-deploy `GET /health/ready` returned `{"status":"ready"}`
+- post-deploy `GET /health/capabilities` retained processor/dispatcher enabled, zero canary partitions, and `videoInterpreterProvider=none`
+- existing Telegram webhook protection remained intact: unauthenticated POST returned HTTP 401
+- TikTok webhook returned HTTP 404 because `TIKTOK_BUSINESS_ID`/TikTok OAuth configuration remains unset
+- `POST /ops/tiktok/oauth/start` and the TikTok OAuth callback returned HTTP 404 because the OAuth application settings remain unset; this is the intended pre-authorization state
+- fresh Hostinger runtime audit reported 32 entries and 0 WARN/ERROR
+- no TikTok OAuth token, app secret, Business Account ID, or encryption key was added during deployment
 
 Repository validation for the original base-adapter milestone:
 
@@ -755,15 +771,14 @@ TikTok is **not production-active yet**. No real TikTok credential has been adde
 
 1. create/use the real TikTok for Business developer app
 2. obtain Business Messaging API access and complete TikTok's applicable data-security/privacy review
-3. configure the TikTok OAuth application settings in the trusted production secret source: app ID, app secret, TikTok-generated authorization URL, exact HTTPS redirect URI, operational bearer token, and the dedicated OAuth encryption key
-4. deploy the OAuth lifecycle code while leaving `TIKTOK_BUSINESS_ID` unset so TikTok messaging remains inactive
-5. call the protected `POST /ops/tiktok/oauth/start`, complete Business Account authorization in TikTok, and verify `GET /ops/tiktok/oauth/status` reports the authorized `open_id`, scopes, and refresh availability without exposing tokens
-6. set `TIKTOK_BUSINESS_ID` to that verified `open_id`, restart/redeploy, and verify the TikTok webhook/sender/media boundaries become active for only that account
-7. verify the Business Account's messaging capability/limits through TikTok's supported API
-8. register the Business Messaging webhook to `https://apps.ishinaillab.com/ishikeit/webhooks/tiktok`
-9. verify signed webhook delivery and durable-before-ACK persistence
-10. run one controlled human-originated direct-message canary through webhook -> PostgreSQL -> AI bridge -> `action.dispatch` -> TikTok reply
-11. audit token refresh behavior, provider resource identity, attempts, pending queue, dead letters, and runtime warnings/errors before calling TikTok production-active
+3. configure the TikTok OAuth application settings in the trusted production secret source: app ID, app secret, TikTok-generated authorization URL, exact HTTPS redirect URI, operational bearer token, and the dedicated OAuth encryption key; keep `TIKTOK_BUSINESS_ID` unset
+4. call the protected `POST /ops/tiktok/oauth/start`, complete Business Account authorization in TikTok, and verify `GET /ops/tiktok/oauth/status` reports the authorized `open_id`, scopes, and refresh availability without exposing tokens
+5. set `TIKTOK_BUSINESS_ID` to that verified `open_id`, restart/redeploy, and verify the TikTok webhook/sender/media boundaries become active for only that account
+6. verify the Business Account's messaging capability/limits through TikTok's supported API
+7. register the Business Messaging webhook to `https://apps.ishinaillab.com/ishikeit/webhooks/tiktok`
+8. verify signed webhook delivery and durable-before-ACK persistence
+9. run one controlled human-originated direct-message canary through webhook -> PostgreSQL -> AI bridge -> `action.dispatch` -> TikTok reply
+10. audit token refresh behavior, provider resource identity, attempts, pending queue, dead letters, and runtime warnings/errors before calling TikTok production-active
 
 Do not claim TikTok production activation until those provider-backed checks have succeeded.
 

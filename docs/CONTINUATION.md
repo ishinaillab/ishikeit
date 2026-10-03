@@ -1430,3 +1430,316 @@ Hardening added after PR #49:
 - full local gate: lint passed, typecheck passed, 29 test files / 163 tests passed, build passed, `git diff --check` passed.
 
 Remaining external step is account-owner consent in Meta's dashboard: assign the actual business Professional account `ishinaillab` under **2. Generate access tokens**, complete any Instagram account confirmation Meta requires, and generate its token. This action is not exposed by the connected Meta DevTools API and requires the Instagram account owner's interactive Meta/Instagram session. Once that token exists, Ishikeit can validate the account ID, install it in Hostinger, reconcile subscriptions, and replay/verify the tester reply path.
+
+
+## Authoritative transfer checkpoint — 2026-10-03 23:58 Asia/Manila
+
+This section supersedes earlier intermediate Instagram-debugging notes where they conflict. It is the continuation source of truth for the next chat.
+
+### User-confirmed operational state
+
+- The user explicitly confirms that all currently used messaging platforms are working.
+- Instagram is confirmed recovered: both **povnailstudio.com.ph** and **povnailstudio.ph** receive replies from **ishinaillab**.
+- Do not treat the earlier Instagram dead-letter state as current; those rows are historical regression evidence only.
+
+### Independent live database verification at transfer
+
+Recent durable production evidence confirms successful outbound publishing:
+
+- Instagram:
+  - multiple new `published` outbox attempts after the regression repair;
+  - both tester recipient identities have successful published replies;
+  - latest verified published Instagram reply at approximately `2026-10-03T15:50:37Z`;
+  - earlier dead-letter rows before recovery remain in history and should not be interpreted as current failure.
+- WhatsApp:
+  - recent inbound traffic exists;
+  - recent outbound actions are published successfully.
+- Messenger:
+  - recent inbound traffic exists;
+  - recent outbound actions are published successfully.
+- Telegram:
+  - recent inbound traffic exists;
+  - recent outbound action is published successfully.
+- The live 24-hour query showed recent inbound activity for Meta WhatsApp, Meta Instagram, Meta Messenger, and Telegram.
+- The live 24-hour query showed published outbound actions for WhatsApp, Instagram, Messenger, and Telegram/bot.
+
+TikTok remains a separate provider-activation track unless a later checkpoint records completed TikTok scope approval and a live provider-backed canary. Do not infer TikTok production activation merely from the user statement that the active messaging stack is working.
+
+### Instagram regression — root cause and final repair
+
+The regression was factual and code-induced:
+
+- inbound Instagram webhooks continued to arrive;
+- AI processing continued to produce replies;
+- outbound reply actions were dead-lettered locally before any Meta HTTP request;
+- both configured testers were reaching the same business Professional account;
+- tester roles were therefore not the shared failure;
+- PR #44 had made Instagram outbound OAuth-only whenever an OAuth provider existed, which removed the original managed-account/App-Dashboard token path for the actual business account.
+
+The repaired design is intentionally not a blind fallback:
+
+- PR #49, **Fix Instagram managed-account token regression**, merged as:
+  - `4c38e646a285d4def7b7225f7904286f326e5277`
+- It added `InstagramAccessTokenRouter`.
+- Durable OAuth credentials remain first priority.
+- A configured App Dashboard / managed token may be used only after Meta `/me` resolves the Professional account ID and that ID exactly matches the outbound/webhook account ID.
+- Revoked durable OAuth credentials still fail closed and do not silently fall through.
+- Startup OAuth reconciliation now iterates all stored Instagram OAuth credentials rather than only `latest("instagram")`, preserving multi-account support.
+- This restored the original supported managed-account path without allowing a token for one Instagram Professional account to impersonate another.
+
+Production evidence after this repair confirms both Instagram tester identities now receive successful published replies from **ishinaillab**.
+
+### Instagram startup hardening after the repair
+
+PR #50, **Validate managed Instagram token at startup**, is on app `main`:
+
+- current app repository `main` code-bearing revision:
+  - `2129601`
+- PR #50 adds:
+  - safe managed-token identity validation at startup;
+  - immediate webhook-subscription reconciliation when the managed token is valid;
+  - explicit warning when a managed token is invalid or belongs to the wrong Professional account;
+  - `InstagramAccessTokenRouter.managedAccountId()`;
+  - regression coverage;
+  - full local gate at that revision: lint, typecheck, 29 test files / 163 tests, build, and `git diff --check` passed.
+
+Important deployment distinction at transfer time:
+
+- latest Hostinger build verified by the Hostinger build API:
+  - build UUID `01a10240-8b96-7248-bf4d-370dcd00025c`
+  - state: completed
+  - deployed commit: `4c38e646a285d4def7b7225f7904286f326e5277` (PR #49)
+- therefore production behavior is currently proven working on PR #49;
+- PR #50 exists on `main` but was not shown as the latest deployed Hostinger build in the final transfer check;
+- do not claim PR #50 is live until a later deployment check shows `2129601` or a descendant deployed.
+
+### Instagram account identities and credential model
+
+Current business reply account:
+
+- business Professional account: **ishinaillab**
+- webhook/outbound Professional account ID used by live reply actions:
+  - `17841438662359631`
+
+Earlier OAuth credential context:
+
+- a durable Instagram OAuth credential was previously created for **povnailstudio.ph**;
+- its Professional account ID is distinct from the business account;
+- do not treat that credential as the business credential for **ishinaillab**;
+- that earlier credential remains useful as historical/test OAuth coverage but is not the identity used to send replies as **ishinaillab**.
+
+Working business send path after the regression repair:
+
+- Ishikeit resolves the sender Professional account;
+- the managed/App-Dashboard token is accepted only when its Meta `/me` identity matches `17841438662359631`;
+- successful published replies after PR #49 prove the current business-token routing works for the actual **ishinaillab** account.
+
+### Instagram App Review state
+
+The integration itself is operational again, but App Review remains a separate unfinished track.
+
+Meta app:
+
+- App ID: `1042452472116584`
+- App name: **Ishikeit**
+- app mode: live
+- Business Verification: passing
+- Privacy Policy requirement: passing
+- latest known review status:
+  - `can_submit=true`
+  - `NO_SUBMISSION`
+  - no Advanced Access grants yet
+
+Requested permissions remain only:
+
+- `instagram_business_basic`
+- `instagram_business_manage_messages`
+
+Reviewer assets:
+
+- public reviewer page:
+  - `https://www.ishinaillab.com/instagram-connect-review/`
+- WordPress page ID:
+  - `21471`
+- final review copy:
+  - `docs/meta-instagram-app-review.md`
+
+The next App Review work is still:
+
+1. record the real uninterrupted screencast;
+2. upload the screencast with the prepared permission explanations and reviewer steps;
+3. submit the two permissions for Advanced Access;
+4. after approval, run an ordinary non-role customer DM test before declaring public-user Instagram messaging review-complete.
+
+Do not fabricate or synthesize review evidence.
+
+### Ishikeit repository state
+
+App repository:
+
+- `github.com/ishinaillab/ishikeit`
+- current `origin/main` at transfer:
+  - `2129601` — **Validate managed Instagram token at startup (#50)**
+- important recent ancestry:
+  - `4c38e64` — Fix Instagram managed-account token regression (#49)
+  - `b2bbd07` — Clarify saved production revision wording (#48)
+  - `092e84d` — Save latest Ishikeit continuation checkpoint (#47)
+  - `02b451c` — Finalize Instagram App Review package (#46)
+  - `ce25903` — Record final Instagram OAuth routing verification (#45)
+  - `8274c59` — Require OAuth-only Instagram routing when configured (#44)
+  - `8a2f395` — Enable Instagram account webhook subscriptions (#43)
+
+Database repository:
+
+- `github.com/ishinaillab/ishikeit-db`
+- current `main`:
+  - `94babed` — Add OAuth account aliases
+- key migrations already applied include:
+  - foundation
+  - extensible processor
+  - persisted partition keys
+  - operational attempts
+  - durable processing outcomes
+  - OAuth credentials
+  - Instagram data lifecycle
+  - OAuth account aliases
+- current alias migration:
+  - `20261003020000_oauth_account_aliases.sql`
+- do not redesign or remove the alias model; it is necessary because OAuth subject IDs and Professional account IDs are not interchangeable.
+
+### Current architecture
+
+Do not redesign the core.
+
+Current production architecture remains:
+
+- authenticated provider webhook ingress
+- Canonical Event Schema 2
+- durable PostgreSQL/Supabase inbound queue
+- provider-neutral processor
+- WordPress AI bridge / AI Engine as the conversational brain
+- durable generic action/outbox model
+- provider-specific outbound adapters
+- durable retry/dead-letter/attempt observability
+- account/provider partitioning
+- media-capable event/action contracts
+
+Keep future capabilities isolated behind provider/capability boundaries:
+
+- conversational messaging
+- Meta Leads
+- Meta Marketing API
+- TikTok Marketing
+- future platforms
+
+Marketing/lead-management operations must not be routed through the conversational message handler simply because they come from Meta or TikTok.
+
+### WordPress / AI bridge stack — verified live at transfer
+
+Live WordPress site:
+
+- canonical site: `https://www.ishinaillab.com/`
+
+Directly relevant active plugins verified by live `wp plugin list`:
+
+- **Ishi AI Bridge** — active, version `0.3.0`
+  - current Ishikeit WordPress bridge family;
+  - production bridge endpoint remains `https://www.ishinaillab.com/wp-json/ishi-ai/v1`.
+- **Ishi Social AI Gateway** — active, version `1.1.1`
+  - an audit-copy duplicate is installed but inactive;
+  - do not confuse this older gateway surface with the current Ishikeit bridge route.
+- **AI Engine (Pro)** — active, version `3.8.0`
+  - update `3.8.3` is available;
+  - do not update during messaging stabilization without deliberate compatibility review.
+- **AI Provider for OpenAI** — active, version `1.2.0`.
+- **Easy MCP AI - Connector for Claude, ChatGPT & SEO Data** — active, version `2.0.1`.
+- **WPVibe** — active, version `1.20.0`
+  - update `1.20.1` is available;
+  - WPVibe is the working WordPress connector in the current environment.
+
+Legacy/auxiliary plugin state relevant to continuity:
+
+- **Ishi Domain Migration Helper** — inactive, version `1.1.0`.
+- **Ishi RAG Query Normalizer** — inactive, version `0.4.2`.
+- inactive Ishi Social AI Gateway audit copy exists at version `1.1.1`.
+
+### Locked/custom plugins that must remain untouched unless the user explicitly authorizes changes
+
+Verified active versions:
+
+- **Ishi LatePoint Agent Portal** — `0.7.3`
+- **Ishi LatePoint Instant** — `1.9.0`
+- **Ishi Elementor Fix** — `4.3.0`
+
+Preserve the previously established locked-plugin rule. Do not modify these merely because work continues on Ishikeit.
+
+Other relevant live scheduling stack:
+
+- LatePoint — active, `5.7.3`
+- LatePoint Pro Features — active, `1.7.0`
+- WooCommerce Payments integration for LatePoint — active
+
+### Domain / hosting continuity
+
+- public canonical domain remains:
+  - `https://www.ishinaillab.com/`
+- production Ishikeit Node service remains:
+  - `https://apps.ishinaillab.com/`
+- Hostinger Node application:
+  - Fastify
+  - npm
+  - build: `npm run build`
+  - entry: `dist/processes/http.js`
+- health endpoints remain:
+  - `/health/live`
+  - `/health/ready`
+
+Do not change Hostinger's internal shared-hosting primary-domain label from `povnailstudio.com` until rollback/archive implications are reverified.
+
+Keep the `zdm1002_*` WordPress rollback tables for now.
+
+### Provider status at transfer
+
+Messenger:
+
+- working;
+- recent inbound and published outbound production activity verified.
+
+Instagram:
+
+- working after PR #49 regression repair;
+- both **povnailstudio.com.ph** and **povnailstudio.ph** receive replies from **ishinaillab**;
+- recent durable published outbox evidence exists for both tester recipient identities;
+- historical dead letters from the regression remain only as audit history.
+
+WhatsApp:
+
+- working;
+- recent inbound and published outbound production activity verified.
+
+Telegram:
+
+- working;
+- recent inbound and published outbound activity verified.
+
+TikTok:
+
+- adapter and durable OAuth lifecycle remain implemented;
+- existing continuation state says activation depends on TikTok **TikTok accounts** permission-scope review;
+- no fresh TikTok production canary was independently captured in this transfer check;
+- continue from the latest TikTok permission/review state rather than reimplementing the adapter.
+
+### Next-chat start point
+
+Do not reopen the Instagram regression diagnosis. It is resolved in production.
+
+Start the next chat from these priorities:
+
+1. verify whether PR #50 / `2129601` has been deployed; if not, deploy/verify it before further Instagram changes;
+2. continue Instagram App Review from the real screencast/final submission step;
+3. continue TikTok activation only from the latest permission-review state;
+4. preserve the working Messenger, Instagram, WhatsApp, and Telegram paths while adding new capability families;
+5. keep provider-neutral architecture and current durable queue/outbox semantics;
+6. do not reintroduce the retired `/ishinaillab/ishi` project.
+
+This checkpoint is authoritative until a later explicit transfer checkpoint supersedes it.

@@ -1910,8 +1910,13 @@ Implemented boundary:
 
 Verification evidence so far:
 
-- provider/service focused suite: 7/7 passed;
+- provider/service focused suite: 8/8 passed after the retry-classification RED→GREEN check;
 - HTTP + provider focused suite: 26/26 passed;
-- process composition typecheck passed.
+- process composition typecheck passed;
+- full repository gate passed: lint, typecheck, 32 test files / 202 tests, and build;
+- `git diff --check` passed;
+- messaging-isolation scan found no `tiktok-marketing`/advertiser-capability crossover into adapters/channels/media/dispatch;
+- Marketing mutation scan found no advertiser/campaign/ad-group/ad write endpoint in `src/marketing`;
+- changed-line scan found no secret-like literal additions.
 
-The next gate is the full repository check, diff/isolation review, Node 24 CI, then merge/deploy if clean.
+The next gate is Node 24 CI, then merge/deploy if clean.

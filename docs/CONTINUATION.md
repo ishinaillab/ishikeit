@@ -1778,3 +1778,48 @@ Current working messaging status remains unchanged after deployment:
 - both **povnailstudio.com.ph** and **povnailstudio.ph** receive replies from **ishinaillab**
 
 Use this post-transfer section as the final deployment source of truth for the next chat.
+
+
+### TikTok Marketing OAuth foundation — implementation branch, not yet deployed
+
+Current implementation work is isolated on:
+
+- application branch: `feature/tiktok-marketing-oauth`
+- database branch: `ishinaillab/ishikeit-db:feature/nullable-oauth-access-expiry`
+
+This work is **not yet merged or deployed** and does not supersede the production revision recorded below.
+
+Approved boundary:
+
+- TikTok Business Messaging remains on the existing `tiktok` OAuth namespace and `tt_user` token/refresh lifecycle.
+- TikTok Marketing advertiser authorization uses the distinct durable credential namespace `tiktok-marketing`.
+- Both authorization families reuse the same TikTok API for Business developer app ID/secret.
+- Marketing-specific authorization URL and redirect URI are independently configurable from the Business Messaging account-holder OAuth URLs.
+- production advertiser callback is fixed to:
+  - `https://apps.ishinaillab.com/ishikeit/oauth/tiktok/advertiser/callback/`
+- protected operational routes are:
+  - `POST /ops/tiktok/marketing/oauth/start`
+  - `GET /ops/tiktok/marketing/oauth/status`
+- the callback requires TikTok's documented `auth_code`; an auxiliary `code` query parameter is not used as the authorization code.
+- Marketing credentials are stored encrypted, one row per verified advertiser ID.
+- Marketing credentials may have no `access_expires_at`; the accompanying database migration changes only `oauth_credentials.access_expires_at` from required to nullable.
+- existing Instagram and TikTok Business Messaging token managers still require a real access expiry and fail closed when it is missing.
+- Marketing authorization status exposes advertiser IDs only and never tokens/secrets.
+- Marketing authorization does not gate `/health/ready`; only the existing OAuth store readiness applies when the feature is configured.
+- no TikTok Marketing action adapter or mutation operation is implemented in this milestone.
+- campaign, ad-group, ad, creative, budget, bid, audience, lead, and delivery-changing calls remain explicitly out of scope.
+
+The database migration currently staged in `ishikeit-db` is:
+
+- `supabase/migrations/20261004010000_nullable_oauth_access_expiry.sql`
+
+Deployment dependency:
+
+1. validate/merge/apply the nullable-expiry database migration;
+2. only then merge/deploy the application branch;
+3. initially deploy with Marketing OAuth runtime variables unset;
+4. verify existing messaging and health remain unchanged;
+5. configure the Marketing authorization URL/redirect;
+6. complete a real advertiser authorization and a read-only provider proof;
+7. do not enable Marketing mutations because none are implemented.
+

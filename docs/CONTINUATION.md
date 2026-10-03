@@ -1885,3 +1885,33 @@ TikTok API-version resolution while the app is under review:
 - Ishikeit's tests already pin those exact advertiser-OAuth paths;
 - therefore keep `TIKTOK_BUSINESS_API_VERSION=v1.3` for the currently implemented OAuth flows and do not switch them to `v2.0` merely because the Scope of permission UI displays v2.0;
 - revisit this only when TikTok publishes an authoritative v2.0 advertiser-auth endpoint contract or the approved app exposes a documented replacement.
+
+
+### TikTok Marketing Ad Account Management proof — implementation branch
+
+Credential-independent work continued while the TikTok developer app is under review.
+
+Branch: `feature/tiktok-marketing-advertiser-proof`
+
+Implemented boundary:
+
+- dedicated `src/marketing/tiktok-advertiser.ts` module, separate from OAuth and messaging;
+- official read-only `GET /open_api/v1.3/advertiser/info/` Account Management call;
+- repeated `advertiser_ids` query parameters matching TikTok's official SDK;
+- `Access-Token` authentication only; no app secret or authorization-code material is sent to this endpoint;
+- provider response is reduced to advertiser IDs only;
+- durable credentials are grouped by access token so multiple independent advertiser grants can be verified correctly;
+- protected `GET /ops/tiktok/marketing/advertisers/verify`;
+- `409 not_authorized` when no Marketing credential exists;
+- generic `503 advertiser_verification_unavailable` for provider/transport failures;
+- no advertiser/account mutation and no automatic credential reconciliation;
+- new runtime capability marker `tiktokMarketingAdvertiserSchema: 1`;
+- activation remains behind the existing complete TikTok Marketing OAuth configuration gate, so production stays unchanged while the app is under review.
+
+Verification evidence so far:
+
+- provider/service focused suite: 7/7 passed;
+- HTTP + provider focused suite: 26/26 passed;
+- process composition typecheck passed.
+
+The next gate is the full repository check, diff/isolation review, Node 24 CI, then merge/deploy if clean.

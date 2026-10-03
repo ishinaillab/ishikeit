@@ -354,16 +354,17 @@ TikTok Marketing advertiser authorization is a separate capability family from T
 
 The current Marketing milestone requests only **Ad account management**. Authorization uses the provider's advertiser OAuth flow and stores one encrypted credential row per verified advertiser ID. Access expiry is optional because the current advertiser-token contract does not require Ishikeit to fabricate an expiry value.
 
-Operational verification is deliberately split into two read-only checks:
+Operational access is deliberately split into three read-only surfaces:
 
 - `GET /ops/tiktok/marketing/oauth/verify` re-runs advertiser discovery and verifies the durable OAuth grant is still coherent with stored advertiser IDs.
-- `GET /ops/tiktok/marketing/advertisers/verify` calls TikTok Account Management `GET /open_api/v1.3/advertiser/info/` with the stored advertiser IDs and `Access-Token` header. This proves the granted **Ad account management** permission itself rather than merely proving the OAuth token can be enumerated.
+- `GET /ops/tiktok/marketing/advertisers/verify` calls TikTok Account Management advertiser info with the stored advertiser IDs and `Access-Token` header. This proves the granted **Ad account management** permission itself rather than merely proving the OAuth token can be enumerated.
+- `GET /ops/tiktok/marketing/advertisers` returns a safe operational summary for the authorized advertisers.
 
-The advertiser proof requests no optional `fields` parameter and returns only advertiser IDs plus missing-ID diagnostics. Provider account names, balances, currencies, timezones, scopes, and access tokens are intentionally not exposed by this proof. Multiple distinct OAuth grants are verified against the advertiser IDs stored with each token. The proof performs no credential reconciliation, deletion, advertiser update, campaign mutation, or other write.
+The advertiser proof requests no optional `fields` parameter and returns only advertiser IDs plus missing-ID diagnostics. The summary endpoint uses an explicit provider-field allowlist: `advertiser_id`, `name`, `status`, `currency`, `timezone`, and `country`. Sensitive fields that the provider can return—such as email, telephone number, address, license data, and balance—are never copied into the summary response. Multiple distinct OAuth grants are queried only for the advertiser IDs stored with each token. None of these operations performs credential reconciliation, deletion, advertiser update, campaign mutation, or another write.
 
-Both Marketing operational proof routes are configuration-gated behind the complete Marketing OAuth setup and the existing operational bearer credential. They remain absent until TikTok approves the app and production Marketing variables are configured. `/health/ready` does not require a completed advertiser authorization.
+All Marketing operational routes are configuration-gated behind the complete Marketing OAuth setup and the existing operational bearer credential. They remain absent until TikTok approves the app and production Marketing variables are configured. `/health/ready` does not require a completed advertiser authorization.
 
-TikTok's current official SDK continues to map both advertiser OAuth and Account Management advertiser-info calls to `/open_api/v1.3/`. A portal permission catalog label of v2.0 must not be used by itself to rewrite these transport paths.
+TikTok's v2.0 guide states that endpoints with only a URL-version change may be omitted from the v2.0 API reference. TikTok's current official SDK and TikTok for Business MCP registry nevertheless still expose these advertiser operations at v1.3. Ishikeit therefore keeps the API version configuration explicit and does not infer a transport migration from either the portal permission label or documentation omission alone.
 
 ## Telegram Bot API adapter
 

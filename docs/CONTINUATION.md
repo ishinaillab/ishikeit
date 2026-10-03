@@ -1931,3 +1931,46 @@ Final verification and production readback:
 - `/ops/tiktok/marketing/oauth/status` and `/ops/tiktok/marketing/oauth/verify` likewise remain HTTP 404 in that intentionally inactive state.
 
 The next TikTok activation gate is provider approval plus the real App ID, App Secret, and generated Advertiser authorization URL. After those values are configured, run OAuth authorization first, then both read-only verification routes.
+
+
+### TikTok Marketing safe advertiser summaries — implementation branch
+
+Credential-independent development continued while the TikTok developer app is under review.
+
+Branch: `feature/tiktok-marketing-advertiser-summary`
+
+Implemented boundary:
+
+- extends the existing read-only TikTok Account Management client with `getAdvertiserAccounts()`;
+- requests only `advertiser_id`, `name`, `status`, `currency`, `timezone`, and `country`;
+- drops sensitive provider fields including email, phone, address, license data, and balance;
+- groups durable advertiser credentials by access-token grant and queries only the advertiser IDs belonging to that grant;
+- filters out provider rows for advertiser IDs not represented by the durable grant;
+- adds protected `GET /ops/tiktok/marketing/advertisers`;
+- returns `409 not_authorized` before durable advertiser authorization and generic `503 advertiser_list_unavailable` on provider failure;
+- bumps `tiktokMarketingAdvertiserSchema` from 1 to 2;
+- adds no new TikTok permission, no database migration, and no Marketing mutation.
+
+Version ruling:
+
+- TikTok's current v2.0 guide states that endpoints whose only change is the URL version can be omitted from the v2.0 reference;
+- TikTok's current official SDK and TikTok for Business MCP registry still expose advertiser OAuth and advertiser-info operations at v1.3;
+- keep Ishikeit's API version configuration explicit and leave the current production value at v1.3 until endpoint-specific v2.0 behavior is verified rather than inferring a migration from the portal label or documentation omission.
+
+TDD evidence so far:
+
+- safe advertiser client/service RED: missing `getAdvertiserAccounts()` / `listAccounts()`;
+- safe advertiser client/service GREEN: 11/11 focused tests;
+- HTTP RED: missing summary route plus expected advertiser schema bump;
+- HTTP + advertiser GREEN: 32/32 focused tests.
+
+Verification completed before PR:
+
+- full repository gate passed: lint, typecheck, 32 test files / 207 tests, and build;
+- `git diff --check` passed;
+- messaging-isolation scan found no advertiser-summary crossover into adapters/channels/media/dispatch;
+- Marketing mutation scan found no advertiser/campaign/ad-group/ad write endpoint in `src/marketing`;
+- changed-source scan found no flow of sensitive advertiser fields such as email, phone, address, license data, or balance;
+- changed-line scan found no secret-like literal additions.
+
+Next gate: PR and Node 24 CI. Do not merge/deploy without explicit production authorization because `main` auto-deploys on Hostinger.

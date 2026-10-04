@@ -2123,11 +2123,11 @@ Final CI and production readback:
 After TikTok grants Business Messaging access, configure `TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL=https://apps.ishinaillab.com/ishikeit/webhooks/tiktok`, verify the status route becomes protected/available, run one explicit reconcile, confirm provider read-back convergence, then continue Business Account OAuth and live canary activation.
 
 
-### TikTok Business Messaging outbound image upload/send — implementation branch
+### TikTok Business Messaging outbound image upload/send — deployed
 
 Credential-independent Business Messaging work continued while TikTok provider access remains external.
 
-Branch: `feature/tiktok-business-image-send`
+PR #67, including the stacked capability-preflight work from PR #68, was squash-merged to `main` as `74e658b8e51806efa3861e85a564178c6db8910c` and deployed by Hostinger.
 
 Implemented boundary:
 
@@ -2143,7 +2143,7 @@ Implemented boundary:
 - image messages with `replyTo` are rejected because TikTok referenced-message replies are text-only;
 - video, audio, document, and structured outbound content remain unsupported by the TikTok generic sender;
 - no database migration or new environment variable;
-- capability marker: `tiktokBusinessMessagingImageSendSchema: 1`.
+- deployed capability marker after automatic preflight integration: `tiktokBusinessMessagingImageSendSchema: 2`.
 
 Failure semantics:
 
@@ -2186,15 +2186,24 @@ Verification completed before PR:
 - the existing TikTok adapter Business Account target guard remains intact;
 - changed-line scan found no secret-like literal additions.
 
-Next gate: PR and Node 24 CI. Do not merge/deploy without explicit production authorization because `main` auto-deploys Hostinger.
+Final CI and production readback:
+
+- PR #68 was merged into PR #67's feature branch as `0207eeee177efb6122545ca56fe603e1ac505cf1`;
+- the exact combined PR #67 head passed Node 24 CI, PHP lint, and context continuity;
+- PR #67 was squash-merged to `main` as `74e658b8e51806efa3861e85a564178c6db8910c`;
+- production `/health/capabilities` now reports `tiktokBusinessMessagingImageSendSchema: 2`;
+- `tiktokBusinessMessagingReadSchema: 1`, `tiktokBusinessMessagingWebhookSchema: 1`, `tiktokMarketingOAuthSchema: 2`, and `tiktokMarketingAdvertiserSchema: 2` remain unchanged;
+- production `/health/live` remains HTTP 200 / `ok`;
+- production `/health/ready` remains HTTP 200 / `ready`;
+- processor and action-dispatch runtime flags remain enabled;
+- TikTok Business Messaging capability/conversation/webhook/OAuth ops routes remain HTTP 404 while Business Messaging provider credentials/account activation are intentionally unset.
+
+The image sender is now production-deployed but dormant until TikTok Business Messaging access, app/account authorization, and runtime configuration are completed.
 
 
-### TikTok Business Messaging automatic IMAGE_SEND preflight — implementation branch
+### TikTok Business Messaging automatic IMAGE_SEND preflight — deployed with PR #67
 
-Stacked on the outbound-image milestone while production remains unchanged.
-
-Branch: `feature/tiktok-image-capability-preflight`
-Base branch: `feature/tiktok-business-image-send` / PR #67
+This work was developed as PR #68 on `feature/tiktok-image-capability-preflight`, then merged into PR #67 before the production merge.
 
 Implemented boundary:
 
@@ -2244,4 +2253,4 @@ Verification completed before stacked PR:
 - stacked source diff introduces no additional Business Messaging mutation endpoint;
 - changed-line scan found no secret-like literal additions.
 
-Next gate: stacked PR against `feature/tiktok-business-image-send` and Node 24 CI. Do not merge/deploy either stacked layer without explicit production authorization.
+Deployment state: included in PR #67 and live in production under `tiktokBusinessMessagingImageSendSchema: 2`.

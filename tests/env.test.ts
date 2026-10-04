@@ -153,6 +153,20 @@ describe("environment", () => {
     });
 
     expect(env.TIKTOK_COMMENT_TO_MESSAGE_ENABLED).toBe(true);
+
+    expect(loadEnvironment({
+      ...productionBase,
+      OPS_METRICS_TOKEN: "o".repeat(32),
+      TIKTOK_BUSINESS_APP_ID: "app-123",
+      TIKTOK_BUSINESS_APP_SECRET: "s".repeat(32),
+      TIKTOK_BUSINESS_AUTHORIZATION_URL:
+        "https://business-api.tiktok.com/portal/auth?app=123",
+      TIKTOK_BUSINESS_REDIRECT_URI:
+        "https://apps.ishinaillab.com/ishikeit/oauth/tiktok/callback/",
+      OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: encryptionKey,
+      TIKTOK_BUSINESS_ID: "business-1",
+      TIKTOK_COMMENT_TO_MESSAGE_ENABLED: "false"
+    }).TIKTOK_COMMENT_TO_MESSAGE_ENABLED).toBe(false);
   });
 
   it("rejects unsafe TikTok Business Messaging webhook callback URLs in production", () => {

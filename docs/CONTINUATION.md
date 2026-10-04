@@ -2254,3 +2254,50 @@ Verification completed before stacked PR:
 - changed-line scan found no secret-like literal additions.
 
 Deployment state: included in PR #67 and live in production under `tiktokBusinessMessagingImageSendSchema: 2`.
+
+### TikTok Business Messaging Comment-to-Message — implementation branch
+
+Credential-independent Business Messaging work continued on `feature/tiktok-comment-to-message` / draft PR #71. Production remains unchanged.
+
+Provider contract used by this milestone:
+
+- TikTok's current Business Messaging documentation lists Comment-to-Message as a first-class Direct Messages capability with separate enable/disable and status operations;
+- the v1.3 provider contract uses `/open_api/v1.3/business/message/direct_reply/get/` and `/open_api/v1.3/business/message/direct_reply/update/` with `direct_reply_type=COMMENT_TO_MESSAGE`;
+- enabled accounts can receive the `im_receive_high_intent_comment` webhook event containing the comment identifier/text and a stable user identifier;
+- a private comment reply is submitted through the existing Business Messaging send endpoint using `direct_reply.reply_type=COMMENT_REPLY` and `comment_reply.comment_id`, rather than a conversation recipient;
+- this milestone intentionally keeps Comment-to-Message direct replies text-only and treats provider eligibility/policy rejection as a provider failure rather than bypassing TikTok controls.
+
+Implemented boundary:
+
+- adds a TikTok Comment-to-Message client/controller with provider status read, enable/disable update, desired-state comparison, explicit reconcile, and post-update read-back verification;
+- adds optional `TIKTOK_COMMENT_TO_MESSAGE_ENABLED`; when unset, Ishikeit does not expose the Comment-to-Message management service and does not mutate provider configuration;
+- management requires the existing Business Account OAuth credential, `TIKTOK_BUSINESS_ID`, and protected ops bearer authentication;
+- protected routes are `GET /ops/tiktok/messaging/comment-to-message/status` and `POST /ops/tiktok/messaging/comment-to-message/reconcile`;
+- normalizes `im_receive_high_intent_comment` into canonical `messaging / comment.high_intent.received` events with stable comment-event deduplication and user-scoped partition ordering;
+- routes those events through the existing WordPress AI turn boundary rather than a TikTok-only AI pipeline;
+- emits a distinct provider action `tiktok / messaging / comment_to_message.reply` so TikTok direct-reply semantics do not pollute generic `message.send`;
+- the TikTok action adapter sends one text reply through the provider's `direct_reply` payload and rejects non-text output or cross-account targets;
+- generic TikTok conversation text/image messaging remains unchanged;
+- capability marker: `tiktokBusinessMessagingCommentToMessageSchema: 1`;
+- no database migration and no provider activation are part of this branch.
+
+Safety and activation:
+
+- the feature is dormant by default because `TIKTOK_COMMENT_TO_MESSAGE_ENABLED` is optional and intentionally absent from the active production configuration;
+- no startup auto-reconcile was added; provider mutation occurs only through the authenticated reconcile operation after an operator deliberately configures desired state;
+- TikTok remains the source of truth for account, geography, age, comment-window, prior-reply, and conversation eligibility; Ishikeit does not attempt to bypass provider restrictions;
+- production activation still depends on TikTok Business Messaging approval, Business Account authorization/eligibility, explicit environment configuration, provider status read-back, and a controlled live canary.
+
+TDD evidence:
+
+- the first PR commit (`627db1aa7440ed5850f86424a7433b1785d63a8c`) contained only the new Comment-to-Message tests and produced the expected failing CI run before production implementation;
+- implementation then added the provider control plane, high-intent webhook normalization, direct-reply sender/adapter, AI event handler, protected ops routes, environment validation, runtime capability marker, and process wiring.
+
+Verification state at this checkpoint:
+
+- PHP lint is green;
+- the first implementation CI reached Node lint and exposed only strict type-safe test-fixture lint issues, which were corrected on the branch;
+- the context-continuity job correctly required this continuation update;
+- full Node 24 lint/typecheck/test/build and final PR CI are still required before the branch can be called mergeable;
+- draft PR #71 remains unmerged and undeployed.
+

@@ -2237,7 +2237,7 @@ TDD evidence:
 Verification completed before stacked PR:
 
 - full repository gate passed: lint, typecheck, 34 test files / 244 tests, and build;
-- stacked `git diff --check` is required clean after documentation normalization;
+- stacked `git diff --check` passed after documentation normalization;
 - stacked diff contains no Supabase/database migration and no environment/configuration change;
 - sender diff contains no hard-coded `SINGLE` or `STRANGER` fallback;
 - source ordering confirms capability preflight occurs before image download and media upload;

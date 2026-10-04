@@ -2278,7 +2278,6 @@ Implemented boundary:
 - emits a distinct provider action `tiktok / messaging / comment_to_message.reply` so TikTok direct-reply semantics do not pollute generic `message.send`;
 - the TikTok action adapter sends one text reply through the provider's `direct_reply` payload and rejects non-text output or cross-account targets;
 - generic TikTok conversation text/image messaging remains unchanged;
-- capability marker: `tiktokBusinessMessagingCommentToMessageSchema: 1`;
 - no database migration and no provider activation are part of this branch.
 
 Safety and activation:
@@ -2295,9 +2294,11 @@ TDD evidence:
 
 Verification state at this checkpoint:
 
+- the initial test-only commit produced the expected RED CI result before production implementation;
+- strict test-fixture lint findings and the exact runtime-contract regression exposed during implementation were corrected without weakening repository checks;
+- Node 24 CI is green through the full `npm run check` gate: lint, typecheck, 35 test files / 252 tests, and build;
 - PHP lint is green;
-- the first implementation CI reached Node lint and exposed only strict type-safe test-fixture lint issues, which were corrected on the branch;
-- the context-continuity job correctly required this continuation update;
-- full Node 24 lint/typecheck/test/build and final PR CI are still required before the branch can be called mergeable;
+- context-continuity is green after this durable checkpoint update;
+- the feature remains credential-independent in CI; live TikTok provider eligibility, status read-back, high-intent-comment ingress, and direct-reply canary are intentionally unverified until Business Messaging access and the Business Account are activated;
 - draft PR #71 remains unmerged and undeployed.
 

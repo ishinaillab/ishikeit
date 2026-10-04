@@ -58,6 +58,7 @@ const schema = z.object({
   TIKTOK_BUSINESS_AUTHORIZATION_URL: z.string().url().optional(),
   TIKTOK_BUSINESS_REDIRECT_URI: z.string().url().optional(),
   TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL: z.string().url().optional(),
+  TIKTOK_COMMENT_TO_MESSAGE_ENABLED: booleanFromEnv.optional(),
   TIKTOK_MARKETING_AUTHORIZATION_URL: z.string().url().optional(),
   TIKTOK_MARKETING_REDIRECT_URI: z.string().url().optional(),
   TIKTOK_BUSINESS_ID: z.string().min(1).max(256).optional(),
@@ -210,6 +211,28 @@ const schema = z.object({
       code: "custom",
       path: ["TIKTOK_BUSINESS_ID"],
       message: "TikTok Business Account activation requires the complete Business Messaging OAuth configuration"
+    });
+  }
+
+  if (
+    value.TIKTOK_COMMENT_TO_MESSAGE_ENABLED !== undefined
+    && value.TIKTOK_BUSINESS_ID === undefined
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["TIKTOK_COMMENT_TO_MESSAGE_ENABLED"],
+      message: "TikTok Comment-to-Message management requires TIKTOK_BUSINESS_ID"
+    });
+  }
+
+  if (
+    value.TIKTOK_COMMENT_TO_MESSAGE_ENABLED !== undefined
+    && value.OPS_METRICS_TOKEN === undefined
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["OPS_METRICS_TOKEN"],
+      message: "TikTok Comment-to-Message management requires OPS_METRICS_TOKEN"
     });
   }
 

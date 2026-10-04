@@ -2193,7 +2193,7 @@ Next gate: PR and Node 24 CI. Do not merge/deploy without explicit production au
 
 Stacked on the outbound-image milestone while production remains unchanged.
 
-Branch: `feature/tiktok-image-capability-preflight`  
+Branch: `feature/tiktok-image-capability-preflight`
 Base branch: `feature/tiktok-business-image-send` / PR #67
 
 Implemented boundary:
@@ -2234,4 +2234,14 @@ TDD evidence:
 - focused integration after wiring: 56/56 across read client, sender, adapter, and HTTP;
 - focused typecheck passed after requiring the read client in the production sender-composition guard and completing HTTP controller doubles.
 
-Next gate: full repository check, stacked-diff security/isolation review, PR against `feature/tiktok-business-image-send`, and Node 24 CI. Do not merge/deploy either stacked layer without explicit production authorization.
+Verification completed before stacked PR:
+
+- full repository gate passed: lint, typecheck, 34 test files / 244 tests, and build;
+- stacked `git diff --check` is required clean after documentation normalization;
+- stacked diff contains no Supabase/database migration and no environment/configuration change;
+- sender diff contains no hard-coded `SINGLE` or `STRANGER` fallback;
+- source ordering confirms capability preflight occurs before image download and media upload;
+- stacked source diff introduces no additional Business Messaging mutation endpoint;
+- changed-line scan found no secret-like literal additions.
+
+Next gate: stacked PR against `feature/tiktok-business-image-send` and Node 24 CI. Do not merge/deploy either stacked layer without explicit production authorization.

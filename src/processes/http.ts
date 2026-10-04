@@ -4,6 +4,7 @@ import { ActionDispatcher } from "../dispatch/dispatcher.js";
 import { MetaMessagingAdapter } from "../adapters/meta/messaging.js";
 import { TelegramMessagingAdapter } from "../adapters/telegram/messaging.js";
 import { TikTokBusinessMessagingAdapter } from "../adapters/tiktok/messaging.js";
+import { TikTokCommentToMessageAdapter } from "../adapters/tiktok/comment-to-message.js";
 import { WordPressBrainClient } from "../brain/wordpress.js";
 import { buildServer } from "../http/server.js";
 import { MetaMediaResolver } from "../media/meta.js";
@@ -18,6 +19,7 @@ import { PostgresInboundEventRepository, PostgresInboundStore } from "../persist
 import { PostgresOutboxStore } from "../persistence/outbox.js";
 import { PostgresDatabase } from "../persistence/postgres.js";
 import { MessageReceivedHandler } from "../processing/message-handler.js";
+import { TikTokHighIntentCommentHandler } from "../processing/tiktok-comment-to-message-handler.js";
 import { EventHandlerRegistry } from "../processing/registry.js";
 import { InboundProcessorWorker } from "../workers/inbound-processor-worker.js";
 import { OutboxWorker } from "../workers/outbox-worker.js";
@@ -37,6 +39,10 @@ import {
 } from "../marketing/tiktok-advertiser.js";
 import { TikTokAccessTokenManager, tiktokCredentialCanRefresh } from "../auth/tiktok-token-manager.js";
 import { TikTokBusinessMessagingReadClient } from "../messaging/tiktok-business-read.js";
+import {
+  TikTokBusinessCommentToMessageClient,
+  TikTokBusinessCommentToMessageService
+} from "../messaging/tiktok-comment-to-message.js";
 import {
   TikTokBusinessWebhookClient,
   TikTokBusinessWebhookService
@@ -236,6 +242,28 @@ const tiktokBusinessMessagingRead = (
       requestTimeoutMs: env.TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS
     });
 
+const tiktokCommentToMessageClient = (
+  env.TIKTOK_COMMENT_TO_MESSAGE_ENABLED === undefined
+  || tiktokAccessTokenManager === undefined
+  || env.TIKTOK_BUSINESS_ID === undefined
+)
+  ? undefined
+  : new TikTokBusinessCommentToMessageClient({
+      businessId: env.TIKTOK_BUSINESS_ID,
+      accessTokenProvider: tiktokAccessTokenManager,
+      apiVersion: env.TIKTOK_BUSINESS_API_VERSION,
+      requestTimeoutMs: env.TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS
+    });
+const tiktokCommentToMessageService = (
+  tiktokCommentToMessageClient === undefined
+  || env.TIKTOK_COMMENT_TO_MESSAGE_ENABLED === undefined
+)
+  ? undefined
+  : new TikTokBusinessCommentToMessageService({
+      expectedEnabled: env.TIKTOK_COMMENT_TO_MESSAGE_ENABLED,
+      client: tiktokCommentToMessageClient
+    });
+
 const tiktok = (
   env.TIKTOK_BUSINESS_APP_ID === undefined
   || env.TIKTOK_BUSINESS_APP_SECRET === undefined
@@ -350,6 +378,13 @@ const server = buildServer({
           service: tiktokBusinessMessagingRead
         }
       }),
+  ...(tiktokCommentToMessageService === undefined
+    ? {}
+    : {
+        tiktokCommentToMessage: {
+          service: tiktokCommentToMessageService
+        }
+      }),
   ...(tiktokOAuthService === undefined
     ? {}
     : {
@@ -428,13 +463,17 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
     && tiktokAccessTokenManager !== undefined
     && tiktokBusinessMessagingRead !== undefined
   ) {
-    dispatcher.register(new TikTokBusinessMessagingAdapter(new TikTokBusinessSender({
+    const tiktokBusinessSender = new TikTokBusinessSender({
       businessId: env.TIKTOK_BUSINESS_ID,
       accessTokenProvider: tiktokAccessTokenManager,
       imageCapabilityResolver: tiktokBusinessMessagingRead,
       apiVersion: env.TIKTOK_BUSINESS_API_VERSION,
       requestTimeoutMs: env.TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS
-    })));
+    });
+    dispatcher.register(new TikTokBusinessMessagingAdapter(tiktokBusinessSender));
+    if (env.TIKTOK_COMMENT_TO_MESSAGE_ENABLED === true) {
+      dispatcher.register(new TikTokCommentToMessageAdapter(tiktokBusinessSender));
+    }
   }
 
   outboundWorker = new OutboxWorker({ store: queue, dispatcher, logger });
@@ -501,6 +540,9 @@ if (env.PROCESSOR_ENABLED) {
 
   const handlers = new EventHandlerRegistry();
   handlers.register(new MessageReceivedHandler(brain));
+  if (env.TIKTOK_COMMENT_TO_MESSAGE_ENABLED === true) {
+    handlers.register(new TikTokHighIntentCommentHandler(brain));
+  }
 
   processorWorker = new InboundProcessorWorker({
     queue,

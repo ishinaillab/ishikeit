@@ -159,6 +159,38 @@ export class TikTokBusinessSender {
     );
   }
 
+  async sendCommentReply(
+    commentId: string,
+    part: ContentPart
+  ): Promise<TikTokSendResult> {
+    if (commentId.length < 1 || commentId.length > 2048) {
+      throw new DispatchFailure("TikTok Comment-to-Message comment ID is invalid", {
+        retryable: false
+      });
+    }
+    if (part.kind !== "text") {
+      throw new DispatchFailure(
+        "TikTok Comment-to-Message direct replies support text only",
+        { retryable: false }
+      );
+    }
+    if (part.text.length > 6000) {
+      throw new DispatchFailure("TikTok text exceeds the Business Messaging limit", {
+        retryable: false
+      });
+    }
+
+    return this.#request({
+      business_id: this.businessId,
+      message_type: "TEXT",
+      text: { body: part.text },
+      direct_reply: {
+        reply_type: "COMMENT_REPLY",
+        comment_reply: { comment_id: commentId }
+      }
+    });
+  }
+
   async #sendImage(
     conversationId: string,
     part: ImageContentPart,

@@ -42,9 +42,18 @@ describe("TikTokBusinessMessagingAdapter", () => {
         JSON.stringify({ code: 0, data: { message: { message_id: "tt-image-77" } } }),
         { status: 200 }
       ));
+    const imageCapabilityResolver = {
+      resolveConversationType: vi.fn().mockResolvedValue("SINGLE" as const),
+      checkImageSendCapability: vi.fn().mockResolvedValue({
+        conversationId: "conv-1",
+        conversationType: "SINGLE" as const,
+        imageSend: true
+      })
+    };
     const adapter = new TikTokBusinessMessagingAdapter(new TikTokBusinessSender({
       businessId: "business-1",
       accessToken: "access-token-123456789",
+      imageCapabilityResolver,
       fetchImpl
     }));
 
@@ -64,6 +73,13 @@ describe("TikTokBusinessMessagingAdapter", () => {
       }
     })).resolves.toEqual({ providerResourceId: "tt-image-77" });
 
+    expect(imageCapabilityResolver.resolveConversationType)
+      .toHaveBeenCalledWith("conv-1");
+    expect(imageCapabilityResolver.checkImageSendCapability)
+      .toHaveBeenCalledWith({
+        conversationId: "conv-1",
+        conversationType: "SINGLE"
+      });
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 

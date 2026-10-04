@@ -12,6 +12,17 @@ function requestUrl(value: string | URL | Request): string {
   return value instanceof URL ? value.toString() : value.url;
 }
 
+function allowedImageCapability(conversationType: "SINGLE" | "STRANGER" = "SINGLE") {
+  return {
+    resolveConversationType: vi.fn().mockResolvedValue(conversationType),
+    checkImageSendCapability: vi.fn().mockResolvedValue({
+      conversationId: "conv-1",
+      conversationType,
+      imageSend: true
+    })
+  };
+}
+
 describe("TikTokBusinessSender", () => {
   it("sends text to a conversation and returns the provider message ID", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
@@ -57,6 +68,85 @@ describe("TikTokBusinessSender", () => {
     });
   });
 
+  it("requires a capability resolver for otherwise-valid image sends", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const sender = new TikTokBusinessSender({
+      businessId: "business-1",
+      accessToken: "access-token-123456789",
+      fetchImpl
+    });
+
+    await expect(sender.send("conv-1", {
+      kind: "image",
+      source: { kind: "url", value: "https://cdn.example.test/image.jpg" },
+      mimeType: "image/jpeg"
+    })).rejects.toMatchObject({
+      retryable: false,
+      ambiguous: false
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("resolves conversation type and blocks image download when IMAGE_SEND is unavailable", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const capability = {
+      resolveConversationType: vi.fn().mockResolvedValue("STRANGER" as const),
+      checkImageSendCapability: vi.fn().mockResolvedValue({
+        conversationId: "conv-1",
+        conversationType: "STRANGER" as const,
+        imageSend: false
+      })
+    };
+    const sender = new TikTokBusinessSender({
+      businessId: "business-1",
+      accessToken: "access-token-123456789",
+      imageCapabilityResolver: capability,
+      fetchImpl
+    });
+
+    await expect(sender.send("conv-1", {
+      kind: "image",
+      source: { kind: "url", value: "https://cdn.example.test/image.jpg" },
+      mimeType: "image/jpeg"
+    })).rejects.toMatchObject({
+      retryable: false,
+      ambiguous: false
+    });
+    expect(capability.resolveConversationType).toHaveBeenCalledWith("conv-1");
+    expect(capability.checkImageSendCapability).toHaveBeenCalledWith({
+      conversationId: "conv-1",
+      conversationType: "STRANGER"
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("maps transient capability-resolution failures as retryable and non-ambiguous", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const capability = {
+      resolveConversationType: vi.fn().mockRejectedValue(
+        Object.assign(new Error("provider temporarily unavailable"), { retryable: true })
+      ),
+      checkImageSendCapability: vi.fn()
+    };
+    const sender = new TikTokBusinessSender({
+      businessId: "business-1",
+      accessToken: "access-token-123456789",
+      imageCapabilityResolver: capability,
+      fetchImpl
+    });
+
+    await expect(sender.send("conv-1", {
+      kind: "image",
+      source: { kind: "url", value: "https://cdn.example.test/image.jpg" },
+      mimeType: "image/jpeg"
+    })).rejects.toMatchObject({
+      retryable: true,
+      ambiguous: false
+    });
+    expect(capability.checkImageSendCapability).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("downloads, uploads, and sends a JPG image to a conversation", async () => {
     const imageBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
     const fetchImpl = vi.fn<typeof fetch>()
@@ -83,9 +173,11 @@ describe("TikTokBusinessSender", () => {
         }),
         { status: 200, headers: { "content-type": "application/json" } }
       ));
+    const capability = allowedImageCapability("SINGLE");
     const sender = new TikTokBusinessSender({
       businessId: "business-1",
       accessToken: "access-token-123456789",
+      imageCapabilityResolver: capability,
       fetchImpl
     });
 
@@ -97,6 +189,11 @@ describe("TikTokBusinessSender", () => {
       sizeBytes: imageBytes.byteLength
     })).resolves.toEqual({ providerMessageId: "tt-image-msg-1" });
 
+    expect(capability.resolveConversationType).toHaveBeenCalledWith("conv-1");
+    expect(capability.checkImageSendCapability).toHaveBeenCalledWith({
+      conversationId: "conv-1",
+      conversationType: "SINGLE"
+    });
     expect(fetchImpl).toHaveBeenCalledTimes(3);
 
     const [downloadUrl, downloadInit] = fetchImpl.mock.calls[0]!;
@@ -227,6 +324,7 @@ describe("TikTokBusinessSender", () => {
       const sender = new TikTokBusinessSender({
         businessId: "business-1",
         accessToken: "access-token-123456789",
+        imageCapabilityResolver: allowedImageCapability(),
         fetchImpl
       });
 
@@ -251,6 +349,7 @@ describe("TikTokBusinessSender", () => {
     const sender = new TikTokBusinessSender({
       businessId: "business-1",
       accessToken: "access-token-123456789",
+      imageCapabilityResolver: allowedImageCapability(),
       fetchImpl
     });
 

@@ -162,7 +162,7 @@ Implemented messaging contract:
 - deterministic provider-event deduplication and per-conversation partitioning
 - inbound text, image, video, share-post, and structured-message normalization
 - inbound image/video provider-media resolution only after webhook ACK
-- `tiktok / messaging / message.send` with generic outbound text and image replies
+- `tiktok / messaging / message.send` with generic outbound text and JPG/PNG image replies; image sends resolve TikTok's live conversation type and require `IMAGE_SEND` capability before media transfer
 - provider-specific throttling/transport failure classification
 - Business Account target validation and cross-account webhook isolation
 

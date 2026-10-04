@@ -2283,6 +2283,7 @@ Implemented boundary:
 Safety and activation:
 
 - the feature is dormant by default because `TIKTOK_COMMENT_TO_MESSAGE_ENABLED` is optional and intentionally absent from the active production configuration;
+- the high-intent-comment handler and `comment_to_message.reply` adapter are registered only when the desired state is explicitly `true`; `false` keeps execution off while still allowing the protected control plane to reconcile TikTok's provider setting to disabled;
 - no startup auto-reconcile was added; provider mutation occurs only through the authenticated reconcile operation after an operator deliberately configures desired state;
 - TikTok remains the source of truth for account, geography, age, comment-window, prior-reply, and conversation eligibility; Ishikeit does not attempt to bypass provider restrictions;
 - production activation still depends on TikTok Business Messaging approval, Business Account authorization/eligibility, explicit environment configuration, provider status read-back, and a controlled live canary.

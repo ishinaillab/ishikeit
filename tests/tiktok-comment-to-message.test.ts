@@ -11,6 +11,21 @@ import {
 import type { InboundStore, StoredInboundEvent } from "../src/persistence/inbound.js";
 import { TikTokHighIntentCommentHandler } from "../src/processing/tiktok-comment-to-message-handler.js";
 
+
+function fetchUrl(input: RequestInfo | URL | undefined): URL {
+  if (input instanceof URL) return input;
+  if (typeof input === "string") return new URL(input);
+  if (input instanceof Request) return new URL(input.url);
+  throw new Error("expected fetch input");
+}
+
+function jsonRequestBody(init: RequestInit | undefined): unknown {
+  if (typeof init?.body !== "string") {
+    throw new Error("expected JSON request body");
+  }
+  return JSON.parse(init.body) as unknown;
+}
+
 function highIntentEnvelope(commentId = "comment-1", uniqueIdentifier = "user-stable-1") {
   return {
     event: "im_receive_high_intent_comment",
@@ -116,14 +131,14 @@ describe("TikTok Comment-to-Message", () => {
     });
 
     expect(fetchImpl).toHaveBeenCalledTimes(3);
-    const getUrl = new URL(String(fetchImpl.mock.calls[0]?.[0]));
+    const getUrl = fetchUrl(fetchImpl.mock.calls[0]?.[0]);
     expect(getUrl.pathname).toBe("/open_api/v1.3/business/message/direct_reply/get/");
     expect(getUrl.searchParams.get("business_id")).toBe("business-1");
     expect(getUrl.searchParams.get("direct_reply_type")).toBe("COMMENT_TO_MESSAGE");
 
     const updateInit = fetchImpl.mock.calls[1]?.[1];
     expect(updateInit?.method).toBe("POST");
-    expect(JSON.parse(String(updateInit?.body))).toEqual({
+    expect(jsonRequestBody(updateInit)).toEqual({
       business_id: "business-1",
       direct_reply_type: "COMMENT_TO_MESSAGE",
       operation_status: "ENABLE"
@@ -170,7 +185,7 @@ describe("TikTok Comment-to-Message", () => {
     )).resolves.toEqual({ providerMessageId: "reply-message-1" });
 
     const init = fetchImpl.mock.calls[0]?.[1];
-    const payload = JSON.parse(String(init?.body));
+    const payload = jsonRequestBody(init);
     expect(payload).toEqual({
       business_id: "business-1",
       message_type: "TEXT",

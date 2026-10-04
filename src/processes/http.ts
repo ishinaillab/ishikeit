@@ -471,7 +471,9 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
       requestTimeoutMs: env.TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS
     });
     dispatcher.register(new TikTokBusinessMessagingAdapter(tiktokBusinessSender));
-    dispatcher.register(new TikTokCommentToMessageAdapter(tiktokBusinessSender));
+    if (env.TIKTOK_COMMENT_TO_MESSAGE_ENABLED === true) {
+      dispatcher.register(new TikTokCommentToMessageAdapter(tiktokBusinessSender));
+    }
   }
 
   outboundWorker = new OutboxWorker({ store: queue, dispatcher, logger });
@@ -538,7 +540,9 @@ if (env.PROCESSOR_ENABLED) {
 
   const handlers = new EventHandlerRegistry();
   handlers.register(new MessageReceivedHandler(brain));
-  handlers.register(new TikTokHighIntentCommentHandler(brain));
+  if (env.TIKTOK_COMMENT_TO_MESSAGE_ENABLED === true) {
+    handlers.register(new TikTokHighIntentCommentHandler(brain));
+  }
 
   processorWorker = new InboundProcessorWorker({
     queue,

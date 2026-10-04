@@ -2121,3 +2121,127 @@ Final CI and production readback:
 - existing TikTok Business Messaging read routes also remain HTTP 404 while Business Account OAuth/account activation is unconfigured.
 
 After TikTok grants Business Messaging access, configure `TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL=https://apps.ishinaillab.com/ishikeit/webhooks/tiktok`, verify the status route becomes protected/available, run one explicit reconcile, confirm provider read-back convergence, then continue Business Account OAuth and live canary activation.
+
+
+### TikTok Business Messaging outbound image upload/send — implementation branch
+
+Credential-independent Business Messaging work continued while TikTok provider access remains external.
+
+Branch: `feature/tiktok-business-image-send`
+
+Implemented boundary:
+
+- extends the existing `tiktok / messaging / message.send` adapter to accept portable `kind=image` content in addition to text;
+- provider flow is `HTTPS image source -> POST /open_api/v1.3/business/message/media/upload/ -> media_id -> POST /open_api/v1.3/business/message/send/`;
+- upload request uses multipart form fields `business_id`, `file`, and `media_type=IMAGE`;
+- send request uses `recipient_type=CONVERSATION`, the conversation ID, `message_type=IMAGE`, and `image.media_id`;
+- supported provider formats are JPG/JPEG and PNG only;
+- provider image-size ceiling is enforced at 3 MB before and after download;
+- only portable `source.kind=url` is accepted for outbound image upload in this milestone;
+- source URL must be safe HTTPS with no URL credentials, no localhost/private IP literal, and redirects constrained to the original host with a three-redirect ceiling;
+- TikTok image captions are rejected rather than silently dropped;
+- image messages with `replyTo` are rejected because TikTok referenced-message replies are text-only;
+- video, audio, document, and structured outbound content remain unsupported by the TikTok generic sender;
+- no database migration or new environment variable;
+- capability marker: `tiktokBusinessMessagingImageSendSchema: 1`.
+
+Failure semantics:
+
+- OAuth/token acquisition failure occurs before provider upload/send and remains non-ambiguous;
+- image-source download failure and provider media-upload failure are never delivery-ambiguous because no message has been submitted;
+- transient download/upload failures remain retryable;
+- only transport failure after the final message-send request begins is delivery-ambiguous, matching existing TikTok text-send semantics;
+- provider throttling codes `40100` and `51065` remain retryable.
+
+Capability-preflight baseline in PR #67:
+
+- TikTok documents `IMAGE_SEND` capability checks using both `conversation_id` and `conversation_type`;
+- allowed conversation types are `STRANGER` and `SINGLE`;
+- TikTok message webhooks and Ishikeit's current portable reply action do not carry `conversation_type`;
+- PR #67 intentionally did not guess the type and left automatic preflight to the next stacked milestone.
+
+Provider contract evidence:
+
+- current official TikTok Business Messaging API index lists Send a message, Upload an image, Download media, and Check capability as first-class Direct Messages operations;
+- the current generated Go SDK maps image upload to `/open_api/v1.3/business/message/media/upload/` and send to `/open_api/v1.3/business/message/send/`;
+- upload accepts multipart `business_id`, `file`, and `media_type=IMAGE`, supports JPG/PNG, and limits files to 3 MB;
+- uploaded `media_id` values are documented as valid for 30 days;
+- the send schema uses `message_type=IMAGE` plus `image.media_id` and does not allow a text+image payload.
+
+TDD evidence so far:
+
+- sender RED: existing text-only rejection caused the three intended new image-behavior failures while nine existing sender tests remained green;
+- sender GREEN: 12/12 focused sender tests;
+- dispatcher image integration: 3/3 adapter tests green;
+- runtime marker RED: only `tiktokBusinessMessagingImageSendSchema: 1` was missing while all other HTTP and adapter tests stayed green;
+- sender + adapter + HTTP GREEN: 43/43 focused tests.
+
+Verification completed before PR:
+
+- full repository gate passed: lint, typecheck, 34 test files / 238 tests, and build;
+- `git diff --check` passed;
+- changed-source scan found no TikTok video/audio/document send expansion and no video media-upload path;
+- outbound image source scope remains `source.kind=url` only;
+- no new environment/configuration variable was introduced;
+- the existing TikTok adapter Business Account target guard remains intact;
+- changed-line scan found no secret-like literal additions.
+
+Next gate: PR and Node 24 CI. Do not merge/deploy without explicit production authorization because `main` auto-deploys Hostinger.
+
+
+### TikTok Business Messaging automatic IMAGE_SEND preflight — implementation branch
+
+Stacked on the outbound-image milestone while production remains unchanged.
+
+Branch: `feature/tiktok-image-capability-preflight`
+Base branch: `feature/tiktok-business-image-send` / PR #67
+
+Implemented boundary:
+
+- extends `TikTokBusinessMessagingReadController` with `resolveConversationType(conversationId)`;
+- provider-backed resolver searches both TikTok conversation categories instead of guessing state:
+  - `SINGLE`: the business has previously responded;
+  - `STRANGER`: the user messaged the business before the business has accepted/responded;
+- the resolver fetches both type lists in parallel at TikTok's maximum page size of 100;
+- pagination continues for active categories until the conversation is found or both categories are exhausted;
+- pagination is bounded to 100 rounds and rejects missing/repeated cursors so a provider pagination loop cannot become unbounded;
+- if TikTok returns the same conversation in both type lists, resolution fails closed as inconsistent provider state;
+- an unresolved conversation fails as a retryable Business Messaging read error rather than being assigned a guessed type;
+- outbound image flow is now:
+  `local image validation -> resolve conversation type -> IMAGE_SEND capability check -> access token -> safe image download -> media upload -> message send`;
+- a valid image send requires a capability resolver; missing resolver fails non-retryably before provider media I/O;
+- `IMAGE_SEND=false` fails non-retryably before image download;
+- transient resolver/capability read failures are retryable but never delivery-ambiguous;
+- authorization/validation failures remain non-retryable;
+- text sends remain independent of the resolver;
+- production composition injects the already-existing `TikTokBusinessMessagingReadClient` into `TikTokBusinessSender`; no second provider client, credential, database table, or environment setting is introduced;
+- runtime marker advances from `tiktokBusinessMessagingImageSendSchema: 1` to `tiktokBusinessMessagingImageSendSchema: 2`.
+
+Provider-contract basis:
+
+- TikTok's conversation-list request requires a caller-selected `conversation_type` and supports `limit` 1–100 plus cursor pagination;
+- TikTok defines `STRANGER` as a conversation where the user has messaged the Business Account but the business has not yet accepted/responded;
+- TikTok defines `SINGLE` as a one-to-one conversation where the business has previously responded;
+- TikTok's `IMAGE_SEND` capability check requires both the exact conversation ID and one of those two conversation types.
+
+TDD evidence:
+
+- resolver RED: 3 intended failures because `resolveConversationType` did not exist; all 7 prior read-client tests remained green;
+- resolver GREEN: 10/10 read-client tests, including cross-type resolution, cursor pagination, and safe unresolved-state failure;
+- sender RED: 4 intended preflight failures while 11 prior sender behaviors remained green;
+- sender GREEN: 15/15 sender tests;
+- adapter RED: image dispatch correctly failed closed without a resolver while text/account-guard tests remained green;
+- focused integration after wiring: 56/56 across read client, sender, adapter, and HTTP;
+- focused typecheck passed after requiring the read client in the production sender-composition guard and completing HTTP controller doubles.
+
+Verification completed before stacked PR:
+
+- full repository gate passed: lint, typecheck, 34 test files / 244 tests, and build;
+- stacked `git diff --check` passed after documentation normalization;
+- stacked diff contains no Supabase/database migration and no environment/configuration change;
+- sender diff contains no hard-coded `SINGLE` or `STRANGER` fallback;
+- source ordering confirms capability preflight occurs before image download and media upload;
+- stacked source diff introduces no additional Business Messaging mutation endpoint;
+- changed-line scan found no secret-like literal additions.
+
+Next gate: stacked PR against `feature/tiktok-business-image-send` and Node 24 CI. Do not merge/deploy either stacked layer without explicit production authorization.

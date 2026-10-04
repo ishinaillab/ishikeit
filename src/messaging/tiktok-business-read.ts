@@ -48,6 +48,9 @@ export interface TikTokBusinessImageCapability {
 }
 
 export interface TikTokBusinessMessagingReadController {
+  resolveConversationType(
+    conversationId: string
+  ): Promise<TikTokBusinessConversationType>;
   checkImageSendCapability(input: {
     conversationId: string;
     conversationType: TikTokBusinessConversationType;
@@ -180,6 +183,83 @@ implements TikTokBusinessMessagingReadController {
     this.#apiVersion = options.apiVersion ?? "v1.3";
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
     this.#fetch = options.fetchImpl ?? fetch;
+  }
+
+  async resolveConversationType(
+    conversationId: string
+  ): Promise<TikTokBusinessConversationType> {
+    validateConversationId(conversationId);
+
+    const states: Array<{
+      conversationType: TikTokBusinessConversationType;
+      cursor?: number;
+      done: boolean;
+      seenCursors: Set<number>;
+    }> = [
+      {
+        conversationType: "SINGLE",
+        done: false,
+        seenCursors: new Set<number>()
+      },
+      {
+        conversationType: "STRANGER",
+        done: false,
+        seenCursors: new Set<number>()
+      }
+    ];
+
+    for (let round = 0; round < 100; round++) {
+      const active = states.filter((state) => !state.done);
+      if (active.length === 0) break;
+
+      const pages = await Promise.all(active.map(async (state) => ({
+        state,
+        page: await this.listConversations({
+          conversationType: state.conversationType,
+          limit: 100,
+          ...(state.cursor === undefined ? {} : { cursor: state.cursor })
+        })
+      })));
+
+      const matches = pages
+        .filter(({ page }) => page.conversations.some(
+          (conversation) => conversation.conversationId === conversationId
+        ))
+        .map(({ state }) => state.conversationType);
+
+      if (matches.length === 1) return matches[0]!;
+      if (matches.length > 1) {
+        throw new TikTokBusinessMessagingReadError(
+          "TikTok returned the conversation in multiple conversation-type lists",
+          { retryable: true, stage: "conversation_list" }
+        );
+      }
+
+      for (const { state, page } of pages) {
+        if (!page.hasMore) {
+          state.done = true;
+          continue;
+        }
+
+        if (
+          page.cursor === undefined
+          || state.seenCursors.has(page.cursor)
+        ) {
+          throw new TikTokBusinessMessagingReadError(
+            "TikTok conversation pagination did not advance",
+            { retryable: true, stage: "conversation_list" }
+          );
+        }
+
+        state.seenCursors.add(page.cursor);
+        state.cursor = page.cursor;
+      }
+    }
+
+    throw new TikTokBusinessMessagingReadError(
+      "TikTok conversation type could not be resolved",
+      { retryable: true, stage: "conversation_list" }
+    );
   }
 
   async checkImageSendCapability(input: {

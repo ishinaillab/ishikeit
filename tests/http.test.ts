@@ -72,6 +72,7 @@ describe("webhook routes", () => {
       tiktokMarketingAdvertiserSchema: 2,
       tiktokBusinessMessagingReadSchema: 1,
       tiktokBusinessMessagingWebhookSchema: 1,
+      tiktokBusinessMessagingImageSendSchema: 2,
       runtime: {
         processorEnabled: false,
         actionDispatchEnabled: false,
@@ -447,6 +448,7 @@ describe("webhook routes", () => {
       verifyToken: "verify-token-1234",
       tiktokBusinessMessagingRead: {
         service: {
+          resolveConversationType: vi.fn(),
           checkImageSendCapability: vi.fn(),
           listConversations: vi.fn(),
           listMessages: vi.fn()
@@ -458,6 +460,7 @@ describe("webhook routes", () => {
   it("protects and serves TikTok Business Messaging capability, conversation, and message reads", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
     const token = "o".repeat(32);
+    const resolveConversationType = vi.fn().mockResolvedValue("SINGLE");
     const checkImageSendCapability = vi.fn().mockResolvedValue({
       conversationId: "conv+1",
       conversationType: "SINGLE",
@@ -494,6 +497,7 @@ describe("webhook routes", () => {
       opsMetricsToken: token,
       tiktokBusinessMessagingRead: {
         service: {
+          resolveConversationType,
           checkImageSendCapability,
           listConversations,
           listMessages
@@ -556,6 +560,7 @@ describe("webhook routes", () => {
   it("validates TikTok Business Messaging read query parameters before provider calls", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
     const token = "o".repeat(32);
+    const resolveConversationType = vi.fn();
     const checkImageSendCapability = vi.fn();
     const listConversations = vi.fn();
     const listMessages = vi.fn();
@@ -568,6 +573,7 @@ describe("webhook routes", () => {
       opsMetricsToken: token,
       tiktokBusinessMessagingRead: {
         service: {
+          resolveConversationType,
           checkImageSendCapability,
           listConversations,
           listMessages
@@ -630,6 +636,7 @@ describe("webhook routes", () => {
         opsMetricsToken: token,
         tiktokBusinessMessagingRead: {
           service: {
+            resolveConversationType: vi.fn(),
             checkImageSendCapability: vi.fn(),
             listConversations: vi.fn(),
             listMessages: vi.fn().mockRejectedValue(error)

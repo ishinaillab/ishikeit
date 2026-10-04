@@ -116,6 +116,101 @@ describe("TikTokBusinessMessagingReadClient", () => {
     expect(url.searchParams.get("cursor")).toBe("1791050000000");
   });
 
+
+  it("resolves a conversation type from TikTok's SINGLE and STRANGER lists", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0,
+        data: {
+          conversations: [{ conversation_id: "single-other" }],
+          has_more: false
+        }
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0,
+        data: {
+          conversations: [{ conversation_id: "conv+target" }],
+          has_more: false
+        }
+      }), { status: 200 }));
+    const client = new TikTokBusinessMessagingReadClient({
+      businessId: "business-1",
+      accessToken: "access-token-123456789",
+      fetchImpl
+    });
+
+    await expect(client.resolveConversationType("conv+target"))
+      .resolves.toBe("STRANGER");
+
+    const urls = fetchImpl.mock.calls.map(([raw]) => requestUrl(raw));
+    expect(urls).toHaveLength(2);
+    expect(urls[0]!.searchParams.get("conversation_type")).toBe("SINGLE");
+    expect(urls[1]!.searchParams.get("conversation_type")).toBe("STRANGER");
+    expect(urls.every((url) => url.searchParams.get("limit") === "100")).toBe(true);
+  });
+
+  it("paginates both conversation types until the target is found", async () => {
+    const response = (data: Record<string, unknown>) => new Response(
+      JSON.stringify({ code: 0, data }),
+      { status: 200 }
+    );
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({
+        conversations: [{ conversation_id: "single-1" }],
+        has_more: true,
+        cursor: 101
+      }))
+      .mockResolvedValueOnce(response({
+        conversations: [{ conversation_id: "stranger-1" }],
+        has_more: true,
+        cursor: 201
+      }))
+      .mockResolvedValueOnce(response({
+        conversations: [{ conversation_id: "target" }],
+        has_more: false
+      }))
+      .mockResolvedValueOnce(response({
+        conversations: [{ conversation_id: "stranger-2" }],
+        has_more: false
+      }));
+    const client = new TikTokBusinessMessagingReadClient({
+      businessId: "business-1",
+      accessToken: "access-token-123456789",
+      fetchImpl
+    });
+
+    await expect(client.resolveConversationType("target"))
+      .resolves.toBe("SINGLE");
+
+    const urls = fetchImpl.mock.calls.map(([raw]) => requestUrl(raw));
+    expect(urls[2]!.searchParams.get("conversation_type")).toBe("SINGLE");
+    expect(urls[2]!.searchParams.get("cursor")).toBe("101");
+    expect(urls[3]!.searchParams.get("conversation_type")).toBe("STRANGER");
+    expect(urls[3]!.searchParams.get("cursor")).toBe("201");
+  });
+
+  it("fails safely when TikTok cannot resolve a conversation type", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({
+        code: 0,
+        data: { conversations: [], has_more: false }
+      }),
+      { status: 200 }
+    ));
+    const client = new TikTokBusinessMessagingReadClient({
+      businessId: "business-1",
+      accessToken: "access-token-123456789",
+      fetchImpl
+    });
+
+    await expect(client.resolveConversationType("missing-conversation"))
+      .rejects.toMatchObject({
+        retryable: true,
+        stage: "conversation_list"
+      });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it("lists safe message history while dropping usernames, participant IDs, and profile images", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
       JSON.stringify({

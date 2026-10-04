@@ -1,3 +1,5 @@
+> Canonical current-state checkpoint: [docs/CURRENT_STATE.md](CURRENT_STATE.md). Read that file first when resuming Ishikeit work in a new chat. It consolidates the current repositories, production runtime, platform status, TikTok backlog, database state, WordPress AI Bridge, protected plugins, deployment invariants, and continuation rules as of 2026-10-04 08:27 Asia/Manila.
+
 # Ishikeit continuation handoff
 
 Updated: 2026-10-02

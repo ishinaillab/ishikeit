@@ -338,3 +338,11 @@ The earlier 404 for assumed URL \`/appointment/\` was **not a proven regression*
 - Official Qwery documentation and licensing/updater: https://doc.themerex.net/qwery/
 - Official Hostinger TUS upload API: https://developers.hostinger.com/
 - WordPress Apache access-control documentation: https://developer.wordpress.org/advanced-administration/server/web-server/httpd/
+
+
+### Later same-day verification — 2026-10-11
+
+- Through the official Hostinger read-only file API, inspected the previously generated security-maintenance report directly (it is blocked from public HTTP). The **2026-10-07 report** says official ThemeREX vendor version \`2.48.0\`, updated \`2026-10-05\`, and reports \`activation_code_valid_format=false\`, \`package=[]\`. Thus **2.48.0 was advertised by the vendor as of October 7**, but no corresponding authenticated package was downloaded; do not present this historical report as a current realtime update check.
+- Refreshed the existing \`ishi-trx-hotfix-selftest\` by activating the preexisting, inspected test helper through WP-CLI, reading its persisted result, and **deactivating the self-test again**. New test timestamp: \`2026-10-10T17:45:18+00:00\` (2026-10-11 Manila time). \`all_checks_pass=true\`. The three security function origins pointed to \`wp-content/mu-plugins/ishi-trx-security-hotfix.php\`. Loopback and cloud-instance metadata requests were blocked, ordinary HTTPS request succeeded, and test SVG sanitization removed unsafe scripts, foreign objects, event handlers, inline styles, and external references while preserving a safe path. These are **targeted mitigations**, not proof that all CVE attack paths are patched.
+- Verified published Appointment page slug via authenticated WP-CLI: \`nail-appointment-reservation\`. A correct URL GET returned 200. The \`/appointment/\` probe returning 404 was simply a wrong slug.
+- Following deactivation of the one-shot helper and activation/deactivation of the self-test, WordPress caches were purged by the WPVibe admin interface. No locked custom business plugin or active MU hotfix was modified.

@@ -264,3 +264,77 @@ Resume from this exact order:
 - The `wordpressnull.org` override was removed/contained; the official ThemeREX endpoint is `upgrade.themerex.net`.
 - No legitimate purchase code was found in connected Gmail; ThemeForest was not authenticated.
 - Do not reintroduce nulled/downloader code and do not bypass the license system.
+
+
+## Security remediation continuation — 2026-10-11 (verified live, after initial checkpoint)
+
+This follow-up supersedes earlier statements **only where new live evidence differs**. It is a checkpoint update, not a declaration that ThemeREX is patched. Do not deploy this checkpoint branch.
+
+### Authenticated connections and live installed state
+
+- Hostinger's official MCP API was successfully used from the authorized Windows desktop (authenticated file reads and a narrow upload). This is not an SSH login and does not imply general-purpose shell access to the web server.
+- WPVibe authenticated WordPress admin read/write (WP-CLI emulator) worked.
+- Live WordPress 7.1.3, PHP 8.3.35.
+- **Qwery Child Theme 3.8.0 is the active theme**; Qwery parent 3.8.0 is installed, not directly active (clarifies the initial checkpoint wording).
+- ThemeREX Addons is **2.45.0 and active**. No official update is offered through normal WP-CLI. The WordPress.org checksum service cannot verify this premium plugin.
+- WordPress option \`purchase_code_qwery\` remains the literal placeholder \`purchase_code\`. Do not treat local "activated" UI state as license evidence.
+- The authenticated WordPress core checksum check passed (3,338 files checked in the previous verification).
+
+### Source-code reinspection
+
+- Hostinger's official read API returned current \`wp-content/themes/qwery/includes/wp.php\` lines around \`qwery_get_upgrade_url()\`. The function builds its URL from \`qwery_storage_get( 'theme_upgrade_url' )\`, **not** a hardcoded \`wordpressnull.org\` download URL.
+- Hostinger's API returned \`wp-content/plugins/trx_addons/components/theme-panel/theme-panel.php\` lines around \`trx_addons_is_theme_activated()\`. **The currently inspected function is no longer unconditionally true.** It checks the local activated state, purchase-code format, and domain. This differs from the previously observed modified version. This proves the inspected checks were restored; it does **not** establish vendor authenticity or actual license entitlement.
+- Separately inspected \`themes/qwery/includes/plugins-installer/plugins-installer.php\` and \`plugins/trx_addons/components/theme-panel/installer/installer.php\` (via authenticated WPVibe read-only source). No unauthorized installer download host appeared in those inspected helpers.
+- A historical \`trx_addons\` 2.45.0 ZIP archive (1,120 PHP files) was scanned locally for selected indicators including \`wordpressnull.org\`, \`eval(base64_decode(\`, \`assert($_REQUEST/...)\`, and metadata IP \`169.254.169.254\`; no hits for these selected patterns. **Not a complete malware audit or an official package provenance verification.**
+
+### Newly discovered backup exposure and completed mitigation
+
+The one-shot WordPress plugin \`ishi-trx-security-maintenance\` (1.0.1) had previously written a \`report.json\` and **two** ~10 MB ThemeREX backup ZIP files under the *web-accessible* directory:
+
+\`wp-content/uploads/ishi-security-maintenance/\`
+
+The report and at least one backup were demonstrably publicly retrievable without authentication before the fix. This was a genuine information-exposure issue separate from the version CVEs.
+
+Mitigation **completed and verified**:
+
+1. Preserved a local off-server copy of the 2026-10-07 17:05:52 UTC backup ZIP on the authorized desktop at \`C:\\Users\\MBDS\\Documents\\IshiSecurity\\trx_addons-pre-remediation-20261011-verified-copy.zip\`, 10,244,477 bytes. Its SHA-256 was matched to the existing maintenance report: \`28bfd3b0f7f7ec18499deb0d936629cedf5bd13c59243698d1a884f3a7e08fcc\`. **Treat this as a recovery/evidence copy of untrusted installed code, never as official upgrade media.**
+2. Enabled Cloudflare zone \`ishinaillab.com\` WAF custom block rule with description \`Block public access to ThemeREX maintenance backup and report\`. Rule ID \`c5149b6f2ed1430fb1e1c9558161dccd\`; its path expression matches \`/wp-content/uploads/ishi-security-maintenance/\` on \`www.ishinaillab.com\`. Existing uploads PHP-blocking rule was preserved.
+3. Detected that **direct access to Hostinger origin** using \`curl --resolve www.ishinaillab.com:443:147.93.78.149\` still returned 200 for the report even after the Cloudflare rule: WAF alone was insufficient.
+4. Used Hostinger's officially documented authenticated TUS upload API to **create a new, directory-local** \`wp-content/uploads/ishi-security-maintenance/.htaccess\` file (no existing file was listed). Its complete restrictive content is:
+
+   \`\`\`apache
+   # Deny all HTTP access to historical ThemeREX maintenance backups.
+   Require all denied
+   \`\`\`
+
+   This does not modify the root WordPress rewrite rules or the normal uploads directory. Upload creation returned HTTP 201 and completion HTTP 204 with complete byte offset.
+5. Re-tested \`report.json\` and **both** historical ZIP archives. Each returned **403 both through Cloudflare and when bypassing Cloudflare directly to Hostinger origin**. The directory index returned direct-origin 403 as well. Protection is now in place on both layers; do not remove it until the archives are safely moved outside web root or securely deleted after retention decisions.
+6. Deactivated the **completed one-shot** \`ishi-trx-security-maintenance\` plugin with authenticated WP-CLI. Its \`ishi_trx_sec_maintenance_101\` state was \`done\`. WP-CLI confirmed the plugin is now inactive. This prevents unnecessary future execution. **Do not deactivate or replace the separate \`ishi-trx-security-hotfix.php\` MU hotfix:** its most recent stored self-test from 2026-10-07 passed; current vendor code has not yet been replaced.
+
+### Website/regression checks following changes
+
+Public non-destructive GET probes returned HTTP 200 for:
+- \`https://www.ishinaillab.com/\`
+- \`https://www.ishinaillab.com/wp-json/\`
+- \`/shop/\`, \`/cart/\`, \`/login/\`
+- Actual booking page \`/nail-appointment-reservation/\`
+- \`/my-dashboard/\`, \`/studio-policies/\`, \`/privacy-policy/\`
+- \`https://apps.ishinaillab.com/health/live\`, \`/health/ready\`
+
+The earlier 404 for assumed URL \`/appointment/\` was **not a proven regression**: WP-CLI shows that the published Appointment page has slug \`nail-appointment-reservation\`, and the correct URL returned 200. These are HTTP smoke checks, not completed authenticated booking/purchase transactions.
+
+### Still unresolved (do not call remediation complete)
+
+- Patchstack confirms ThemeREX Addons **<= 2.46.0** affected by CVE-2026-102797 (SSRF) and CVE-2026-102798 (XSS), both officially fixed in **2.47.0**. Active **2.45.0 is still in the vulnerable range**, even with the custom MU defense-in-depth hotfix.
+- Need **genuine ThemeForest Qwery/ThemeREX purchase/download entitlement** and a vendor-provided *clean* ThemeREX Addons 2.47.0+ package. The stored code is a placeholder, and historical local desktop ZIPs were 2.41.0/2.42.0 or an untrusted 2.45.0 backup. Never install those as a "fix", invent a purchase code, or bypass activation.
+- Hostinger authenticated file API gives read access and narrowly scoped TUS upload; complete source authenticity verification remains pending. Do not equate absence of selected IOCs with a verified clean package.
+- Before any replacement: fresh complete Hostinger WordPress/database backup; acquire official package; stage/safely test; preserve child theme and existing locked custom plugins; install current official plugin; validate versions, WordPress/PHP, booking, WooCommerce, Elementor, Ishikeit, TLS/Cloudflare, and source integrity. Do not disable the MU hotfix until official update and relevant security behavior are verified.
+- Easy MCP ChatGPT resource-bound OAuth reauthorization at canonical \`https://www.ishinaillab.com\` remains a separate user-account OAuth action.
+
+### Authoritative references
+
+- Patchstack SSRF: https://patchstack.com/database/wordpress/plugin/trx_addons/vulnerability/wordpress-themerex-addons-plugin-2-46-0-server-side-request-forgery-ssrf-vulnerability
+- Patchstack XSS: https://patchstack.com/database/wordpress/plugin/trx_addons/vulnerability/wordpress-themerex-addons-plugin-2-46-0-cross-site-scripting-xss-vulnerability
+- Official Qwery documentation and licensing/updater: https://doc.themerex.net/qwery/
+- Official Hostinger TUS upload API: https://developers.hostinger.com/
+- WordPress Apache access-control documentation: https://developer.wordpress.org/advanced-administration/server/web-server/httpd/

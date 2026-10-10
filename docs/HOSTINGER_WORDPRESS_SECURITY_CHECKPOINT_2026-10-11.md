@@ -361,3 +361,9 @@ The earlier 404 for assumed URL \`/appointment/\` was **not a proven regression*
 - IMPORTANT: Independent direct-origin post-change 403 and ordinary-media 200 tests for this new .htaccess are pending. Later network probes were blocked by tool safety checks; a Hostinger file-read request encountered a transient Cloudflare bot challenge. Upload success itself is confirmed; do NOT misreport origin enforcement as verified.
 - No authentic updated vendor ThemeREX package or purchase entitlement obtained. ThemeREX official documentation requires legitimate theme purchase code and recommends backups; do not use old desktop archives, modified releases or license bypass.
 - Keep previous historical-backup directory .htaccess and Cloudflare rule. Preserve locked custom plugins, Qwery child theme, WooCommerce, LatePoint and Ishikeit. No asynchronous self-restart was created.
+
+### Additional WordPress update inventory at final readback
+
+- Authenticated WP-CLI plugin list shows ThemeREX Addons 2.45.0 active and **no updater-reported new version**; the vendor's earlier report nevertheless advertised 2.48.0 without a valid local license. Keep vendor update blocked until an official package can be verified.
+- Other **active** plugins with updater-reported newer versions: Contact Form 7 6.1.7 -> 6.2.1; Elementor Pro 4.3.0-beta3 -> 4.3.1; LatePoint 5.7.3 -> 5.7.4; LatePoint Pro Features 1.7.0 -> 1.7.3. These were NOT changed, to avoid production regressions before a fresh full-site/database backup and extension-compatibility check. Inactive Hostinger plugins also had updates.
+- A subsequent publicly proxied image retrieval using the connected Context web scraper successfully returned the original uploaded PNG bytes. This is extra evidence media remained reachable after the new directory .htaccess upload; direct-origin deny retest remains pending.

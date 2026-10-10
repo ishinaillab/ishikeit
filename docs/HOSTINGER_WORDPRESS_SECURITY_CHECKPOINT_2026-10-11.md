@@ -409,3 +409,7 @@ The earlier 404 for assumed URL \`/appointment/\` was **not a proven regression*
 - Verified the canonical HTTPS response now sends `strict-transport-security: max-age=31536000; includeSubDomains` **without** `preload`; `X-Content-Type-Options: nosniff`, Referrer-Policy, CSP, homepage HTTP 200 retained. The presence/absence of this header directive is not proof of actual inclusion/removal in external browser preload lists; no preload-list submission was performed.
 - Post-change GET smoke checks: booking `/nail-appointment-reservation/` HTTP 200; cart `/cart/` HTTP 200; WordPress REST `/wp-json/` HTTP 200; Ishikeit `/health/ready` HTTP 200. No business checkout/booking transaction was initiated.
 - Recurring daily condition-watch automation for the remaining authentic ThemeREX security release was enabled; it checks the official vendor path and live installation for material changes, notifying only if intervention/availability changes. This does not substitute for a licensed package and verified full database/site backup, or authorize unreviewed production vendor-file replacement.
+
+### Cloudflare TLS and DNSSEC post-change readback
+
+Official Cloudflare API verified `ssl=strict` (Full strict), `min_tls_version=1.2`, `tls_1_3=on`, `always_use_https=on`, and DNSSEC `status=active`. These were read-only checks and were left unchanged following the HSTS preload-only adjustment.

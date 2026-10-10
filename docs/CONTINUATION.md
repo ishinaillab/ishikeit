@@ -2254,3 +2254,14 @@ Verification completed before stacked PR:
 - changed-line scan found no secret-like literal additions.
 
 Deployment state: included in PR #67 and live in production under `tiktokBusinessMessagingImageSendSchema: 2`.
+
+
+---
+
+## Hostinger / WordPress security continuation — 2026-10-11
+
+A detailed live-state checkpoint for the completed Hostinger primary-domain migration and the ongoing Qwery/ThemeREX supply-chain remediation is saved in:
+
+- `docs/HOSTINGER_WORDPRESS_SECURITY_CHECKPOINT_2026-10-11.md`
+
+When continuing this work, read that document before making any live WordPress/Hostinger change. The critical unresolved item is replacing the modified Qwery/ThemeREX vendor chain with clean official packages and updating ThemeREX Addons from 2.45.0 to >= 2.47.0 without bypassing licensing.

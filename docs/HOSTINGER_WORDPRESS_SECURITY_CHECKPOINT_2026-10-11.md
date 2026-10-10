@@ -400,3 +400,12 @@ The earlier 404 for assumed URL \`/appointment/\` was **not a proven regression*
 - Site Health reports debug output/logging disabled, PHP 8.3.35, and a writable WordPress update-backup directory. A complete restorable site-and-database backup has **not** yet been verified.
 - Hostinger MCP backup search revealed only VPS and DNS backup operations; the shared-hosting full-site backup still requires hPanel or another verified facility.
 - No authentic licensed ThemeREX >=2.47.0 package is available; do not treat the 2.45.0 deployment or MU hotfix as an official CVE resolution.
+
+### Cloudflare HSTS preload alignment — 2026-10-11
+
+- Audited the HTTPS response and Cloudflare zone security_header setting. Before change, edge HSTS served `max-age=31536000; includeSubDomains; preload`; live Cloudflare settings had `enabled=true`, `max_age=31536000`, `include_subdomains=true`, `preload=true`, `nosniff=true`.
+- User's established policy was **not to pursue HSTS preloading**. Through the official Cloudflare API, changed **only** `strict_transport_security.preload` to `false`, retaining enabled HSTS, 365-day max-age, includeSubDomains, and nosniff.
+- Cloudflare API PATCH returned HTTP 200; independent GET readback confirmed `preload=false` with all other HSTS values unchanged.
+- Verified the canonical HTTPS response now sends `strict-transport-security: max-age=31536000; includeSubDomains` **without** `preload`; `X-Content-Type-Options: nosniff`, Referrer-Policy, CSP, homepage HTTP 200 retained. The presence/absence of this header directive is not proof of actual inclusion/removal in external browser preload lists; no preload-list submission was performed.
+- Post-change GET smoke checks: booking `/nail-appointment-reservation/` HTTP 200; cart `/cart/` HTTP 200; WordPress REST `/wp-json/` HTTP 200; Ishikeit `/health/ready` HTTP 200. No business checkout/booking transaction was initiated.
+- Recurring daily condition-watch automation for the remaining authentic ThemeREX security release was enabled; it checks the official vendor path and live installation for material changes, notifying only if intervention/availability changes. This does not substitute for a licensed package and verified full database/site backup, or authorize unreviewed production vendor-file replacement.

@@ -413,3 +413,21 @@ The earlier 404 for assumed URL \`/appointment/\` was **not a proven regression*
 ### Cloudflare TLS and DNSSEC post-change readback
 
 Official Cloudflare API verified `ssl=strict` (Full strict), `min_tls_version=1.2`, `tls_1_3=on`, `always_use_https=on`, and DNSSEC `status=active`. These were read-only checks and were left unchanged following the HSTS preload-only adjustment.
+
+### October 11 follow-up: production update prerequisites and scheduled-task diagnosis
+
+Read-only status verified against authenticated live WordPress:
+- Core version 7.1.3, Qwery Child Theme 3.8.0 active; 3,338 core checksums matched exactly.
+- ThemeREX Addons 2.45.0 still active, updater reports no update; `purchase_code_qwery` remains placeholder `purchase_code`. Patchstack CVE-2026-102797 and CVE-2026-102798 require an authentic 2.47.0-or-later package.
+- Active plugin updates available but **NOT** installed: Contact Form 7 6.1.7->6.2.1, Elementor Pro 4.3.0-beta3->4.3.1, LatePoint 5.7.3->5.7.4, LatePoint Pro Features 1.7.0->1.7.3. Inactive Hostinger Reach and Hostinger Tools also show updates.
+- Hostinger public documentation confirms that a complete WordPress files+database backup can be downloaded/restored via hPanel Websites > Dashboard > Backups. Official Hostinger MCP API discovery did not expose a shared-hosting full website+database backup creation/download method; only VPS or agency backups appeared. **No fresh complete restorable backup was produced or verified** in this session. Therefore no risky live plugin upgrade or vendor-file replacement was initiated.
+- Official ThemeREX documentation confirms updates require the genuine ThemeForest purchase code or authenticated official theme files. Official support ticket intake requires purchase/tech-support code and registration. Connected Gmail historical search and local archive audit did not establish entitlement. Do not bypass this requirement or use untrusted local archives.
+- WordPress `wp cron test` returns HTTP 200 and reports spawning works. Action Scheduler read-only aggregate shows 13 pending, zero overdue pending (at readback), 1,354 complete, 67 historically failed, 3 canceled. Historical failed hooks: Hostinger Reach cart-cleanup 32, scheduler migration 26, `fetch_patterns` 6, Woo personal-data cleanup 2, Woo pending-order batch 1. **Do not blindly retry failed actions**: they could affect customer orders, communications, data retention, or migrations. Hostinger account-level `hosting_cron-jobs_list` currently returns an empty array (no configured host cron jobs); creating one might reduce occasional scheduling latency, but is not required to claim WP-Cron spawning currently healthy.
+- Authenticated Easy MCP AI `core/get-site-info` successfully returned canonical `https://www.ishinaillab.com` for both site and WordPress URLs, WordPress 7.1.3. Thus the existing Easy MCP connection works for site reads and canonical URL alignment; do not label that connection broken without more evidence.
+- WordPress maintenance mode was checked and is inactive.
+
+Safeguards: no business plugin, premium vendor package, child theme, MU security hotfix, production data, or existing checkout/booking schedules were modified during this follow-up. All prior Cloudflare/Hostinger uploads hardening remains.
+
+**Still blocked on external prerequisites**: legitimate ThemeREX/Qwery license or current official package; independent full restorable production files+database backup via Hostinger hPanel; staging/rollback and cross-plugin regression testing. This is NOT a completed security remediation.
+
+References: https://www.hostinger.com/support/5981435-how-to-download-backups-at-hostinger/ ; https://www.hostinger.com/support/3989447-how-to-restore-a-wordpress-website-from-backups-in-hostinger/ ; https://doc.themerex.net/qwery/ ; https://support.themerex.net/submit/ ; https://patchstack.com/database/wordpress/plugin/trx_addons/vulnerability/wordpress-themerex-addons-plugin-2-46-0-server-side-request-forgery-ssrf-vulnerability ; https://patchstack.com/database/wordpress/plugin/trx_addons/vulnerability/wordpress-themerex-addons-plugin-2-46-0-cross-site-scripting-xss-vulnerability

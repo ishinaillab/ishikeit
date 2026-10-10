@@ -392,3 +392,11 @@ The earlier 404 for assumed URL \`/appointment/\` was **not a proven regression*
 - Authenticated WP-CLI plugin list still reports ThemeREX Addons `2.45.0` **active**, with updater status `none`. Official Patchstack fixes for CVE-2026-102797 and CVE-2026-102798 require `>=2.47.0`; as of Oct 7 the vendor upgrade report advertised 2.48.0 but no valid local purchase code or downloaded official package was present.
 - Official Qwery documentation: https://doc.themerex.net/qwery/ (legal theme downloads, bundled plugins, ThemeREX Updater and purchase-code process). Official WordPress security guides: https://developer.wordpress.org/advanced-administration/security/hardening/ and https://developer.wordpress.org/advanced-administration/server/web-server/httpd/. Official Hostinger TUS API: https://developers.hostinger.com/.
 - Continue to preserve child theme, locked business plugins, existing MU hotfix, and live bookings. **Do not mark the vendor CVEs fixed** or install historic/nulled sources. Fresh full-site + DB backup, valid official package, staged update, source provenance checks and full regressions remain required.
+
+### WordPress Site Health and backup access follow-up
+
+- WordPress Site Health through the connected site reports 22 passing, four recommended, and zero critical findings. Recommended findings concern update checks, six pending plugin updates, inactive plugins/themes, and a delayed cron event. This is not a substitute for the ThemeREX vulnerability database.
+- Confirmed the 167-line pre-existing ThemeREX MU hotfix uses WordPress safe outbound requests, a constrained SVG sanitizer, and low-privilege ThemeREX AJAX/REST action restrictions. It was read only, not edited.
+- Site Health reports debug output/logging disabled, PHP 8.3.35, and a writable WordPress update-backup directory. A complete restorable site-and-database backup has **not** yet been verified.
+- Hostinger MCP backup search revealed only VPS and DNS backup operations; the shared-hosting full-site backup still requires hPanel or another verified facility.
+- No authentic licensed ThemeREX >=2.47.0 package is available; do not treat the 2.45.0 deployment or MU hotfix as an official CVE resolution.

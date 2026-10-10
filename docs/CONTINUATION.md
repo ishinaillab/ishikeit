@@ -1,5 +1,7 @@
 # Ishikeit continuation handoff
 
+> **Hostinger/WordPress security continuation (2026-10-11):** This document preserves the older Ishikeit application context (last edited 2026-10-02). For the authoritative newer live WordPress Qwery/ThemeREX audit, completed backup-access protections, tested MU hotfix, and still-unresolved vendor-plugin update, first read [HOSTINGER_WORDPRESS_SECURITY_CHECKPOINT_2026-10-11.md](HOSTINGER_WORDPRESS_SECURITY_CHECKPOINT_2026-10-11.md). Do not treat ThemeREX Addons 2.45.0 as secure or deploy this checkpoint branch to production.
+
 Updated: 2026-10-02
 
 ## Canonical project

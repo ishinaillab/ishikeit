@@ -770,3 +770,11 @@ This entry records a new continuation after commit `728d6c3d3aaf67dc601bb030894b
 - LiteSpeed CSS/JS troubleshooting: https://docs.litespeedtech.com/lscache/lscwp/ts-optimize/
 
 **Next operational gate remains unchanged:** finish secure off-host recovery transfer and test restoration in isolated, communication-disabled staging, then obtain vendor-authenticated ThemeREX Addons 2.47.0+ and test Qwery/Elementor/LatePoint/WooCommerce/Ishikeit before replacing production code. Continue to enforce existing MU controls in the interim. No final CVE closure claimed.
+
+
+**Final subsequent guard syntax and access-control recheck:**
+- A fresh authenticated Hostinger origin PHP syntax check returned `No syntax errors detected` for all four active security MU files: `ishi-trx-guard-v1.php`, `ishi-trx-preset-access-guard.php`, `ishi-trx-preset-output-guard.php`, `ishi-trx-security-hotfix.php`.
+- A non-authenticated POST to `/wp-admin/admin-ajax.php` with `action=trx_addons_action_create_preset` returned **HTTP 403**, TLS verification result `0`, consistent with the capability guard. This was a synthetic no-nonce, no-account test and did not create a preset or modify data.
+- The temporary lint cron job `h0HL1F9S0R` was explicitly deleted through authenticated Hostinger MCP (response `Request accepted`), and a final independent `hosting_cron-jobs_list` returned **`[]`**. An earlier malformed one-shot lint command did not change files and had also been deleted. No tests intentionally left persistent origin jobs.
+- Email-search follow-up for Hostinger backup download links found none that could establish a current secured offsite download; no private recovery archive was downloaded.
+- **Status remains PARTIAL, not complete**: no independent full off-host recovery copy, protected staging restoration, authenticated vendor plugin 2.47.0+, sandbox business-flow verification, or tested LiteSpeed restoration. Maintain all guards and the inactive cache until a safe stage and authentic distribution are available.

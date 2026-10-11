@@ -778,3 +778,27 @@ This entry records a new continuation after commit `728d6c3d3aaf67dc601bb030894b
 - The temporary lint cron job `h0HL1F9S0R` was explicitly deleted through authenticated Hostinger MCP (response `Request accepted`), and a final independent `hosting_cron-jobs_list` returned **`[]`**. An earlier malformed one-shot lint command did not change files and had also been deleted. No tests intentionally left persistent origin jobs.
 - Email-search follow-up for Hostinger backup download links found none that could establish a current secured offsite download; no private recovery archive was downloaded.
 - **Status remains PARTIAL, not complete**: no independent full off-host recovery copy, protected staging restoration, authenticated vendor plugin 2.47.0+, sandbox business-flow verification, or tested LiteSpeed restoration. Maintain all guards and the inactive cache until a safe stage and authentic distribution are available.
+
+
+### October 11 continued execution — private Hostinger recovery staging provisioned, file restoration completed
+
+**New authorized Hostinger website (not production):** Created `security-staging.ishinaillab.com` on the EXISTING Business v3 hosting subscription with the official `hosting_websites_create` operation. Hostinger `hosting_websites_list-setups` returned `status: completed`. No production website object, Cloudflare DNS, traffic routing, production WordPress core/plugin, protected Ishi plugin, customer record, order, booking, message or payment was modified. The hostname intentionally has **no new public Cloudflare DNS A record**.
+
+**Origin lockout — independently proven:** Immediately uploaded a root `.htaccess` containing `Require all denied` through official Hostinger authenticated TUS upload (no overwrite). Direct desktop `curl --resolve security-staging.ishinaillab.com:80:147.93.78.149` probes returned **403** on `/`, `/wp-admin/`, `/wp-content/uploads/2026/08/`, and the temporary recovery helper PHP path. These results were repeated AFTER file extraction; ancestor denial remains effective even for restored static files. Treat this as non-public recovery staging, not an internet-facing test site.
+
+**Completed file-level recovery from the fresh October 11 11:29 snapshot:** Hostinger CLI ran a guarded one-time PHP ZipArchive restorer against the verified on-origin ZIP components (not legacy/historical vendor archives). Every ZIP opened with consistency checks and its entries were screened for traversal/unsafe root paths before extraction. The script restored:
+- Private core/config supplement: **3,338 core/root entries** EXCLUDING `wp-config.php`, root `.htaccess`, `web.config`, `.user.ini` to preserve isolation.
+- MU plugins: **6 entries**
+- Plugins: **32,230 entries**
+- Themes: **6,005 entries**
+- Other wp-content data: **48 entries**
+- Uploads part 1: **1,109 entries**
+- Uploads part 2: **1,708 entries**.
+
+Actual execution returned **`EXTRACT_OK` for all seven file components** and `ISHI_STAGING_RECOVERY_FILES_RESTORED`. The cron job was deleted after verified completion (`DELETE_JOB_ACCEPTED=PFGuPGdjzm`). Private completion markers/state remain in the staging host's parent directory, outside `public_html`. No snapshot archive was deleted.
+
+**Isolation proof:** An authenticated Hostinger staging-root listing shows restored `wp-admin` and `wp-content`, the root access-denial `.htaccess`, and **no `wp-config.php`**. No database import, WordPress bootstrap, staging webhook, cron, payment capture, outgoing email or customer message has been initiated. Direct production WordPress homepage and Ishikeit readiness endpoint returned **HTTP 200** after the restoration; no regression observed in these narrow liveness checks.
+
+**Important boundaries:** This is a real **file-archive restoration test**, not complete database/functional recovery. Independent off-server copy of all full archives is STILL missing. A separately credentialed staging database and safely sanitized staging WordPress runtime were **not** established, so the remaining business-flow UAT (synthetic booking, checkout, dashboard, Elementor writes, messaging) must NOT run against production or this unbootstrapped clone. Cloudflare Access, DNS exposure, payment/email transports, production API credentials and real customer database records must remain outside the staging runtime until secure isolation is assured. No legitimate ThemeREX 2.47.0+ software license/distribution was obtained, and production ThemeREX 2.45.0 remains **NOT vendor-confirmed fixed** for CVE-2026-102797 / CVE-2026-102798. LiteSpeed Cache stays inactive.
+
+**Staging recovery runbook amendment:** Treat `security-staging.ishinaillab.com` as the protected file-recovery site. Never use Hostinger `Publish` to production, never point public DNS or disable root `.htaccess` until independent staging secrets, outbound blocking and private access have all been verified. Do not confuse the parent-directory recovery markers with a verified off-host backup. Finish credentialed independent DB restoration and customer-data protection through an officially supported management path before proceeding. If reverting the staging experiment, remove ONLY the newly created staging website after preserving required test evidence and verifying no production object is selected.

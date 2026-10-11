@@ -64,3 +64,11 @@ The same source scan identified:
 - https://www.hostinger.com/support/5981435-how-to-download-backups-at-hostinger/
 - https://www.hostinger.com/support/5720286-how-to-create-a-wordpress-staging-environment-in-hostinger/
 - https://developers.cloudflare.com/r2/get-started/s3/
+
+## Subsequent targeted remediation: Elementor preset role guard
+
+**Implemented and production-verified later the same day:** Enabled production preset editing was confirmed. A separate custom MU plugin at `wp-content/mu-plugins/ishi-trx-preset-access-guard.php` now requires `edit_theme_options` capability to execute the four site-wide preset create/update/delete/import actions, while leaving general Elementor AJAX and public form/search/cart actions untouched. Source tracked in `ops/wordpress-security/ishi-trx-preset-access-guard-v1.php`.
+
+Isolated role tests passed **17/17** and an unauthenticated live origin AJAX request to the protected create-preset action returned **HTTP 403** with the expected `ishi_trx_preset_insufficient_capability` code. The frontend 171-asset smoke suite passed after deployment. Site currently has zero Editor accounts and zero Contributors, but authenticated administrator preset editing has not been exercised. This is a local security hardening for an observed missing capability check, **not** a verified correction of the undisclosed CVE-2026-102798 source path.
+
+See the [production security checkpoint](HOSTINGER_WORDPRESS_SECURITY_CHECKPOINT_2026-10-11.md) for rollback, detailed test and inventory evidence.

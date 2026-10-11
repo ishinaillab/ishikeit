@@ -2254,3 +2254,13 @@ Verification completed before stacked PR:
 - changed-line scan found no secret-like literal additions.
 
 Deployment state: included in PR #67 and live in production under `tiktokBusinessMessagingImageSendSchema: 2`.
+
+### October 11 security maintenance — source-map-js dependency advisory (PR #72)
+
+Production Hostinger's Node.js dependency scanner identified CVE-2026-93749 / GHSA-68fv-2mgg-jv7q in transitive `source-map-js@1.2.1`, a **development-only** lockfile dependency (`dev: true`). The vendor/GitHub-reviewed patched minimum is **1.2.2**. This is an indexed source-map offset denial-of-service advisory; its presence in the development toolchain does **not** independently prove runtime exploitability in the Fastify app.
+
+PR [#72](https://github.com/ishinaillab/ishikeit/pull/72), branch `fix/source-map-js-cve-2026-93749`, changes only `package-lock.json` at `node_modules/source-map-js` from 1.2.1 to 1.2.2, including npm registry tarball URL and integrity checksum. No source code, WordPress bridge, runtime config, production environment variables, Supabase migration, provider behavior or app feature marker is modified.
+
+Pre-PR validation on isolated Windows Git worktree (Node 26, not production Node 24): version assertion RED on 1.2.1 and GREEN on 1.2.2; `npm ci --ignore-scripts` succeeded; `npm audit` transitioned from 1 high advisory to **zero reported vulnerabilities**; `npm run check` succeeded with lint, typecheck, 34 test files / **244 passing tests**, and build; `git diff --check` passed. GitHub Actions Node 24 CI job and PHP lint both **passed** on PR #72 first run; the context-continuity job failed **only** because this documentation update was initially absent. This paragraph supplies that required durable context. Re-run all checks and require green before merge.
+
+Until PR #72 is merged and Hostinger production deployment is independently verified, **do not claim the fix is deployed**. After deployment, check `/health/live`, `/health/ready`, and `/health/capabilities` and compare capability markers. The dev dependency advisory status may lag Hostinger's next scan; no live messaging canary is authorized by this lockfile-only change. Preserve all messaging integrations and existing WordPress security guards.

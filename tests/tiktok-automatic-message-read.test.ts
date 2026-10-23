@@ -6,7 +6,8 @@ import {
 
 const base = {
   businessId: "business-1",
-  accessToken: "test-token"
+  accessToken: "test-token",
+  transport: "GET_QUERY" as const
 };
 
 function ok(data: Record<string, unknown>): Response {
@@ -107,6 +108,7 @@ describe("TikTokAutoMessageReader (dormant, read-only)", () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const client = new TikTokAutoMessageReader({
       businessId: "business-1",
+      transport: "GET_QUERY",
       accessTokenProvider: {
         getAccessToken: () => Promise.reject(new Error("no authorization yet"))
       },
@@ -126,4 +128,49 @@ describe("TikTokAutoMessageReader (dormant, read-only)", () => {
     );
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  it("supports explicitly selected POST_JSON retrieval without query secrets or mutations", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(ok({
+      business_id: "business-1",
+      operation_status: "DISABLE",
+      auto_messages: []
+    }));
+    const reader = new TikTokAutoMessageReader({
+      ...base,
+      transport: "POST_JSON",
+      fetchImpl
+    });
+    await expect(reader.get("CHAT_PROMPT")).resolves.toMatchObject({
+      businessId: "business-1", enabled: false, type: "CHAT_PROMPT"
+    });
+
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const [requestUrl, init] = fetchImpl.mock.calls[0]!;
+    const url = new URL(requestUrl instanceof URL
+      ? requestUrl.href
+      : typeof requestUrl === "string" ? requestUrl : requestUrl.url);
+    expect(url.pathname).toBe("/open_api/v1.3/business/message/auto_message/get/");
+    expect(url.search).toBe("");
+    expect(init?.method).toBe("POST");
+    expect(init?.headers).toMatchObject({
+      "Access-Token": "test-token",
+      "content-type": "application/json"
+    });
+    expect(JSON.parse(init?.body as string)).toEqual({
+      business_id: "business-1",
+      auto_message_type: "CHAT_PROMPT"
+    });
+  });
+
+  it("does not silently choose a transport when the API method is unverified", () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    expect(() => new TikTokAutoMessageReader({
+      ...base,
+      transport: undefined as never,
+      fetchImpl
+    })).toThrow("transport must be explicitly verified");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+
 });

@@ -2275,3 +2275,11 @@ This WordPress investigation is maintained in the separate **non-deploy** checkp
 - Fresh Cloudflare ruleset readback confirmed three active upload/backup exposure block rules and an enabled Free Managed Ruleset entry. These **do not constitute a named SSRF/XSS virtual patch**. No WAF rules changed.
 - Stage retains a separate restored DB, origin `Require all denied`, outbound messaging/email kill switch, and tested rollback safeguards. Latest CLI-only role audit script self-deleted and its one-shot Hostinger cron was deleted; independent recheck found **no cron jobs** and no test helper in the stage document root. All production and staging plugins, themes, databases and customers were untouched during this read-only/ephemeral diagnostic continuation.
 - **Critical release gates still open:** an independently encrypted **off-host** WordPress backup with tested restore; authentic ThemeREX 2.47+ package **or** an equivalent completely tested migration; exploit-specific regression evidence; authenticated Elementor/booking/payment/dashboard tests. Anonymous six-page/171-asset smoke from earlier checkpoint was green but is not transaction UAT. Do not claim these gates completed without evidence.
+
+### 2026-10-24 — npm dependency advisory remediation (lockfile-only review branch)
+
+Security review on canonical `ishinaillab/ishikeit` `main` found 5 advisories (2 high, 2 moderate, 1 low) in npm locked dependencies. `npm audit fix --ignore-scripts` updated only `package-lock.json`, keeping existing `package.json` dependency ranges and application source unchanged.
+
+Verified patched resolved versions: Fastify 5.12.7, Zod 4.6.7, Vitest 4.1.12, `@vitest/mocker` 4.1.12, Vite 8.3.5. `npm audit --json` reported 0 vulnerabilities. Full `npm run check` on Node 24.22.1 succeeded: lint, typecheck, 34 test files / 244 tests, and production TypeScript build. This is intentionally separated from the bridge diagnostics PR #74.
+
+Security branch `fix/dependency-audit-20261024` is proposed only; no running Hostinger application, provider account, Supabase table, or WordPress installation was changed as part of this dependency audit. Review CI and deploy through the established audited release workflow.

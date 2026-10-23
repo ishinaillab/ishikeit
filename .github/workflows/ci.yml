@@ -19,6 +19,16 @@ jobs:
           package-manager-cache: false
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - name: Verify compiled artifact fingerprint
+        run: |
+          node --input-type=module -e "
+            import { runtimeBuildIdentity } from './dist/observability/build-identity.js';
+            const digest = runtimeBuildIdentity().artifactSha256;
+            if (digest === null || !/^[0-9a-f]{64}$/.test(digest)) {
+              throw new Error('Compiled artifact identity was unavailable');
+            }
+            console.log('ISHIKEIT_ARTIFACT_SHA256=' + digest);
+          "
 
   php-lint:
     runs-on: ubuntu-latest

@@ -50,6 +50,32 @@ function tiktokSignedHeaders(raw: string, secret: string, timestamp = Math.floor
 }
 
 describe("webhook routes", () => {
+  it("exposes only non-secret build fingerprints and disables response caching", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "sensitive-secret",
+      verifyToken: "private-webhook-token",
+      buildIdentity: {
+        artifactSha256: "a".repeat(64),
+        sourceRevision: "b".repeat(40)
+      }
+    });
+    const response = await server.inject({ method: "GET", url: "/health/build" });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.json()).toEqual({
+      status: "ok",
+      artifactSha256: "a".repeat(64),
+      sourceRevision: "b".repeat(40)
+    });
+    expect(response.body).not.toContain("sensitive-secret");
+    expect(response.body).not.toContain("private-webhook-token");
+    await server.close();
+  });
+
   it("exposes runtime contract metadata without secrets", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
     const server = makeServer({ ingest });

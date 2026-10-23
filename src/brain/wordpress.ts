@@ -53,11 +53,32 @@ async function bridgeErrorCode(response: Response): Promise<string | undefined> 
   const contentLength = response.headers.get("content-length");
   if (contentLength !== null && Number(contentLength) > 4096) return undefined;
 
+  // A missing Content-Length must not permit unbounded buffering of a
+  // malformed or malicious error response. Inspect no more than 4 KiB.
   let body: unknown;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
-    body = await response.clone().json();
+    reader = response.clone().body?.getReader();
+    if (reader === undefined) return undefined;
+    const decoder = new TextDecoder();
+    let serialized = "";
+    let bytesRead = 0;
+
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytesRead += chunk.value.byteLength;
+      if (bytesRead > 4096) return undefined;
+      serialized += decoder.decode(chunk.value, { stream: true });
+    }
+
+    serialized += decoder.decode();
+    body = JSON.parse(serialized) as unknown;
   } catch {
     return undefined;
+  } finally {
+    // Never hold open the unused cloned response stream.
+    if (reader !== undefined) void reader.cancel().catch(() => undefined);
   }
 
   if (body === null || typeof body !== "object" || Array.isArray(body)) {

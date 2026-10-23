@@ -2359,3 +2359,12 @@ Provider documentation:
 - Until the exact `get` endpoint contract has been independently live-verified for the authorized business account, treat provider fields/request compatibility as mock-tested only and never activate automatic mutations on the strength of this code.
 
 **Gates:** Parent Comment-to-Message PR #71 remains draft/unmerged. This stacked branch must remain draft and must not deploy before parent approval, compatible API access, authorized test-account canaries and post-approval readbacks. Next build phases: capability readback; provider-native create/update/enable/delete/sort with explicit desired-state and moderation-aware control plane; welcome/suggested-question/chat-prompt/follower variation validations; conversation unlock; reconciliation/backfill. Keep each phase feature gated and provider-neutral.
+
+
+#### October 24 retrieval-contract discrepancy and fail-closed correction
+
+Provider-integration cross-check uncovered conflicting generated API descriptions of `/business/message/auto_message/get/`: a Go SDK defines a GET request with encoded query parameters, whereas a separate schema-generated catalog labels the same path POST with JSON request parameters. The official TikTok documentation *identifies the endpoint*, but an independently accessible authoritative method table for the GET operation was not confirmed. Do **not** assume that green mock tests establish the live provider's request method.
+
+Therefore `TikTokAutoMessageReader` now requires an explicit `transport: "GET_QUERY" | "POST_JSON"` on construction and rejects missing/unknown transport instead of guessing. Both branches call only the account-level `auto_message/get/` retrieval endpoint, never a provider mutation path; the POST variant carries parameters in JSON rather than the URL. Neither transport is configured or instantiated in the app's running HTTP process. This is an internal compatibility gate, **not** provider approval or proof either form works.
+
+References (method conflict to verify with approved account): https://pkg.go.dev/github.com/bububa/tiktok-business/model/business/message and https://mosaic.openpromo.app/reference/tiktok/endpoints/business-messaging/ . TikTok official landing page: https://business-api.tiktok.com/portal/docs/get-the-automatic-messages-for-a-business-account/v1.3 . Require authorized provider-specific readback and update the integration notes with exact verified request/response before registering live routes or automated settings changes.

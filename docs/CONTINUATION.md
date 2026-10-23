@@ -2275,3 +2275,15 @@ This WordPress investigation is maintained in the separate **non-deploy** checkp
 - Fresh Cloudflare ruleset readback confirmed three active upload/backup exposure block rules and an enabled Free Managed Ruleset entry. These **do not constitute a named SSRF/XSS virtual patch**. No WAF rules changed.
 - Stage retains a separate restored DB, origin `Require all denied`, outbound messaging/email kill switch, and tested rollback safeguards. Latest CLI-only role audit script self-deleted and its one-shot Hostinger cron was deleted; independent recheck found **no cron jobs** and no test helper in the stage document root. All production and staging plugins, themes, databases and customers were untouched during this read-only/ephemeral diagnostic continuation.
 - **Critical release gates still open:** an independently encrypted **off-host** WordPress backup with tested restore; authentic ThemeREX 2.47+ package **or** an equivalent completely tested migration; exploit-specific regression evidence; authenticated Elementor/booking/payment/dashboard tests. Anonymous six-page/171-asset smoke from earlier checkpoint was green but is not transaction UAT. Do not claim these gates completed without evidence.
+
+### 2026-10-24 — WordPress AI Bridge diagnostic error-code classification (proposed, not deployed)
+
+October 20 production forensics: the `/wp-json/ishi-ai/v1/turn` path showed HTTP 502, 522 and 525 responses. The WordPress bridge *itself* returns JSON HTTP 502 on AI Engine exceptions, invalid AI results and empty chatbot replies; `edgeResponseStatus=502` and `originResponseStatus=502` alone do not prove a hosting gateway outage. Cloudflare also showed non-bridge origin connection/TLS errors. Do not conflate the two classes without origin logs. The published 2026-10-24 operational review is stored on the separate `checkpoint/operational-review-2026-10-24` branch.
+
+This proposed app-only diagnostic change:
+- In `src/brain/wordpress.ts`, on a failed HTTP bridge response, validate the JSON response's `code` against `^ishi_ai_bridge_[a-z0-9_]{1,64}$` before adding it to the `ProcessingFailure` message. Ignore arbitrary codes, body text, URLs, tokens and provider messages.
+- Preserve existing HTTP status, retryability and Retry-After behavior. Do not parse non-JSON HTML Cloudflare error pages.
+- Add unit tests covering genuine `ishi_ai_bridge_ai_failed` 502 and arbitrary/private upstream data redaction.
+- No customer messages are sent, no dead letters are replayed, no WordPress plugin, database, or Hostinger production settings are modified in this PR. Before deploying, confirm Node 24 CI, idempotency/retry regression coverage and build.
+- Authenticated `GET /ishi-ai/v1/health` uses a separate bearer token; an ordinary WordPress admin/application password is not that token.
+- Remaining gates: Hostinger/PHP-FPM historical logs, authenticated bridge canary, production SHA, test-account end-to-end messaging, TikTok provider approval. TikTok Comment-to-Message remains gated and unmerged in draft PR #71.

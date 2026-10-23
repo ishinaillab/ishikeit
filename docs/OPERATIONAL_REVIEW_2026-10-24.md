@@ -81,3 +81,43 @@ Supabase reference: https://supabase.com/docs/guides/api/securing-your-api
 4. TikTok Business Messaging approval/provider eligibility remains unverified. Do not present a database-less TikTok path as live.
 5. PR #71 currently diverges from `main` (ahead 20 / behind 2). Refresh branch and rerun Node 24 CI/tests and cross-channel regressions **before** any merge; retain existing `TIKTOK_COMMENT_TO_MESSAGE_ENABLED` gating and do not activate provider calls without provider permissions and controlled validation.
 6. Preserve existing production messaging, Cloudflare rules, WordPress security guards, customer data, booking operations and canonical domains. No unrelated provider mutations or dead-letter replays occurred during this review.
+
+## October 24 continuation — validated diagnostics, security patches, and TikTok integration preflight
+
+### Corrected origin-error interpretation
+
+Inspection of the **deployed** Ishi AI Bridge 0.3.0 source (`wordpress/ishi-ai-bridge/includes/class-ai.php` and `class-rest.php`) confirmed the bridge itself intentionally returns JSON 502 on AI Engine exceptions, invalid AI results, or empty replies. Therefore Cloudflare's `originResponseStatus=502` does **not**, by itself, prove a PHP-FPM/Hostinger web-server gateway failure. Separately observed HTTP 522 and 525 on bridge and unrelated assets do indicate origin connection/TLS problems at the time. Both mechanisms may have contributed. Underlying reason for October 20 AI failures remains unproven without historical application log details. Fresh read-only WPVibe GET `/ishi-ai/v1/health` using WordPress credentials returned 401 because the route specifically requires a *separate bridge bearer token*. This is expected authorization behavior and is not a bridge outage. Do not bypass authentication or read secrets from local `.env` files; local tool guards block protected secret paths.
+
+Production WordPress has Ishi AI Bridge 0.3.0 active; `wp cron test` succeeded. Bridge's WordPress turn storage held 2 completed rows during inspection; this does not identify the failed October 20 turns because failed requests release the idempotency claim. Production outbox remained at 0 pending, 43 historical dead letters through final check, no new ingress since 2026-10-23T09:37Z.
+
+### PR #74 — bridge error code observability, not deployed
+
+- Branch `fix/wordpress-bridge-diagnostic-codes-20261024`, draft PR https://github.com/ishinaillab/ishikeit/pull/74.
+- HTTP failures now conditionally annotate `ProcessingFailure` with only regex-allowlisted WordPress REST `ishi_ai_bridge_...` codes, preserving retryability and Retry-After. No response body, messages, headers or credentials copied. Two new tests.
+- **Node 24.22.1 local validation:** 34 test files / 246 tests, lint/typecheck/build passed.
+- **GitHub Actions CI run 40025675068:** success.
+- Unmerged and undeployed; no customer-facing message/DB change.
+
+### PR #75 — npm lockfile security patches, not deployed
+
+- Branch `fix/dependency-audit-20261024`, draft PR https://github.com/ishinaillab/ishikeit/pull/75.
+- Upgraded resolved Fastify 5.12.7, Zod 4.6.7, Vitest 4.1.12, @vitest/mocker 4.1.12, Vite 8.3.5 without changing source or declared `package.json` ranges.
+- `npm audit`: 5 advisories (2 high/2 moderate/1 low) to **zero**.
+- **Node 24.22.1 local validation:** 34 test files / 244 tests, lint/typecheck/build passed.
+- **GitHub Actions CI run 40026637480:** success.
+- GitHub connector used to update files after local Windows Git push failed with 403 (different Windows Git identity). Corrected GitHub branch files from CRLF to LF so final PR remains focused (145 additions/137 removals); no credential settings changed.
+- Unmerged and undeployed.
+
+### PR #71 — TikTok Comment-to-Message integration preflight
+
+- Draft PR https://github.com/ishinaillab/ishikeit/pull/71 remains unmerged; branch currently ahead 20 and behind 2 relative to canonical `main`. Provider approval, account eligibility, protected status readback, and live messaging canaries unverified.
+- Independently fetched original branch into isolated Windows worktree and ran **Node 24.22.1** lint/typecheck/35 test files/**252 tests**/build, all PASS. Its old lockfile still reported 6 audit advisories.
+- In a **separate local-only integration worktree**, attempted merge against current `main` and confirmed exactly one conflict in `docs/CONTINUATION.md` (the two branches both append an entry). Reconciled locally preserving BOTH TikTok and Oct 11 security histories; created local-only merge commit `1bcc4dc` (not pushed). Applied the reviewed PR #74 diagnostic files and PR #75 patched `package-lock.json` into that worktree.
+- Combined **Node 24.22.1 preflight** passed: lint, typecheck, **35 test files / 254 tests**, and production TypeScript build. `npm audit`: **0 vulnerabilities**. No TikTok API interaction and no provider mutation.
+- This **does not mean PR #71 remote GitHub branch has been rebased/merged**: conflict resolution and combined validation currently exist only under `C:\\Users\\MBDS\\Desktop\\project-materials\\Documents\\ishikeit-integration-preflight-20261024`. Do not claim the feature is deployed/eligible, nor bypass PR #71's explicit live activation/merge gate.
+
+### Monitoring and release gates
+
+- Created an hourly condition watch **Ishikeit Health Watch** on Oct 24, checking public Ishikeit liveness/readiness and Supabase pending/dead letters when accessible; baseline pending 0/dead 43. Silent if healthy; no provider actions or DB writes.
+- Public `/health/ready` continued returning `{"status":"ready"}` after these operations. No production `main` merge/deploy was performed.
+- Follow established rollout authorization, staging and deployment verification before merging production branches. Never replay historic dead-lettered customer messages automatically.

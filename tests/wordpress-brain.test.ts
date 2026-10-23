@@ -345,4 +345,56 @@ describe("WordPressBrainClient", () => {
       retryAfterMs: 2000
     });
   });
+  it("retains a validated bridge code in a 502 processing failure without exposing the response message", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({
+        code: "ishi_ai_bridge_ai_failed",
+        message: "A private error message that must not appear in worker logs"
+      }),
+      { status: 502, headers: { "content-type": "application/json; charset=UTF-8" } }
+    ));
+    const brain = new WordPressBrainClient({
+      baseUrl: "https://ishinaillab.com/wp-json/ishi-ai/v1",
+      token: "bridge-token",
+      mediaResolvers: registry(),
+      fetchImpl
+    });
+
+    await expect(brain.respond({
+      turnId: "11111111-1111-4111-8111-111111111111",
+      conversationId: "conversation-1",
+      event,
+      input: [{ kind: "text", text: "Hello" }]
+    })).rejects.toMatchObject({
+      message: "WordPress AI bridge returned HTTP 502 (ishi_ai_bridge_ai_failed)",
+      retryable: true
+    });
+  });
+
+  it("does not copy arbitrary response codes or sensitive upstream messages into failures", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({
+        code: "external_provider_token_123",
+        message: "Confidential content"
+      }),
+      { status: 502, headers: { "content-type": "application/json" } }
+    ));
+    const brain = new WordPressBrainClient({
+      baseUrl: "https://ishinaillab.com/wp-json/ishi-ai/v1",
+      token: "bridge-token",
+      mediaResolvers: registry(),
+      fetchImpl
+    });
+
+    await expect(brain.respond({
+      turnId: "11111111-1111-4111-8111-111111111111",
+      conversationId: "conversation-1",
+      event,
+      input: [{ kind: "text", text: "Hello" }]
+    })).rejects.toMatchObject({
+      message: "WordPress AI bridge returned HTTP 502",
+      retryable: true
+    });
+  });
+
 });

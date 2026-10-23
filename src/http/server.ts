@@ -11,6 +11,7 @@ import { normalizeTikTokBusinessWebhook, tiktokBusinessIngressIdentity } from ".
 import { verifyTikTokSignature } from "../security/tiktok.js";
 import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
+import type { BuildIdentity } from "../observability/build-identity.js";
 import { verifyBearerAuthorization } from "../security/bearer.js";
 import type { TikTokOAuthController } from "../auth/tiktok-oauth.js";
 import {
@@ -69,6 +70,8 @@ export interface ServerDeps {
     };
   };
   webhookBodyLimit?: number;
+  /** Compiled-source fingerprint supplied by the startup process, never credentials. */
+  buildIdentity?: BuildIdentity;
   metrics?: OperationalMetricsReader;
   opsMetricsToken?: string;
   runtimeState?: {
@@ -87,6 +90,14 @@ export function buildServer(deps: ServerDeps) {
   });
 
   server.get("/health/live", () => ({ status: "ok" }));
+  server.get("/health/build", (_req, reply) => {
+    reply.header("cache-control", "no-store");
+    return {
+      status: "ok",
+      artifactSha256: deps.buildIdentity?.artifactSha256 ?? null,
+      sourceRevision: deps.buildIdentity?.sourceRevision ?? null
+    };
+  });
   server.get("/health/capabilities", () => ({
     ...runtimeContract,
     runtime: deps.runtimeState ?? {

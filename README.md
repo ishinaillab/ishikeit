@@ -29,7 +29,7 @@ Portable content parts currently include:
 
 Media is represented by an explicit reference type rather than by arbitrary provider payloads. Provider media resolution happens **after** the webhook ACK. The Meta resolver uses an HTTPS/host allowlist, disables automatic redirects, revalidates each redirect target, and enforces a configured byte limit before content is handed to the AI bridge.
 
-The Meta messaging adapter supports text and rich media for Messenger, Instagram Direct, and WhatsApp Cloud API. The Telegram adapter maps the same portable text, image, video, audio, and document parts to Telegram Bot API methods. The TikTok Business Messaging ingress maps inbound text, image, video, and structured message types to the same portable contract; its generic outbound adapter supports text and JPG/PNG image messages, while templates, automatic messages, Comment-to-Message, and other TikTok-specific behaviors remain separate capabilities. Provider-specific limits remain inside each adapter.
+The Meta messaging adapter supports text and rich media for Messenger, Instagram Direct, and WhatsApp Cloud API. The Telegram adapter maps the same portable text, image, video, audio, and document parts to Telegram Bot API methods. The TikTok Business Messaging ingress maps inbound text, image, video, and structured message types to the same portable contract; its generic outbound adapter supports text and JPG/PNG image messages, while Comment-to-Message is implemented as a separate provider operation so its direct-reply semantics do not leak into generic `message.send`. Templates, automatic messages, and other TikTok-specific behaviors remain separate capabilities. Provider-specific limits remain inside each adapter.
 
 ## Production safety
 
@@ -88,6 +88,7 @@ Registered messaging adapters are:
 meta / messaging / message.send
 telegram / messaging / message.send
 tiktok / messaging / message.send
+tiktok / messaging / comment_to_message.reply
 ```
 
 Additional adapters can be registered later, for example:
@@ -165,6 +166,8 @@ Implemented messaging contract:
 - `tiktok / messaging / message.send` with generic outbound text and JPG/PNG image replies; image sends resolve TikTok's live conversation type and require `IMAGE_SEND` capability before media transfer
 - provider-specific throttling/transport failure classification
 - Business Account target validation and cross-account webhook isolation
+- high-intent-comment normalization plus `tiktok / messaging / comment_to_message.reply` for provider-native Comment-to-Message direct replies
+- protected Comment-to-Message status/reconcile operations with opt-in desired-state configuration; no automatic provider mutation at startup
 
 TikTok's Business Account access token is short-lived, so Ishikeit does not use a manually copied production access token. The production OAuth lifecycle is durable:
 
@@ -180,7 +183,7 @@ TikTok's Business Account access token is short-lived, so Ishikeit does not use 
 
 OAuth application configuration requires the TikTok app ID/secret, TikTok-generated Business Account authorization URL, the exact registered HTTPS callback, the operational bearer token, and a dedicated 32-byte encryption key. Webhook-management configuration is separate and uses `TIKTOK_BUSINESS_WEBHOOK_CALLBACK_URL=https://apps.ishinaillab.com/ishikeit/webhooks/tiktok`; TikTok's `DIRECT_MESSAGE` webhook subscription is developer-app-level and applies to all businesses that authorize that app. `TIKTOK_BUSINESS_ID` is set only after successful authorization using TikTok's returned Business Account `open_id`; that setting activates the webhook ingress/sender/media/read surfaces for the authorized account.
 
-TikTok's Business Messaging API remains distinct from its Marketing, Organic, and Lead APIs. The read-only operational surfaces deliberately omit usernames, participant IDs, profile images, referral metadata, and provider media IDs; message history keeps text content only because it is the history being inspected. Portable image content is deliberately supported through generic `message.send`, with TikTok's upload/send mechanics and limits contained inside the provider adapter. Templates, automatic messages, Comment-to-Message, conversation unlock, lead operations, and advertising operations remain explicit separate capabilities.
+TikTok's Business Messaging API remains distinct from its Marketing, Organic, and Lead APIs. The read-only operational surfaces deliberately omit usernames, participant IDs, profile images, referral metadata, and provider media IDs; message history keeps text content only because it is the history being inspected. Portable image content is deliberately supported through generic `message.send`, with TikTok's upload/send mechanics and limits contained inside the provider adapter. Comment-to-Message is implemented separately through its provider-native configuration and direct-reply contract. Templates, automatic messages, conversation unlock, lead operations, and advertising operations remain explicit separate capabilities.
 
 Production activation still requires TikTok Business Messaging API access/review, real Business Account authorization, provider webhook configuration pointing to Ishikeit, capability/permission verification, and a controlled human-originated end-to-end canary. No TikTok credentials are committed to this repository.
 

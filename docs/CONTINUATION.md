@@ -2283,3 +2283,15 @@ Security review on canonical `ishinaillab/ishikeit` `main` found 5 advisories (2
 Verified patched resolved versions: Fastify 5.12.7, Zod 4.6.7, Vitest 4.1.12, `@vitest/mocker` 4.1.12, Vite 8.3.5. `npm audit --json` reported 0 vulnerabilities. Full `npm run check` on Node 24.22.1 succeeded: lint, typecheck, 34 test files / 244 tests, and production TypeScript build. This is intentionally separated from the bridge diagnostics PR #74.
 
 Security branch `fix/dependency-audit-20261024` is proposed only; no running Hostinger application, provider account, Supabase table, or WordPress installation was changed as part of this dependency audit. Review CI and deploy through the established audited release workflow.
+
+### 2026-10-24 — WordPress AI Bridge diagnostic error-code classification (proposed, not deployed)
+
+October 20 production forensics: the `/wp-json/ishi-ai/v1/turn` path showed HTTP 502, 522 and 525 responses. The WordPress bridge *itself* returns JSON HTTP 502 on AI Engine exceptions, invalid AI results and empty chatbot replies; `edgeResponseStatus=502` and `originResponseStatus=502` alone do not prove a hosting gateway outage. Cloudflare also showed non-bridge origin connection/TLS errors. Do not conflate the two classes without origin logs. The published 2026-10-24 operational review is stored on the separate `checkpoint/operational-review-2026-10-24` branch.
+
+This proposed app-only diagnostic change:
+- In `src/brain/wordpress.ts`, on a failed HTTP bridge response, validate the JSON response's `code` against `^ishi_ai_bridge_[a-z0-9_]{1,64}$` before adding it to the `ProcessingFailure` message. Ignore arbitrary codes, body text, URLs, tokens and provider messages.
+- Preserve existing HTTP status, retryability and Retry-After behavior. Do not parse non-JSON HTML Cloudflare error pages.
+- Add unit tests covering genuine `ishi_ai_bridge_ai_failed` 502 and arbitrary/private upstream data redaction.
+- No customer messages are sent, no dead letters are replayed, no WordPress plugin, database, or Hostinger production settings are modified in this PR. Before deploying, confirm Node 24 CI, idempotency/retry regression coverage and build.
+- Authenticated `GET /ishi-ai/v1/health` uses a separate bearer token; an ordinary WordPress admin/application password is not that token.
+- Remaining gates: Hostinger/PHP-FPM historical logs, authenticated bridge canary, production SHA, test-account end-to-end messaging, TikTok provider approval. TikTok Comment-to-Message remains gated and unmerged in draft PR #71.

@@ -28,6 +28,9 @@ export interface TikTokAutoMessageSnapshot {
   messages: readonly TikTokAutoMessageSummary[];
 }
 
+/** Select only after checking the account-level provider API contract. */
+export type TikTokAutoMessageReadTransport = "GET_QUERY" | "POST_JSON";
+
 export type TikTokAutoMessageStage = "access_token" | "get";
 
 export class TikTokAutoMessageReadError extends Error {
@@ -57,6 +60,8 @@ export class TikTokAutoMessageReadError extends Error {
 
 interface TikTokAutoMessageReaderOptions {
   businessId: string;
+  /** Required; there is deliberately no guessed default. */
+  transport: TikTokAutoMessageReadTransport;
   accessToken?: string;
   accessTokenProvider?: AccessTokenProvider;
   apiVersion?: string;
@@ -82,6 +87,7 @@ function codeString(value: unknown): string | undefined {
 
 export class TikTokAutoMessageReader {
   readonly #businessId: string;
+  readonly #transport: TikTokAutoMessageReadTransport;
   readonly #token: AccessTokenProvider;
   readonly #apiVersion: string;
   readonly #timeoutMs: number;
@@ -94,7 +100,11 @@ export class TikTokAutoMessageReader {
     if ((options.accessToken === undefined) === (options.accessTokenProvider === undefined)) {
       throw new Error("TikTok automatic messages require exactly one token source");
     }
+    if (options.transport !== "GET_QUERY" && options.transport !== "POST_JSON") {
+      throw new Error("TikTok automatic-message retrieval transport must be explicitly verified");
+    }
     this.#businessId = options.businessId;
+    this.#transport = options.transport;
     this.#token = options.accessTokenProvider ?? new StaticAccessTokenProvider(options.accessToken!);
     this.#apiVersion = options.apiVersion ?? "v1.3";
     this.#timeoutMs = options.timeoutMs ?? 10_000;
@@ -123,14 +133,29 @@ export class TikTokAutoMessageReader {
     const url = new URL(
       `https://business-api.tiktok.com/open_api/${this.#apiVersion}/business/message/auto_message/get/`
     );
-    url.searchParams.set("business_id", this.#businessId);
-    url.searchParams.set("auto_message_type", type);
+    if (this.#transport === "GET_QUERY") {
+      url.searchParams.set("business_id", this.#businessId);
+      url.searchParams.set("auto_message_type", type);
+    }
+
+    // This is the provider's read endpoint in both cases; POST_JSON is
+    // supported as an explicit retrieval transport, never an update action.
+    const request: RequestInit = this.#transport === "GET_QUERY"
+      ? { method: "GET", headers: { "Access-Token": token, accept: "application/json" } }
+      : {
+          method: "POST",
+          headers: {
+            "Access-Token": token,
+            accept: "application/json",
+            "content-type": "application/json"
+          },
+          body: JSON.stringify({ business_id: this.#businessId, auto_message_type: type })
+        };
 
     let response: Response;
     try {
       response = await this.#fetch(url, {
-        method: "GET",
-        headers: { "Access-Token": token, accept: "application/json" },
+        ...request,
         signal: AbortSignal.timeout(this.#timeoutMs)
       });
     } catch (error) {

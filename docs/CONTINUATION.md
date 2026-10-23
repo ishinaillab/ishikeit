@@ -2255,6 +2255,47 @@ Verification completed before stacked PR:
 
 Deployment state: included in PR #67 and live in production under `tiktokBusinessMessagingImageSendSchema: 2`.
 
+### October 11 security maintenance — source-map-js dependency advisory (PR #72)
+
+Production Hostinger's Node.js dependency scanner identified CVE-2026-93749 / GHSA-68fv-2mgg-jv7q in transitive `source-map-js@1.2.1`, a **development-only** lockfile dependency (`dev: true`). The vendor/GitHub-reviewed patched minimum is **1.2.2**. This is an indexed source-map offset denial-of-service advisory; its presence in the development toolchain does **not** independently prove runtime exploitability in the Fastify app.
+
+PR [#72](https://github.com/ishinaillab/ishikeit/pull/72), branch `fix/source-map-js-cve-2026-93749`, changes only `package-lock.json` at `node_modules/source-map-js` from 1.2.1 to 1.2.2, including npm registry tarball URL and integrity checksum. No source code, WordPress bridge, runtime config, production environment variables, Supabase migration, provider behavior or app feature marker is modified.
+
+Pre-PR validation on isolated Windows Git worktree (Node 26, not production Node 24): version assertion RED on 1.2.1 and GREEN on 1.2.2; `npm ci --ignore-scripts` succeeded; `npm audit` transitioned from 1 high advisory to **zero reported vulnerabilities**; `npm run check` succeeded with lint, typecheck, 34 test files / **244 passing tests**, and build; `git diff --check` passed. GitHub Actions Node 24 CI job and PHP lint both **passed** on PR #72 first run; the context-continuity job failed **only** because this documentation update was initially absent. This paragraph supplies that required durable context. Re-run all checks and require green before merge.
+
+**Deployment completed and independently verified:** PR #72 passed all GitHub CI gates and squash-merged to `main` as `3d4cbddc34c6cb497bd0c80dd3c506801e1d55b5`. Hostinger's build `01a12b17-972d-70ca-94c1-91ecca8dacac` completed on Node 24 for that exact commit. Post-deploy `/health/live`, `/health/ready`, and `/health/capabilities` all returned HTTP 200; messaging processor and dispatcher remained enabled, and existing capability markers were unchanged. A fresh authenticated Hostinger Node vulnerability scan returned `[]` versus the one-high finding before the update. This is closure of that detected dev-dependency finding, not a guarantee of zero undiscovered vulnerabilities. No live messaging canary was sent. Preserve all messaging integrations and WordPress security guards.
+
+### October 11 PHT evening — live WordPress ThemeREX CVE exposure and mitigation readback
+
+This WordPress investigation is maintained in the separate **non-deploy** checkpoint branch `checkpoint/hostinger-wordpress-security-2026-10-11`; the full and current evidence is [docs/FULL_PROJECT_HANDOFF_2026-10-11.md](https://github.com/ishinaillab/ishikeit/blob/checkpoint/hostinger-wordpress-security-2026-10-11/docs/FULL_PROJECT_HANDOFF_2026-10-11.md). **Do not deploy that WordPress-security documentation branch to the Fastify application**. This paragraph intentionally records status and does not change WordPress files, plugin versions, credentials, database, Cloudflare or Ishikeit runtime behavior.
+
+- Current authenticated WordPress plugin inventory: ThemeREX Addons **2.46.0 active** with two official **OPEN** findings: **CVE-2026-102797** (SSRF, CVSS 6.4) and **CVE-2026-102798** (stored XSS, CVSS 6.5); Patchstack says both need **2.47.0+**, both Contributor-level, and published advisories do **not disclose an exact affected route/function or a verified vendor patch diff**. Previous custom 2.46.0 PHP hardening plus seven MU guards are *compensating controls*, **not proof of CVE closure**. No trusted 2.47.0 package or updater offer has been verified; do not request the lost ThemeForest account, bypass a license, substitute an untrusted ZIP, or falsify plugin version metadata.
+- Fresh **aggregate production accounts**: one administrator, six `latepoint_customer`, one `latepoint_agent`, **zero Contributor/Author/Editor/shop_manager**. A guarded CLI-only **staging** role audit confirms LatePoint customer and agent roles do not have `edit_posts`, `edit_theme_options`, `manage_options`; the agent role still has `upload_files` (stage role-definition evidence, not an independent production capabilities snapshot). This reduces immediate Contributor attack surface but does not fix the CVEs or prove no privilege escalation.
+- Authenticated current WordPress plugin updater offers Elementor Pro 4.3.1 (`package_available=true`, installed 4.3.0-beta3) and LatePoint Pro Features 1.7.3 (`package_available=false`, installed 1.7.0); no ThemeREX 2.47.0 update. Do not update protected Ishi Elementor Fix 4.3.0, Ishi LatePoint Agent Portal 0.7.3 or Ishi LatePoint Instant 1.9.0. Preserve bookings, Woo checkout, dashboard and Ishikeit.
+- Fresh Cloudflare ruleset readback confirmed three active upload/backup exposure block rules and an enabled Free Managed Ruleset entry. These **do not constitute a named SSRF/XSS virtual patch**. No WAF rules changed.
+- Stage retains a separate restored DB, origin `Require all denied`, outbound messaging/email kill switch, and tested rollback safeguards. Latest CLI-only role audit script self-deleted and its one-shot Hostinger cron was deleted; independent recheck found **no cron jobs** and no test helper in the stage document root. All production and staging plugins, themes, databases and customers were untouched during this read-only/ephemeral diagnostic continuation.
+- **Critical release gates still open:** an independently encrypted **off-host** WordPress backup with tested restore; authentic ThemeREX 2.47+ package **or** an equivalent completely tested migration; exploit-specific regression evidence; authenticated Elementor/booking/payment/dashboard tests. Anonymous six-page/171-asset smoke from earlier checkpoint was green but is not transaction UAT. Do not claim these gates completed without evidence.
+
+### 2026-10-24 — npm dependency advisory remediation (lockfile-only review branch)
+
+Security review on canonical `ishinaillab/ishikeit` `main` found 5 advisories (2 high, 2 moderate, 1 low) in npm locked dependencies. `npm audit fix --ignore-scripts` updated only `package-lock.json`, keeping existing `package.json` dependency ranges and application source unchanged.
+
+Verified patched resolved versions: Fastify 5.12.7, Zod 4.6.7, Vitest 4.1.12, `@vitest/mocker` 4.1.12, Vite 8.3.5. `npm audit --json` reported 0 vulnerabilities. Full `npm run check` on Node 24.22.1 succeeded: lint, typecheck, 34 test files / 244 tests, and production TypeScript build. This is intentionally separated from the bridge diagnostics PR #74.
+
+Security branch `fix/dependency-audit-20261024` is proposed only; no running Hostinger application, provider account, Supabase table, or WordPress installation was changed as part of this dependency audit. Review CI and deploy through the established audited release workflow.
+
+### 2026-10-24 — WordPress AI Bridge diagnostic error-code classification (proposed, not deployed)
+
+October 20 production forensics: the `/wp-json/ishi-ai/v1/turn` path showed HTTP 502, 522 and 525 responses. The WordPress bridge *itself* returns JSON HTTP 502 on AI Engine exceptions, invalid AI results and empty chatbot replies; `edgeResponseStatus=502` and `originResponseStatus=502` alone do not prove a hosting gateway outage. Cloudflare also showed non-bridge origin connection/TLS errors. Do not conflate the two classes without origin logs. The published 2026-10-24 operational review is stored on the separate `checkpoint/operational-review-2026-10-24` branch.
+
+This proposed app-only diagnostic change:
+- In `src/brain/wordpress.ts`, on a failed HTTP bridge response, validate the JSON response's `code` against `^ishi_ai_bridge_[a-z0-9_]{1,64}$` before adding it to the `ProcessingFailure` message. Ignore arbitrary codes, body text, URLs, tokens and provider messages.
+- Preserve existing HTTP status, retryability and Retry-After behavior. Do not parse non-JSON HTML Cloudflare error pages.
+- Add unit tests covering genuine `ishi_ai_bridge_ai_failed` 502 and arbitrary/private upstream data redaction.
+- No customer messages are sent, no dead letters are replayed, no WordPress plugin, database, or Hostinger production settings are modified in this PR. Before deploying, confirm Node 24 CI, idempotency/retry regression coverage and build.
+- Authenticated `GET /ishi-ai/v1/health` uses a separate bearer token; an ordinary WordPress admin/application password is not that token.
+- Remaining gates: Hostinger/PHP-FPM historical logs, authenticated bridge canary, production SHA, test-account end-to-end messaging, TikTok provider approval. TikTok Comment-to-Message remains gated and unmerged in draft PR #71.
+
 ### TikTok Business Messaging Comment-to-Message — implementation branch
 
 Credential-independent Business Messaging work continued on `feature/tiktok-comment-to-message` / draft PR #71. Production remains unchanged.

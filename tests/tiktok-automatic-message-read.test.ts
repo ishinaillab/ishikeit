@@ -38,7 +38,7 @@ describe("TikTokAutoMessageReader (dormant, read-only)", () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [rawUrl, init] = fetchImpl.mock.calls[0]!;
-    const url = new URL(String(rawUrl));
+    const url = new URL(rawUrl instanceof URL ? rawUrl.href : typeof rawUrl === "string" ? rawUrl : rawUrl.url);
     expect(url.origin).toBe("https://business-api.tiktok.com");
     expect(url.pathname).toBe("/open_api/v1.3/business/message/auto_message/get/");
     expect(url.searchParams.get("business_id")).toBe("business-1");
@@ -108,9 +108,7 @@ describe("TikTokAutoMessageReader (dormant, read-only)", () => {
     const client = new TikTokAutoMessageReader({
       businessId: "business-1",
       accessTokenProvider: {
-        getAccessToken: async () => {
-          throw new Error("no authorization yet");
-        }
+        getAccessToken: () => Promise.reject(new Error("no authorization yet"))
       },
       fetchImpl
     });

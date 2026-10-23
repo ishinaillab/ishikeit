@@ -158,3 +158,12 @@ Production WordPress has Ishi AI Bridge 0.3.0 active; `wp cron test` succeeded. 
 - Preserve existing Ishi AI Bridge authentication (dedicated bearer token) and no-cache semantics.
 - Historical AI Bridge 502/522/525 origin fault remains incompletely root-caused; the diagnostic PR improves future reporting but does not magically fix the October 20 historical problem.
 - Preserve WordPress security/booking/customer data. Do not enable TikTok provider controls or reprocess past dead letters without a separate eligibility/idempotency review.
+
+## October 24 additional progress — TikTok automatic-message foundation
+
+- [Draft stacked PR #76](https://github.com/ishinaillab/ishikeit/pull/76) created with base `feature/tiktok-comment-to-message` (draft PR #71). Head branch `feature/tiktok-automatic-messages-read-20261024`; most recent initial validation commit `41534d14d459e5d4562eba00d94582dd4162453c`.
+- New `src/messaging/tiktok-automatic-message-read.ts`: account-level, unregistered, **read-only** TikTok Business Messaging `business/message/auto_message/get/` client for WELCOME_MESSAGE, SUGGESTED_QUESTION, CHAT_PROMPT, FOLLOW_WELCOME; returns only type/ID/status/review metadata, not actual response text. No HTTP route, no provider write, no user message.
+- New `tests/tiktok-automatic-message-read.test.ts`: seven mock tests covering provider path/method/header, account separation, disabled state, absent/malformed results, retryable rate limits, missing token and type rejection.
+- Independent Windows Node 24.22.1 full `npm run check` PASSED: **36 files / 262 tests**, ESLint, TypeScript, build. `npm audit --json` reported **zero advisories**. GitHub CI run `40030536173` was initially in progress after PR creation and requires readback for independent success.
+- Official TikTok API documentation indexes Business Messaging automatic-message CRUD/status and separate ad-level creative auto-message operations. The business API calls require TikTok Business Messaging and approved account access. `get` HTTP method and precise response schema are **mock-tested** and must be verified with approved authorized provider account before any real enablement.
+- Both PRs #71 and #76 remain DRAFT/unmerged, no production activation. Continue with moderation-aware provider-native controls only after confirmed eligibility and successful authorized readbacks.

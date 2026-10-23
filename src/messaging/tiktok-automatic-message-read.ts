@@ -207,7 +207,7 @@ export class TikTokAutoMessageReader {
       messages.push({
         id,
         type,
-        ...(audit === undefined ? {} : { auditStatus: audit as TikTokAutoMessageSummary["auditStatus"] })
+        ...(audit === undefined ? {} : { auditStatus: audit })
       });
     }
 

@@ -121,3 +121,40 @@ Production WordPress has Ishi AI Bridge 0.3.0 active; `wp cron test` succeeded. 
 - Created an hourly condition watch **Ishikeit Health Watch** on Oct 24, checking public Ishikeit liveness/readiness and Supabase pending/dead letters when accessible; baseline pending 0/dead 43. Silent if healthy; no provider actions or DB writes.
 - Public `/health/ready` continued returning `{"status":"ready"}` after these operations. No production `main` merge/deploy was performed.
 - Follow established rollout authorization, staging and deployment verification before merging production branches. Never replay historic dead-lettered customer messages automatically.
+
+## October 24 follow-up — changes after the initial review (verified)
+
+### Supabase sequence privilege closure
+
+- Production migration `20261023213701_restrict_outbox_attempts_sequence_client_roles` applied successfully to Supabase project `vhmrliqemkfxblzsoyaz`.
+- `REVOKE ALL PRIVILEGES ON SEQUENCE public.outbox_attempts_id_seq FROM anon, authenticated;`
+- SQL readback: anonymous/authenticated roles have neither SELECT nor USAGE on the sequence; postgres and service_role still have USAGE. Previously applied RLS/table-grant fix remains active.
+- Database migration recorded in `ishinaillab/ishikeit-db` main at `supabase/migrations/20261023213701_restrict_outbox_attempts_sequence_client_roles.sql`; Git commit `b15db9831a5b044f460b19b2434d097d25e8a264`.
+- Queue remained `pending=0`, `dead_lettered=43`, `outbox=712`, `outbox_attempts=659` following security operations. No customer messages were replayed.
+
+### App security and reliability PRs merged to GitHub main
+
+- [PR #75](https://github.com/ishinaillab/ishikeit/pull/75): patched npm lockfile, keeping `package.json` unchanged. Node 24 lint/typecheck/build and 244 tests passed; GitHub CI Node, PHP lint and context-continuity jobs passed; `npm audit` zero advisories. Squash-merged to `main` at commit `7aa6e63ba9dbbfd6f2df822adfc7b752bc7ce8ca`.
+- [PR #74](https://github.com/ishinaillab/ishikeit/pull/74): safe bounded JSON bridge diagnostic code extraction with regex allowlist, no body/private data logs; new test covers oversized response without Content-Length. Reconciled with PR #75 via two-parent merge commit `120dfd87676b6406771b4259fba1de6591155f85`. Node 24 lint/typecheck/build and 247 tests passed, 0 npm advisories; GitHub CI successful. Squash-merged to `main` at `d294c63ed88c56651d0bbb00b7265c829cb0bc1c`.
+- IMPORTANT: **GitHub merge is not proof that Hostinger production deployed that exact SHA**. Independently rechecking public `/health/live` yielded ok and `/health/ready` yielded ready, but no commit SHA was exposed from these endpoints. Hostinger build/deploy provenance still requires authorized Hostinger runtime metadata.
+
+### TikTok Comment-to-Message reconciled, gated, not deployed
+
+- [Draft PR #71](https://github.com/ishinaillab/ishikeit/pull/71) reconciled with current `main` in isolated Windows worktree; only `docs/CONTINUATION.md` conflicted and its two append-only histories were preserved.
+- Verified Node `24.22.1`: 35 test files / **255 passed**, ESLint, typecheck, build all pass; `npm audit` 0 advisories.
+- Published resulting Git two-parent merge commit `b64e5569c3c67022e2b6150430410556c8331d71` to the existing PR branch. The server-computed Git tree SHA `1dbaa928cb7a2785037be483694d0c3befebafac` matched the exact local staged tree verified after the successful full test run. GitHub reports PR #71 mergeable with `behind=0`. It remains **draft, unmerged and production-inactive**, pending confirmed TikTok Business Messaging provider approval, business account Advanced Access/VBA eligibility, review of native provider workflows, explicit release decision and controlled canary.
+
+### Verified official TikTok automatic-message scope
+
+- Official v1.3 API docs currently enumerate create/update/status-on-off/get/delete/sort automatic-message operations, separate from TikTok Ads `creative/auto_message` welcome templates.
+- Official `/open_api/v1.3/business/message/auto_message/update/` contract includes types `WELCOME_MESSAGE`, `SUGGESTED_QUESTION`, `CHAT_PROMPT`, and `FOLLOW_WELCOME`, with provider audit/review controls. Requires TikTok Business Messaging API data privacy/security access, an authorized TikTok account with Advanced Access or VBA, and account owner 18+.
+- Source: https://business-api.tiktok.com/portal/docs/update-the-automatic-message-for-a-business-account/v1.3
+- TikTok's account Business Suite feature may require message moderation 1–5 business days; do not confuse this with ad-level message templates: https://ads.tiktok.com/resources/help/article/how-to-set-up-auto-messages-for-business-accounts
+- TikTok for Business MCP tools visible to this session include `creative_auto_message_create/get` for **ads**, not the business-account `business/message/auto_message` endpoints. Do not use ad-level tools to mutate account organic Business Messaging flows.
+- Do not fabricate missing provider access, approval or an auto-message execution result. Next implementation should build a separate gated account-level controller with provider readback and tests before any settings mutation.
+
+### Ongoing guardrails
+
+- Preserve existing Ishi AI Bridge authentication (dedicated bearer token) and no-cache semantics.
+- Historical AI Bridge 502/522/525 origin fault remains incompletely root-caused; the diagnostic PR improves future reporting but does not magically fix the October 20 historical problem.
+- Preserve WordPress security/booking/customer data. Do not enable TikTok provider controls or reprocess past dead letters without a separate eligibility/idempotency review.

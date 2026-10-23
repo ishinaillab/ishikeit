@@ -167,3 +167,28 @@ Production WordPress has Ishi AI Bridge 0.3.0 active; `wp cron test` succeeded. 
 - Independent Windows Node 24.22.1 full `npm run check` PASSED: **36 files / 262 tests**, ESLint, TypeScript, build. `npm audit --json` reported **zero advisories**. GitHub Actions CI run `40030536173` subsequently completed with conclusion **success**; independently verified.
 - Official TikTok API documentation indexes Business Messaging automatic-message CRUD/status and separate ad-level creative auto-message operations. The business API calls require TikTok Business Messaging and approved account access. `get` HTTP method and precise response schema are **mock-tested** and must be verified with approved authorized provider account before any real enablement.
 - Both PRs #71 and #76 remain DRAFT/unmerged, no production activation. Continue with moderation-aware provider-native controls only after confirmed eligibility and successful authorized readbacks.
+
+
+## October 24 PHT — Hostinger deployment verification and TikTok retrieval contract hardening
+
+### GitHub / Hostinger release evidence (new)
+
+- [PR #77](https://github.com/ishinaillab/ishikeit/pull/77) added privacy-safe compiled-JS fingerprinting and `GET /health/build`. Target Node 24 local `npm run check`: **35 files, 250 tests passed**, lint/types/build green. GitHub Actions CI `40031611768` succeeded. Squash-merged to `main` SHA `61d2c61abce13faef293520d1a417cd9c1564a5e`.
+- Immediately after merge, public `https://apps.ishinaillab.com/health/build` returned HTTP 404, then independently started returning JSON `status:ok, artifactSha256:33e993774075a73bfc48be2ba1495f820ad9653e3793e2f8e829d5ca0c7c18a8, sourceRevision:null`. Existing `/health/live=ok`, `/health/ready=ready` stayed healthy.
+- [PR #78](https://github.com/ishinaillab/ishikeit/pull/78) added GitHub CI verification and logging of the fingerprint of the *actual compiled JS* after `npm run check`. All three CI jobs in workflow `40032164758` passed. **Node 24 job `120682810402` log included `ISHIKEIT_ARTIFACT_SHA256=33e993774075a73bfc48be2ba1495f820ad9653e3793e2f8e829d5ca0c7c18a8`, exactly matching a fresh public Hostinger `/health/build` query.** This confirms compiled JavaScript content parity between Linux CI and running Hostinger app (hash normalizes CRLF). PR #78 was squash-merged to `main` SHA `b8a2a482d10e59d54d7aa04bc216e148bb7c826c`.
+- **Claim boundary:** This establishes content parity, NOT the exact Hostinger hPanel deployment ID/commit SHA. `sourceRevision` is null; checking the authoritative deployment record in Hostinger hPanel remains open. Hostinger's Node.js deployment guidance: https://www.hostinger.com/support/how-to-deploy-a-nodejs-website-in-hostinger/ . Do not infer exact git revision from a ready status alone.
+- Production Supabase outbox final readback at 2026-10-23 22:14 UTC: 0 pending, 43 historical dead-lettered, 669 published. `public.outbox_attempts` RLS enabled; client roles cannot SELECT the table or USAGE the `outbox_attempts_id_seq`. No new queue accumulation, no historical replay, no customer messaging tests or sends.
+
+### TikTok automatic-message transport gate
+
+- Official TikTok docs list account-level automatic-message get/update APIs. A community Go SDK classifies `business/message/auto_message/get/` as a GET request; a separate generated SDK catalog labels it POST with JSON body. The definitive authorized TikTok account request contract has not been confirmed.
+- Draft [PR #76](https://github.com/ishinaillab/ishikeit/pull/76), stacked on draft [PR #71](https://github.com/ishinaillab/ishikeit/pull/71), now requires explicit construction option `transport:"GET_QUERY"|"POST_JSON"`, no guessed default. GET encodes only `business_id` and `auto_message_type` in query; POST_JSON calls the exact `auto_message/get/` endpoint with JSON request body. Both paths are unregistered and inert in production; no provider mutation, no customer sends. Regression tests cover both transports and constructor fail-closed behavior. GitHub Actions run `40031218385` passed all CI jobs.
+- **Approval remains required** to perform authorized provider readback, validate response schema, and then consider settings mutation/moderation workflows. PR #71 is currently unmerged and its mergeability may change when `main` advances; reconcile and retest before any eventual release. The latest main includes the new build identity and CI provenance commits; parent TikTok feature branches must not accidentally deploy until eligible.
+
+### Next work / cautions
+
+1. Confirm hPanel **Deployments** records the successful Hostinger build for canonical `main`, and check app runtime/resource logs around the original Oct20 WordPress AI bridge 502/522/525 failures. Public health endpoints cannot root-cause an old origin incident.
+2. Keep hourly Ishikeit Health Watch enabled. Investigate new queue dead letters only; do not automatically replay the 43 historical records.
+3. Perform authorized WordPress AI bridge health with its dedicated token and end-to-end test-account messaging verification when proper credentials/tests are available; never bypass authentication.
+4. Reconcile draft PR #71 and stacked PR #76 with advancing `main`, verify official TikTok Business Messaging account approval, request contract and capabilities, then stage gated canary deployment.
+5. Preserve all WordPress booking/payment/customer data and the previously established premium-plugin security hold; no TikTok runtime activation or WordPress config changes occurred in this continuation.

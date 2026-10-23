@@ -43,6 +43,33 @@ function retryAfterMs(value: string | null): number | undefined {
   return undefined;
 }
 
+// WordPress can intentionally return a JSON 502 for chatbot failures, while
+// Cloudflare/origin failures may return HTML with the same status. Only carry
+// the bridge's bounded, allowlisted machine-readable code into diagnostics.
+async function bridgeErrorCode(response: Response): Promise<string | undefined> {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!contentType.includes("application/json")) return undefined;
+
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null && Number(contentLength) > 4096) return undefined;
+
+  let body: unknown;
+  try {
+    body = await response.clone().json();
+  } catch {
+    return undefined;
+  }
+
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return undefined;
+  }
+
+  const code = (body as Record<string, unknown>)["code"];
+  return typeof code === "string" && /^ishi_ai_bridge_[a-z0-9_]{1,64}$/.test(code)
+    ? code
+    : undefined;
+}
+
 export class WordPressBrainClient implements BrainClient {
   readonly #baseUrl: string;
   readonly #token: string;
@@ -245,7 +272,11 @@ export class WordPressBrainClient implements BrainClient {
     const retryable = response.status === 409 || response.status === 429 || response.status >= 500;
     const retryAfter = retryAfterMs(response.headers.get("retry-after"));
 
-    throw new ProcessingFailure("WordPress AI bridge returned HTTP " + response.status, {
+    const diagnosticCode = await bridgeErrorCode(response);
+    throw new ProcessingFailure(
+      "WordPress AI bridge returned HTTP " + response.status +
+        (diagnosticCode === undefined ? "" : " (" + diagnosticCode + ")"),
+      {
       retryable,
       ...(retryAfter === undefined ? {} : { retryAfterMs: retryAfter })
     });

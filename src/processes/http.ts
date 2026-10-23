@@ -14,6 +14,7 @@ import { MediaInterpreterRegistry } from "../media/interpreter.js";
 import { MediaResolverRegistry } from "../media/resolver.js";
 import { createLogger } from "../observability/logger.js";
 import { PostgresOperationalMetrics } from "../observability/operational-metrics.js";
+import { runtimeBuildIdentity } from "../observability/build-identity.js";
 import { PostgresInboundEventRepository, PostgresInboundStore } from "../persistence/inbound.js";
 import { PostgresOutboxStore } from "../persistence/outbox.js";
 import { PostgresDatabase } from "../persistence/postgres.js";
@@ -326,6 +327,7 @@ async function reconcileInstagramManagedAccount(): Promise<void> {
 
 const server = buildServer({
   logger,
+  buildIdentity: runtimeBuildIdentity(),
   ready: async () =>
     await db.ready()
     && (oauthStore === undefined || await oauthStore.ready())

@@ -54,7 +54,7 @@ describe("compiled build identity", () => {
       writeFileSync(join(root, "package-lock.json"), '{"version":"fake"}');
       expect(digestInstalledFastUriMetadata(root)).toBe(first);
 
-      const changed = join(root, FAST_URI_PACKAGE_PATHS[3]!, "package.json");
+      const changed = join(root, FAST_URI_PACKAGE_PATHS[3], "package.json");
       writeFileSync(changed, JSON.stringify({ name: "fast-uri", version: "4.2.1" }));
       expect(digestInstalledFastUriMetadata(root)).not.toBe(first);
 

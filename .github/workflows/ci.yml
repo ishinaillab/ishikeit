@@ -19,6 +19,8 @@ jobs:
           package-manager-cache: false
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - name: Verify dedicated-token WordPress bridge health probe (mock only)
+        run: node --test scripts/probe-wordpress-ai-bridge.test.mjs
       - name: Verify compiled artifact fingerprint
         run: |
           node --input-type=module -e "

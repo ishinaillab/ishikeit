@@ -2323,6 +2323,13 @@ On dedicated review branch `fix/ai-bridge-safe-failure-categories-20261024`, plu
 This is **future observability only**; it does not retroactively reveal Oct20's exception or repair an unknown underlying AI Engine configuration/availability problem. No live WordPress plugin upgrade or customer messaging test executed by merely committing the branch. Before a production plugin deployment: green PHP + Node CI, test-account bridge health and canary with dedicated bearer token, backup/rollback, then verify plugin v0.3.1 and no customer regression. Never activate / disable plugins or alter AI Engine settings solely based on inconclusive historical codes. Historical 43 dead letters remain unreplayed.
 
 
+### October 24 — fast-uri transitive advisory closure
+
+After PR #79's WordPress bridge diagnostic change, a fresh `npm audit` disclosed one newly published/reviewed moderate advisory in transitive `fast-uri` (GHSA-w74x-v6f9-j3xg, CVE-2026-110306, URI scheme spoofing via percent-encoded schemes). Four resolved lock entries in Fastify's validators used affected `fast-uri` 3.1.8 or 4.2.1. Official fix versions 3.1.9 and 4.2.3 are available. See https://github.com/fastify/fast-uri/security/advisories/GHSA-w74x-v6f9-j3xg and https://github.com/fastify/fast-uri/releases/tag/v4.2.3 .
+
+Security-only branch `fix/fast-uri-security-20261024` changes ONLY `package-lock.json` (four transitive versions/integrity references: 12 added/12 removed lines), leaving `package.json` and application source unchanged. Official `npm audit fix --package-lock-only --ignore-scripts` produced `npm audit: 0 vulnerabilities`. Isolated Node 24 validation passed full `npm run check` with **35 test files / 250 tests**, lint/typecheck/build green, and `npm ls fast-uri` confirms 3.1.9 and 4.2.3 only. Review/merge this patch separately before refreshing the default-off outage recovery PR #80. Changes in the lockfile alone are not proof the live Hostinger runtime has installed them: check deployment artifact/installed packages after deployment; do not alter WordPress credentials or messaging state.
+
+
 ### October 24 — default-off bounded WordPress bridge outage recovery (review branch)
 
 Historical Oct20 Cloudflare `/wp-json/ishi-ai/v1/turn` metrics showed 47 origin 502s (plus 522/525 edge failures), corroborated by failed Meta/Telegram inbound processing. The current `InboundProcessorWorker` normally attempts a retryable event at t0, +2s, +6s, +14s, +30s, and then dead-letters on the fifth attempt; the source can therefore become permanently unreplied during a multi-minute shared WordPress/AI outage. Dead letters are intentionally not automatically replayed.

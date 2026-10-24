@@ -277,3 +277,11 @@ Next steps: after Cloudflare GraphQL rate limit clears, obtain October 20 edgeRe
 ### Latest release and evidence boundaries
 - Hostinger runtime `/health/build` verified after PR #82: artifact hash `aa62b961f7702c33c61617def09b86ca067bbbdf90bfee7036f1f6e6b1f3c55e`, installed four-fast-uri metadata hash `f53c17ad469b82b25905639a11a765c3f4af3286d527168288a55dab846605d3`; both equal Node24 CI, proving installed patched fast-uri name/version metadata parity. PR #83/#84 added CI/source scripts but no compiled JS change. Current Hostinger sourceRevision null; hPanel deployment ID unverified.
 - Last Supabase read: 0 pending, 43 historical dead letters, no replay. Observe future Cloudflare origin 502 and edge 522/525. Never change SSL strict, WAF, DNS, WP premium plugins, booking/payments or historical messages on speculation.
+
+
+### Final readback at 2026-10-24 01:16 UTC / 09:16 Asia/Manila
+- Live Hostinger `/health/ready` reported `ready`; `/health/build` returned compiled SHA256 `aa62b961f7702c33c61617def09b86ca067bbbdf90bfee7036f1f6e6b1f3c55e` and installed fast-uri metadata SHA256 `f53c17ad469b82b25905639a11a765c3f4af3286d527168288a55dab846605d3`, both matching CI; `sourceRevision:null`.
+- Supabase `public.outbox`: **0 pending, 43 historical dead-lettered, 669 published**. No customer replay or provider canary.
+- Live WordPress `Ishi AI Bridge`: still active **0.3.0**. Reproducible reviewed source ZIP v0.3.1 exists but not installed. Dedicated bearer probe code is merged but cannot execute in live trusted Hostinger runtime until an authenticated terminal or equivalent provider-secret-preserving connector becomes available.
+- GitHub [PR #80](https://github.com/ishinaillab/ishikeit/pull/80) remains draft/unmerged; mergeable=false after `main` advanced with later diagnostics, so reconcile and rerun tests **before** any future approved activation. `AI_BRIDGE_OUTAGE_RECOVERY_ENABLED` remains OFF in production.
+- User-facing follow-up: do not request private access tokens in chat or bypass bridge auth. Finish verified production WordPress plugin backup/rollback, install v0.3.1 through supported authenticated installer, run GET-only bridge health probe from trusted runtime and then explicit authorized test-account flow before changing auto-retry policy or introducing live TikTok features.

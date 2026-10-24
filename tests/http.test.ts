@@ -60,6 +60,7 @@ describe("webhook routes", () => {
       verifyToken: "private-webhook-token",
       buildIdentity: {
         artifactSha256: "a".repeat(64),
+        installedFastUriSha256: "c".repeat(64),
         sourceRevision: "b".repeat(40)
       }
     });
@@ -69,6 +70,7 @@ describe("webhook routes", () => {
     expect(response.json()).toEqual({
       status: "ok",
       artifactSha256: "a".repeat(64),
+      installedFastUriSha256: "c".repeat(64),
       sourceRevision: "b".repeat(40)
     });
     expect(response.body).not.toContain("sensitive-secret");

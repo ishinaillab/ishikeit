@@ -20,6 +20,7 @@ const schema = z.object({
   PROCESSOR_CANARY_PARTITION_KEYS: z.string().default(""),
   WORDPRESS_AI_BRIDGE_URL: z.string().url().optional(),
   ISHI_AI_BRIDGE_TOKEN: z.string().min(32).optional(),
+  AI_BRIDGE_OUTAGE_RECOVERY_ENABLED: booleanFromEnv.default(false),
   AI_BRIDGE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(180000).default(90000),
   AI_FILE_TTL_SECONDS: z.coerce.number().int().min(60).max(86400).default(3600),
   MEDIA_MAX_BYTES: z.coerce.number().int().min(1024).max(104857600).default(26214400),

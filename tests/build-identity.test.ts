@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { digestCompiledJavaScript } from "../src/observability/build-identity.js";
+import { digestCompiledJavaScript, digestInstalledFastUriMetadata, FAST_URI_PACKAGE_PATHS } from "../src/observability/build-identity.js";
 
 describe("compiled build identity", () => {
   it("is stable across path order and CRLF/LF, and excludes files that could contain secrets", () => {
@@ -36,4 +36,42 @@ describe("compiled build identity", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+  it("hashes only installed fast-uri names and versions, never lockfile or secrets", () => {
+    const root = mkdtempSync(join(tmpdir(), "ishikeit-dependency-build-"));
+    try {
+      const versions = ["3.1.9", "3.1.9", "3.1.9", "4.2.3"];
+      for (let i = 0; i < FAST_URI_PACKAGE_PATHS.length; i++) {
+        const folder = join(root, FAST_URI_PACKAGE_PATHS[i]!);
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(join(folder, "package.json"), JSON.stringify({
+          name: "fast-uri", version: versions[i]
+        }));
+      }
+      const first = digestInstalledFastUriMetadata(root);
+      expect(first).toMatch(/^[0-9a-f]{64}$/);
+
+      writeFileSync(join(root, ".env"), "PASSWORD=private");
+      writeFileSync(join(root, "package-lock.json"), '{"version":"fake"}');
+      expect(digestInstalledFastUriMetadata(root)).toBe(first);
+
+      const changed = join(root, FAST_URI_PACKAGE_PATHS[3]!, "package.json");
+      writeFileSync(changed, JSON.stringify({ name: "fast-uri", version: "4.2.1" }));
+      expect(digestInstalledFastUriMetadata(root)).not.toBe(first);
+
+      writeFileSync(changed, JSON.stringify({ name: "different-package", version: "4.2.3" }));
+      expect(digestInstalledFastUriMetadata(root)).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when any installed nested dependency is missing", () => {
+    const root = mkdtempSync(join(tmpdir(), "ishikeit-dependency-absent-"));
+    try {
+      expect(digestInstalledFastUriMetadata(root)).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
 });

@@ -9,9 +9,23 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ["eslint.config.js"]
+          allowDefaultProject: ["eslint.config.js", "scripts/*.mjs"]
         },
         tsconfigRootDir: import.meta.dirname
+      }
+    }
+  },
+  {
+    files: ["scripts/*.mjs"],
+    languageOptions: {
+      globals: {
+        AbortSignal: "readonly",
+        TextDecoder: "readonly",
+        URL: "readonly",
+        Response: "readonly",
+        fetch: "readonly",
+        process: "readonly",
+        console: "readonly"
       }
     }
   }

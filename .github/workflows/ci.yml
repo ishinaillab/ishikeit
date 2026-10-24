@@ -40,6 +40,8 @@ jobs:
           coverage: none
       - name: Lint WordPress bridge
         run: find wordpress/ishi-ai-bridge -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: Verify sanitized AI Bridge diagnostics
+        run: php tests/php/ishi-ai-bridge-diagnostics.php
 
   context-continuity:
     runs-on: ubuntu-latest

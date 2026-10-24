@@ -58,7 +58,7 @@ final class AI {
                 false
             );
         } catch ( \Throwable $e ) {
-            self::log_failure( 'ai_query_failed', hash( 'sha256', $conversation_id ) );
+            self::log_failure( 'ai_query_failed', hash( 'sha256', $conversation_id ), $e );
 
             return new WP_Error(
                 'ishi_ai_bridge_ai_failed',
@@ -108,7 +108,8 @@ final class AI {
         } catch ( \Throwable $e ) {
             self::log_failure(
                 'audio_transcription_failed',
-                hash( 'sha256', (string) ( $file['name'] ?? 'unknown' ) )
+                hash( 'sha256', (string) ( $file['name'] ?? 'unknown' ) ),
+                $e
             );
 
             return new WP_Error(
@@ -151,7 +152,8 @@ final class AI {
         } catch ( \Throwable $e ) {
             self::log_failure(
                 'file_upload_failed',
-                hash( 'sha256', (string) ( $file['name'] ?? 'unknown' ) )
+                hash( 'sha256', (string) ( $file['name'] ?? 'unknown' ) ),
+                $e
             );
 
             return new WP_Error(
@@ -202,11 +204,49 @@ final class AI {
         ];
     }
 
-    private static function log_failure( string $code, string $reference ): void {
+    /**
+     * Keep upstream exception details out of WordPress logs. Vendor errors can
+     * contain API keys, messages, emails, request bodies, or conversation data.
+     * This bounded classification is diagnostic, not an HTTP response contract.
+     */
+    private static function classify_failure( \Throwable $error ): string {
+        $message = strtolower( substr( $error->getMessage(), 0, 2048 ) );
+
+        if ( preg_match( '/(?:\\b429\\b|rate[\\s_-]*limit|too many requests)/', $message ) ) {
+            return 'rate_limit';
+        }
+        if ( preg_match( '/(?:\\bquota\\b|insufficient_quota|billing|credit[\\s_-]*balance)/', $message ) ) {
+            return 'quota';
+        }
+        if ( preg_match( '/(?:\\b401\\b|\\b403\\b|unauthori[sz]ed|invalid[\\s_-]*(?:api[\\s_-]*)?key|permission denied)/', $message ) ) {
+            return 'authentication';
+        }
+        if ( preg_match( '/(?:timeout|timed[\\s_-]*out|deadline exceeded)/', $message ) ) {
+            return 'timeout';
+        }
+        if ( preg_match( '/(?:\\btls\\b|\\bssl\\b|certificate|connection refused|connection reset|could not resolve|\\bdns\\b)/', $message ) ) {
+            return 'transport';
+        }
+        if ( preg_match( '/(?:\\b500\\b|\\b502\\b|\\b503\\b|\\b504\\b|bad gateway|service unavailable|upstream)/', $message ) ) {
+            return 'upstream';
+        }
+        if ( $error instanceof \Error ) {
+            return 'runtime';
+        }
+
+        return 'other';
+    }
+
+    private static function log_failure(
+        string $code,
+        string $reference,
+        \Throwable $error
+    ): void {
         error_log(
             sprintf(
-                '[Ishi AI Bridge] %s ref=%s',
+                '[Ishi AI Bridge] %s category=%s ref=%s',
                 sanitize_key( $code ),
+                self::classify_failure( $error ),
                 substr( $reference, 0, 12 )
             )
         );

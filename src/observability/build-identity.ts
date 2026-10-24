@@ -90,14 +90,14 @@ export function digestInstalledFastUriMetadata(appRoot: string): string | null {
       if (
         obj["name"] !== "fast-uri"
         || typeof obj["version"] !== "string"
-        || !/^\\d+\\.\\d+\\.\\d+$/.test(obj["version"])
+        || !/^\d+\.\d+\.\d+$/.test(obj["version"])
       ) {
         return null;
       }
       digest.update(path, "utf8");
-      digest.update("\\0", "utf8");
+      digest.update("\0", "utf8");
       digest.update(obj["version"], "utf8");
-      digest.update("\\0", "utf8");
+      digest.update("\0", "utf8");
     }
     return digest.digest("hex");
   } catch {

@@ -509,6 +509,7 @@ if (env.PROCESSOR_ENABLED) {
     events: new PostgresInboundEventRepository(db),
     handlers,
     logger,
+    bridgeOutageRetryEnabled: env.AI_BRIDGE_OUTAGE_RECOVERY_ENABLED,
     ...(env.PROCESSOR_CUTOVER_AT === undefined
       ? {}
       : { processorCutoverAt: new Date(env.PROCESSOR_CUTOVER_AT) }),

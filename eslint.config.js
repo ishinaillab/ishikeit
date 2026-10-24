@@ -9,7 +9,7 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ["eslint.config.js", "scripts/*.mjs"]
+          allowDefaultProject: ["eslint.config.js"]
         },
         tsconfigRootDir: import.meta.dirname
       }
@@ -17,6 +17,8 @@ export default tseslint.config(
   },
   {
     files: ["scripts/*.mjs"],
+    // These standalone Node scripts are covered by native node:test, not TS compilation.
+    extends: [tseslint.configs.disableTypeChecked],
     languageOptions: {
       globals: {
         AbortSignal: "readonly",

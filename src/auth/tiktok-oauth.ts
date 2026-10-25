@@ -82,9 +82,12 @@ function stringValue(value: unknown): string | undefined {
 }
 
 function providerCode(value: unknown): string | undefined {
-  return typeof value === "number" || typeof value === "string"
+  const normalized = typeof value === "number" && Number.isSafeInteger(value)
     ? String(value)
-    : undefined;
+    : typeof value === "string" ? value : undefined;
+  // TikTok error codes are numeric; never surface untrusted response text.
+  return normalized !== undefined && /^\d{1,12}$/.test(normalized)
+    ? normalized : undefined;
 }
 
 function secondsValue(value: unknown): number | undefined {
@@ -171,14 +174,13 @@ export class TikTokOAuthClient implements TikTokOAuthClientLike {
     const body = record(raw);
     const code = body?.code;
     if (!response.ok || (code !== 0 && code !== "0")) {
-      const message = stringValue(body?.message) ?? "unknown provider error";
       const codeString = providerCode(code);
       const retryable = response.status === 429
         || response.status >= 500
         || codeString === "40100"
         || codeString === "51065";
       throw new TikTokOAuthRequestError(
-        `TikTok OAuth request was rejected: ${message.slice(0, 300)}`,
+        "TikTok OAuth request was rejected",
         {
           retryable,
           ...(response.status >= 400 ? { status: response.status } : {}),

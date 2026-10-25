@@ -102,6 +102,7 @@ export function buildServer(deps: ServerDeps) {
     return {
       status: "ok",
       artifactSha256: deps.buildIdentity?.artifactSha256 ?? null,
+      installedFastUriSha256: deps.buildIdentity?.installedFastUriSha256 ?? null,
       sourceRevision: deps.buildIdentity?.sourceRevision ?? null
     };
   });

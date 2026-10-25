@@ -14,5 +14,21 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname
       }
     }
+  },
+  {
+    files: ["scripts/*.mjs"],
+    // These standalone Node scripts are covered by native node:test, not TS compilation.
+    extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: {
+      globals: {
+        AbortSignal: "readonly",
+        TextDecoder: "readonly",
+        URL: "readonly",
+        Response: "readonly",
+        fetch: "readonly",
+        process: "readonly",
+        console: "readonly"
+      }
+    }
   }
 );

@@ -19,6 +19,8 @@ jobs:
           package-manager-cache: false
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - name: Verify dedicated-token WordPress bridge health probe (mock only)
+        run: node --test scripts/test-probe-wordpress-ai-bridge.mjs
       - name: Verify compiled artifact fingerprint
         run: |
           node --input-type=module -e "
@@ -28,6 +30,26 @@ jobs:
               throw new Error('Compiled artifact identity was unavailable');
             }
             console.log('ISHIKEIT_ARTIFACT_SHA256=' + digest);
+          "
+
+      - name: Verify installed fast-uri packages and fingerprint
+        run: |
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            import { join } from 'node:path';
+            import { FAST_URI_PACKAGE_PATHS, digestInstalledFastUriMetadata } from './dist/observability/build-identity.js';
+            const expected = ['3.1.9', '3.1.9', '3.1.9', '4.2.3'];
+            for (let i = 0; i < expected.length; i++) {
+              const metadata = JSON.parse(readFileSync(join(process.cwd(), FAST_URI_PACKAGE_PATHS[i], 'package.json'), 'utf8'));
+              if (metadata.name !== 'fast-uri' || metadata.version !== expected[i]) {
+                throw new Error('Patched fast-uri version missing from installed npm tree');
+              }
+            }
+            const digest = digestInstalledFastUriMetadata(process.cwd());
+            if (digest === null || !/^[0-9a-f]{64}$/.test(digest)) {
+              throw new Error('Installed fast-uri dependency fingerprint unavailable');
+            }
+            console.log('ISHIKEIT_INSTALLED_FAST_URI_SHA256=' + digest);
           "
 
   php-lint:
@@ -40,6 +62,8 @@ jobs:
           coverage: none
       - name: Lint WordPress bridge
         run: find wordpress/ishi-ai-bridge -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: Verify sanitized AI Bridge diagnostics
+        run: php tests/php/ishi-ai-bridge-diagnostics.php
 
   context-continuity:
     runs-on: ubuntu-latest

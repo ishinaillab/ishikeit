@@ -426,3 +426,16 @@ Owner reports developer app `ishikeit` **TikTok API for Business approved**. Ind
 - Official docs: https://business-api.tiktok.com/portal/docs/business-messaging-api-get-started/v1.3 ; https://business-api.tiktok.com/portal/docs/update-the-automatic-message-for-a-business-account/v1.3
 
 This **replaces the stale pre-October-25 note that no TikTok runtime variables or TikTok OAuth grant exist**; Business Messaging live grant/readiness is still unproven.
+
+
+### 2026-10-26 follow-up — TikTok Ads identity messaging capability
+
+Authenticated TikTok for Business **advertising** connector read-only calls were completed:
+- `auth_advertiser_get` returned **Ishi Nail Lab** and one additional advertiser account. `bc_get` showed an accessible Business Center role **ADMIN**.
+- `identity_get` for Ishi Nail Lab advertiser returned one TikTok-account identity of type `TT_USER` and one TikTok Business Center identity of type `BC_AUTH_TT` for the same Ishi Nail Lab display identity (plus a separate Ishi Nail Shop identity). Both are available.
+- For both Ishi Nail Lab identities, `identity_info_get` reported **`available_status=AVAILABLE`**, **`can_manage_message=true`**, `can_push_video=true`, `can_pull_video=true`, `is_gpppa=false`. Their TikTok `username` field is `old_ishinaillab`, which may be a legacy handle; DO NOT assume this is the same organic account as the freshly authorized OAuth `open_id` until identifiers are authoritatively reconciled.
+- This is **direct messaging management eligibility in advertiser/BC identity context**, NOT evidence that the Ishikeit developer app was granted separately reviewed **Business Messaging API** access or webhook subscription rights. The TikTok for Business MCP exposed no directly callable `business/get`/Business Messaging endpoint for the granted app in this session.
+- TikTok official v1.3 source says `GET /business/get/` with `has_advanced_access=true` is the Business Account eligibility check, and auto-message `business_id` must be the `open_id` returned at account OAuth. Source: https://business-api.tiktok.com/portal/docs/update-the-automatic-message-for-a-business-account/v1.3 . Official Business Messaging onboarding also demands app API access, account authorization, webhook subscription, authentication and live API call: https://business-api.tiktok.com/portal/docs/business-messaging-api-get-started/v1.3 .
+- Do not activate the existing protected TikTok messaging readers/senders by assuming that `can_manage_message` on the Ads identity is sufficient, or by blindly replacing all 51 masked Hostinger environment variables.
+
+No writes to TikTok Business Center, identities, OAuth tokens, WordPress, Hostinger runtime, provider webhooks or production messaging. App production gate remains unactivated.

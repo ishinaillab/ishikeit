@@ -173,4 +173,57 @@ describe("TikTokAutoMessageReader (dormant, read-only)", () => {
   });
 
 
+  it("reads each automatic-message type sequentially and returns only safe summaries", async () => {
+    const types = ["WELCOME_MESSAGE", "SUGGESTED_QUESTION", "CHAT_PROMPT", "FOLLOW_WELCOME"] as const;
+    const fetchImpl = vi.fn<typeof fetch>((rawUrl) => {
+      const url = new URL(rawUrl instanceof URL
+        ? rawUrl.href
+        : typeof rawUrl === "string" ? rawUrl : rawUrl.url);
+      const type = url.searchParams.get("auto_message_type");
+      return Promise.resolve(ok({
+        business_id: "business-1",
+        operation_status: "ENABLE",
+        auto_messages: [{
+          auto_message_id: `${type}-1`,
+          auto_message_type: type,
+          audit_status: "APPROVED",
+          welcome_message: { content: "Private text must not leave the provider reader" }
+        }]
+      }));
+    });
+    const reader = new TikTokAutoMessageReader({ ...base, fetchImpl });
+    const snapshot = await reader.getAll();
+    expect(Object.keys(snapshot)).toEqual(types);
+    for (const type of types) {
+      expect(snapshot[type]).toMatchObject({
+        businessId: "business-1", type, enabled: true,
+        messages: [{ id: `${type}-1`, type, auditStatus: "APPROVED" }]
+      });
+    }
+    expect(JSON.stringify(snapshot)).not.toContain("Private text");
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(fetchImpl.mock.calls.map(([url]) =>
+      new URL(url instanceof URL
+        ? url.href
+        : typeof url === "string" ? url : url.url
+      ).searchParams.get("auto_message_type")
+    )).toEqual(types);
+    expect(fetchImpl.mock.calls.every(([, init]) => init?.method === "GET")).toBe(true);
+  });
+
+  it("fails closed on an account mismatch instead of returning a partial snapshot", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(ok({
+        business_id: "business-1", operation_status: "DISABLE", auto_messages: []
+      }))
+      .mockResolvedValueOnce(ok({
+        business_id: "different-business", operation_status: "ENABLE", auto_messages: []
+      }));
+    const reader = new TikTokAutoMessageReader({ ...base, fetchImpl });
+    await expect(reader.getAll()).rejects.toMatchObject({
+      stage: "get", retryable: false
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
 });

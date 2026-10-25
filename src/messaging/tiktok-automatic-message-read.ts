@@ -243,4 +243,21 @@ export class TikTokAutoMessageReader {
       messages
     };
   }
+  /**
+   * Read all four account-level Business Messaging automatic-message types
+   * as one all-or-nothing snapshot. Requests are sequential to limit bursts.
+   * No configured message text or provider-native data is returned.
+   */
+  async getAll(): Promise<Readonly<Record<TikTokAutoMessageType, TikTokAutoMessageSnapshot>>> {
+    const welcome = await this.get("WELCOME_MESSAGE");
+    const suggested = await this.get("SUGGESTED_QUESTION");
+    const chat = await this.get("CHAT_PROMPT");
+    const follow = await this.get("FOLLOW_WELCOME");
+    return {
+      WELCOME_MESSAGE: welcome,
+      SUGGESTED_QUESTION: suggested,
+      CHAT_PROMPT: chat,
+      FOLLOW_WELCOME: follow
+    };
+  }
 }

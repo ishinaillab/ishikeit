@@ -92,6 +92,31 @@ describe("TikTokOAuthClient", () => {
     });
   });
 
+  it("redacts untrusted OAuth provider errors and invalid error codes", async () => {
+    const secret = "sensitive-provider-response-123";
+    const client = new TikTokOAuthClient({
+      appId: "app-1",
+      appSecret: "private-synthetic-app-secret",
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+        code: `provider-error-${secret}`,
+        message: `Authorization failed with token ${secret}`
+      }), { status: 403 }))
+    });
+
+    try {
+      await client.refresh("synthetic-refresh-token");
+      throw new Error("expected TikTok OAuth rejection");
+    } catch (error) {
+      expect(error).toBeInstanceOf(TikTokOAuthRequestError);
+      const failure = error as TikTokOAuthRequestError;
+      expect(failure.message).toBe("TikTok OAuth request was rejected");
+      expect(failure.status).toBe(403);
+      expect(failure.retryable).toBe(false);
+      expect(failure.providerCode).toBeUndefined();
+      expect(JSON.stringify(failure)).not.toContain(secret);
+    }
+  });
+
   it("refreshes through the documented refresh endpoint", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       code: 0,

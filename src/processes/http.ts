@@ -1,5 +1,6 @@
 import { MetaSender } from "../channels/meta-send.js";
 import { loadEnvironment } from "../config/env.js";
+import { inspectTikTokActivationConfiguration } from "../ops/tiktok-activation-preflight.js";
 import { ActionDispatcher } from "../dispatch/dispatcher.js";
 import { MetaMessagingAdapter } from "../adapters/meta/messaging.js";
 import { TelegramMessagingAdapter } from "../adapters/telegram/messaging.js";
@@ -431,7 +432,8 @@ const server = buildServer({
     ? {}
     : {
         metrics: new PostgresOperationalMetrics(db),
-        opsMetricsToken: env.OPS_METRICS_TOKEN
+        opsMetricsToken: env.OPS_METRICS_TOKEN,
+        tiktokActivationPreflight: inspectTikTokActivationConfiguration(env)
       }),
   runtimeState: {
     processorEnabled: env.PROCESSOR_ENABLED,

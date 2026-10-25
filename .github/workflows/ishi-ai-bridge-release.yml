@@ -1,0 +1,96 @@
+name: Ishi AI Bridge release bundles
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/ishi-ai-bridge-release.yml"
+      - "wordpress/ishi-ai-bridge/**"
+      - "tests/php/ishi-ai-bridge-diagnostics.php"
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/ishi-ai-bridge-release.yml"
+      - "wordpress/ishi-ai-bridge/**"
+      - "tests/php/ishi-ai-bridge-diagnostics.php"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          coverage: none
+      - name: Validate current plugin and sanitized diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          find wordpress/ishi-ai-bridge -name '*.php' -print0 | xargs -0 -n1 php -l
+          php tests/php/ishi-ai-bridge-diagnostics.php
+      - name: Create audited current and baseline rollback ZIPs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release/verify
+          paths=(
+            ishi-ai-bridge.php
+            includes/class-storage.php
+            includes/class-auth.php
+            includes/class-validation.php
+            includes/class-ai.php
+            includes/class-rest.php
+            includes/class-admin.php
+          )
+          package_plugin() {
+            local revision="$1" version="$2" destination="$3"
+            git archive --format=zip --prefix=ishi-ai-bridge/ \
+              "${revision}:wordpress/ishi-ai-bridge" "${paths[@]}" > "release/${destination}"
+            unzip -t "release/${destination}" > /dev/null
+            unzip -p "release/${destination}" ishi-ai-bridge/ishi-ai-bridge.php \
+              | grep -Fq "* Version: ${version}"
+            local file
+            for file in "${paths[@]}"; do
+              unzip -p "release/${destination}" "ishi-ai-bridge/${file}" > /dev/null
+            done
+            unzip -qq "release/${destination}" -d "release/verify/${version}"
+            find "release/verify/${version}" -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null
+            local count
+            count="$(unzip -Z -1 "release/${destination}" | grep -Ec '^ishi-ai-bridge/(ishi-ai-bridge\.php|includes/class-(storage|auth|validation|ai|rest|admin)\.php)$')"
+            if [ "${count}" != 7 ]; then
+              echo "::error::Unexpected plugin archive content."
+              exit 1
+            fi
+          }
+          package_plugin HEAD 0.3.1 ishi-ai-bridge-0.3.1.zip
+          # Reviewed repository baseline before PR #79; verify the current
+          # production files against a server-side backup before using it.
+          package_plugin b8a2a482d10e59d54d7aa04bc216e148bb7c826c 0.3.0 \
+            ishi-ai-bridge-0.3.0-repository-baseline-rollback.zip
+          printf '%s\n' \
+            '0.3.0 is the repository baseline; byte identity with the current live plugin has NOT been independently verified.' \
+            'Always take and validate a production file/database backup before any plugin replacement.' \
+            'This workflow only packages artifacts; it does NOT install or activate plugins.' \
+            > release/ROLLBACK_README.txt
+          (
+            cd release
+            sha256sum ishi-ai-bridge-0.3.1.zip \
+              ishi-ai-bridge-0.3.0-repository-baseline-rollback.zip \
+              > SHA256SUMS.txt
+          )
+      - name: Upload reviewable install and rollback bundles
+        uses: actions/upload-artifact@v7
+        with:
+          name: ishi-ai-bridge-versioned-bundles
+          path: |
+            release/*.zip
+            release/SHA256SUMS.txt
+            release/ROLLBACK_README.txt
+          if-no-files-found: error
+          retention-days: 90

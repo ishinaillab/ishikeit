@@ -118,6 +118,25 @@ describe("TikTokBusinessEligibilityReader (dormant, read-only)", () => {
     expect(message).not.toContain("private-message");
   });
 
+  it("never includes arbitrary provider error-code text in diagnostic metadata", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({
+        code: "secret-token-private-message",
+        message: "private body"
+      }), { status: 403 })
+    );
+    let errorCode: string | undefined;
+    try {
+      await new TikTokBusinessEligibilityReader({ ...base, fetchImpl }).get();
+    } catch (error) {
+      expect(error).toBeInstanceOf(TikTokBusinessEligibilityError);
+      errorCode = (error as TikTokBusinessEligibilityError).providerCode;
+      expect(JSON.stringify(error)).not.toContain("secret-token");
+      expect(JSON.stringify(error)).not.toContain("private body");
+    }
+    expect(errorCode).toBeUndefined();
+  });
+
   it("supports an explicitly verified JSON retrieval transport without URL identifiers", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(ok({
       business_id: "owned-business-id", has_advanced_access: true

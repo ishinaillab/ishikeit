@@ -61,8 +61,11 @@ function record(value: unknown): Record<string, unknown> | undefined {
 }
 
 function providerCode(value: unknown): string | undefined {
-  return typeof value === "string" || typeof value === "number"
-    ? String(value) : undefined;
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const code = String(value);
+  // Provider codes are numeric; never promote arbitrary response text or
+  // long untrusted strings into error metadata.
+  return /^\d{1,8}$/.test(code) ? code : undefined;
 }
 
 export class TikTokBusinessEligibilityReader {

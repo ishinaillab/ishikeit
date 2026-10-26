@@ -1,5 +1,21 @@
 # Ishikeit continuation handoff
 
+## 2026-10-26 — fail-closed TikTok message-history isolation
+
+- Building on latest `main` (47a6f2ce0c809061ee6d69e3a701820d0d183c95);
+  PRs #71/#76 are merged, and TikTok Business Messaging is still inactive.
+- Detected a cross-conversation isolation gap in the dormant TikTok history
+  read adapter: returned message conversation IDs were not checked against
+  the requested conversation. Verified a failing regression test first.
+- Reject the **entire** message-history response on a mismatch, including
+  partially malformed foreign items. Error metadata does not expose
+  private conversation IDs, texts, or credentials.
+- Preserve valid same-conversation and empty history behavior; no database
+  migrations, OAuth, webhook, provider writes, replay, or runtime startup edits.
+- See docs/TIKTOK_HISTORY_ISOLATION_2026-10-26.md for regression proof and
+  explicit activation/production safeguards. PR #93 remains separate
+  and unmerged; do not accidentally bundle its working-tree changes.
+
 Updated: 2026-10-02
 
 ## Canonical project

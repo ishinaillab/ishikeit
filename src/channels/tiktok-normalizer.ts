@@ -96,26 +96,42 @@ export function normalizeTikTokBusinessWebhook(
   const message = parsedContent(envelope);
   const conversationId = stringValue(message.conversation_id);
   const messageId = stringValue(message.message_id);
+  const commentId = stringValue(message.comment_id);
+  const uniqueIdentifier = stringValue(message.unique_identifier);
   const occurredAt = timestampIso(message.timestamp, envelope.create_time);
   const incoming = providerEventType === "im_receive_msg";
   const outgoing = providerEventType === "im_send_msg";
+  const highIntentComment = providerEventType === "im_receive_high_intent_comment";
 
   if ((incoming || outgoing) && (conversationId === undefined || messageId === undefined)) {
     throw new Error("TikTok message webhook is missing conversation_id or message_id");
   }
+  if (highIntentComment && commentId === undefined) {
+    throw new Error("TikTok high-intent comment webhook is missing comment_id");
+  }
 
-  const providerEventId = messageId === undefined
-    ? "event:" + hash([configuredAppId, businessId, providerEventType, envelope.create_time, message])
-    : "message:" + messageId;
+  const providerEventId = highIntentComment
+    ? "comment:" + commentId!
+    : messageId === undefined
+      ? "event:" + hash([configuredAppId, businessId, providerEventType, envelope.create_time, message])
+      : "message:" + messageId;
 
   const eventType = incoming
     ? "message.received"
     : outgoing
       ? "message.sent"
-      : "event." + providerEventType.replaceAll("_", ".");
+      : highIntentComment
+        ? "comment.high_intent.received"
+        : "event." + providerEventType.replaceAll("_", ".");
 
-  const content = incoming ? contentParts(message) : [];
-  const identityId = conversationId;
+  const content = incoming
+    ? contentParts(message)
+    : highIntentComment && stringValue(message.comment_text) !== undefined
+      ? [{ kind: "text" as const, text: stringValue(message.comment_text)! }]
+      : [];
+  const identityId = highIntentComment
+    ? uniqueIdentifier ?? stringValue(record(message.from_user)?.id) ?? commentId
+    : conversationId;
 
   return [{
     schemaVersion: 2,
@@ -134,11 +150,19 @@ export function normalizeTikTokBusinessWebhook(
     ...(occurredAt === undefined ? {} : { occurredAt }),
     receivedAt,
     content,
-    data: {
-      event: providerEventType,
-      appId: suppliedAppId ?? configuredAppId,
-      content: message
-    }
+    data: highIntentComment
+      ? {
+          event: providerEventType,
+          appId: suppliedAppId ?? configuredAppId,
+          commentId: commentId!,
+          isFollower: message.is_follower === true,
+          content: message
+        }
+      : {
+          event: providerEventType,
+          appId: suppliedAppId ?? configuredAppId,
+          content: message
+        }
   }];
 }
 

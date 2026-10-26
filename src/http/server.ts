@@ -25,6 +25,10 @@ import {
   TikTokBusinessMessagingValidationError
 } from "../messaging/tiktok-business-read.js";
 import type { TikTokBusinessWebhookController } from "../messaging/tiktok-webhook-config.js";
+import {
+  TikTokCommentToMessageNotAuthorizedError,
+  type TikTokBusinessCommentToMessageController
+} from "../messaging/tiktok-comment-to-message.js";
 import { instagramOAuthFailureDiagnostic, type InstagramOAuthController } from "../auth/instagram-oauth.js";
 import type { InstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 import { verifyMetaSignedRequest } from "../security/meta-signed-request.js";
@@ -54,6 +58,9 @@ export interface ServerDeps {
   };
   tiktokBusinessMessagingWebhook?: {
     service: TikTokBusinessWebhookController;
+  };
+  tiktokCommentToMessage?: {
+    service: TikTokBusinessCommentToMessageController;
   };
   tiktokMarketingOAuth?: {
     service: TikTokMarketingOAuthController;
@@ -135,6 +142,14 @@ export function buildServer(deps: ServerDeps) {
   ) {
     throw new Error(
       "TikTok Business Messaging webhook operations require an operational bearer token"
+    );
+  }
+  if (
+    deps.tiktokCommentToMessage !== undefined
+    && deps.opsMetricsToken === undefined
+  ) {
+    throw new Error(
+      "TikTok Comment-to-Message operations require an operational bearer token"
     );
   }
   if (deps.tiktokMarketingOAuth !== undefined && deps.opsMetricsToken === undefined) {
@@ -299,6 +314,70 @@ export function buildServer(deps: ServerDeps) {
           .send({ status: "webhook_reconcile_unavailable" });
       }
     });
+  }
+
+  if (
+    deps.tiktokCommentToMessage !== undefined
+    && deps.opsMetricsToken !== undefined
+  ) {
+    const tiktokCommentToMessage = deps.tiktokCommentToMessage;
+    const opsToken = deps.opsMetricsToken;
+
+    server.get(
+      "/ops/tiktok/messaging/comment-to-message/status",
+      async (req, reply) => {
+        if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+          return reply
+            .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+            .code(401)
+            .send({ status: "unauthorized" });
+        }
+
+        reply.header("cache-control", "private, no-store");
+        try {
+          return await tiktokCommentToMessage.service.status();
+        } catch (error) {
+          if (error instanceof TikTokCommentToMessageNotAuthorizedError) {
+            return reply.code(409).send({ status: "not_authorized" });
+          }
+          deps.logger.warn(
+            { errorClass: error instanceof Error ? error.name : "unknown" },
+            "TikTok Comment-to-Message status failed"
+          );
+          return reply
+            .code(503)
+            .send({ status: "comment_to_message_unavailable" });
+        }
+      }
+    );
+
+    server.post(
+      "/ops/tiktok/messaging/comment-to-message/reconcile",
+      async (req, reply) => {
+        if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+          return reply
+            .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+            .code(401)
+            .send({ status: "unauthorized" });
+        }
+
+        reply.header("cache-control", "private, no-store");
+        try {
+          return await tiktokCommentToMessage.service.reconcile();
+        } catch (error) {
+          if (error instanceof TikTokCommentToMessageNotAuthorizedError) {
+            return reply.code(409).send({ status: "not_authorized" });
+          }
+          deps.logger.warn(
+            { errorClass: error instanceof Error ? error.name : "unknown" },
+            "TikTok Comment-to-Message reconcile failed"
+          );
+          return reply
+            .code(503)
+            .send({ status: "comment_to_message_reconcile_unavailable" });
+        }
+      }
+    );
   }
 
   if (

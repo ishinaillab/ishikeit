@@ -21,6 +21,8 @@ jobs:
       - run: npm run check
       - name: Verify dedicated-token WordPress bridge health probe (mock only)
         run: node --test scripts/test-probe-wordpress-ai-bridge.mjs
+      - name: Verify non-mutating TikTok Business Messaging preflight (mock only)
+        run: node --test scripts/test-probe-tiktok-messaging-preflight.mjs
       - name: Verify compiled artifact fingerprint
         run: |
           node --input-type=module -e "

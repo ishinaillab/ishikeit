@@ -18,6 +18,8 @@ export interface InboundProcessorWorkerOptions {
   pollIntervalMs?: number;
   leaseDurationMs?: number;
   maxAttempts?: number;
+  /** Opt-in only: extend recovery for explicit 502/503/504/522/525 WordPress bridge outages. */
+  bridgeOutageRetryEnabled?: boolean;
   baseBackoffMs?: number;
   maxBackoffMs?: number;
   processorCutoverAt?: Date;
@@ -33,6 +35,7 @@ export class InboundProcessorWorker {
   readonly #pollIntervalMs: number;
   readonly #leaseDurationMs: number;
   readonly #maxAttempts: number;
+  readonly #bridgeOutageRetryEnabled: boolean;
   readonly #baseBackoffMs: number;
   readonly #maxBackoffMs: number;
   readonly #processorCutoverAt: Date | undefined;
@@ -49,6 +52,7 @@ export class InboundProcessorWorker {
     this.#pollIntervalMs = options.pollIntervalMs ?? 1000;
     this.#leaseDurationMs = options.leaseDurationMs ?? 120_000;
     this.#maxAttempts = options.maxAttempts ?? 5;
+    this.#bridgeOutageRetryEnabled = options.bridgeOutageRetryEnabled ?? false;
     this.#baseBackoffMs = options.baseBackoffMs ?? 2000;
     this.#maxBackoffMs = options.maxBackoffMs ?? 300_000;
     this.#processorCutoverAt = options.processorCutoverAt;
@@ -221,10 +225,17 @@ export class InboundProcessorWorker {
       : new ProcessingFailure("unexpected inbound processing failure", { retryable: true, cause: error });
     const nextAttemptNumber = job.attemptCount + 1;
     const reason = failure.message;
+    // Do not broadly extend failures: this opt-in covers only the known
+    // transient WordPress origin/Cloudflare response statuses, never provider
+    // sends, authorization, schema errors, or unknown network exceptions.
+    const bridgeOutage = this.#bridgeOutageRetryEnabled
+      && failure.retryable
+      && /^WordPress AI bridge returned HTTP (?:502|503|504|522|525)(?:\b|$)/.test(reason);
+    const maxAttempts = bridgeOutage ? 7 : this.#maxAttempts;
 
     await this.#events.recordFailure(eventId, reason);
 
-    if (!failure.retryable || nextAttemptNumber >= this.#maxAttempts) {
+    if (!failure.retryable || nextAttemptNumber >= maxAttempts) {
       await this.#queue.deadLetter(job, reason, {
         provider: stored.event.provider,
         capability: stored.event.capability,
@@ -242,7 +253,9 @@ export class InboundProcessorWorker {
       return;
     }
 
-    const delayMs = this.#backoffMs(nextAttemptNumber, failure.retryAfterMs);
+    const delayMs = bridgeOutage
+      ? this.#bridgeOutageBackoffMs(nextAttemptNumber, failure.retryAfterMs)
+      : this.#backoffMs(nextAttemptNumber, failure.retryAfterMs);
     const nextAttemptAt = new Date(this.#now().getTime() + delayMs);
     await this.#queue.retry(job, nextAttemptAt, {
       provider: stored.event.provider,
@@ -276,6 +289,15 @@ export class InboundProcessorWorker {
     }
 
     return undefined;
+  }
+
+  #bridgeOutageBackoffMs(attempt: number, retryAfter: number | undefined): number {
+    // 2m, 4m, 8m, 16m, 30m, 30m. This preserves a recoverable message for
+    // roughly 90 minutes rather than permanently dead-lettering it in ~30s.
+    // A trusted upstream Retry-After can extend the delay, but never beyond
+    // two hours for one attempt.
+    const backoff = Math.min(30 * 60_000, 120_000 * (2 ** Math.max(0, attempt - 1)));
+    return Math.min(120 * 60_000, Math.max(backoff, retryAfter ?? 0));
   }
 
   #backoffMs(attempt: number, retryAfter: number | undefined): number {

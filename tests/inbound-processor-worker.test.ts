@@ -216,6 +216,86 @@ describe("InboundProcessorWorker", () => {
     expect(q.deadLetter).not.toHaveBeenCalled();
   });
 
+  async function runBridgeFailure(
+    message: string,
+    attemptCount: number,
+    bridgeOutageRetryEnabled: boolean
+  ) {
+    const q = makeQueue();
+    const claimed = { ...job, attemptCount };
+    q.claimNext.mockResolvedValue(claimed);
+    const e = makeEvents();
+    const handlers = new EventHandlerRegistry();
+    handlers.register({
+      canHandle: () => true,
+      handle: vi.fn().mockRejectedValue(
+        new ProcessingFailure(message, { retryable: true })
+      )
+    });
+    const worker = new InboundProcessorWorker({
+      queue: q.queue,
+      events: e.events,
+      handlers,
+      logger: pino({ level: "silent" }),
+      bridgeOutageRetryEnabled,
+      now: () => new Date("2026-10-24T00:00:00.000Z")
+    });
+    await worker.runOnce();
+    return { q, claimed, e };
+  }
+
+  it("keeps existing five-attempt dead-letter semantics when outage recovery is disabled", async () => {
+    const { q } = await runBridgeFailure("WordPress AI bridge returned HTTP 502", 4, false);
+    expect(q.retry).not.toHaveBeenCalled();
+    expect(q.deadLetter).toHaveBeenCalledOnce();
+  });
+
+  it("optionally schedules a longer retry for a known transient bridge 502", async () => {
+    const { q, claimed, e } = await runBridgeFailure(
+      "WordPress AI bridge returned HTTP 502 (ishi_ai_bridge_ai_failed)",
+      4,
+      true
+    );
+    expect(e.recordFailure).toHaveBeenCalledWith(eventId, expect.stringContaining("HTTP 502"));
+    expect(q.retry).toHaveBeenCalledWith(
+      claimed,
+      new Date("2026-10-24T00:30:00.000Z"),
+      expect.objectContaining({
+        errorClass: "processing_failure",
+        retryable: true
+      })
+    );
+    expect(q.deadLetter).not.toHaveBeenCalled();
+  });
+
+  it("never retries a recoverable WordPress bridge outage indefinitely", async () => {
+    const { q } = await runBridgeFailure("WordPress AI bridge returned HTTP 503", 6, true);
+    expect(q.retry).not.toHaveBeenCalled();
+    expect(q.deadLetter).toHaveBeenCalledOnce();
+  });
+
+  it("retries an explicit Cloudflare 522 as a bridge outage only after opt-in", async () => {
+    const { q, claimed } = await runBridgeFailure("WordPress AI bridge returned HTTP 522", 0, true);
+    expect(q.retry).toHaveBeenCalledWith(
+      claimed,
+      new Date("2026-10-24T00:02:00.000Z"),
+      expect.anything()
+    );
+    expect(q.deadLetter).not.toHaveBeenCalled();
+  });
+
+  it("does not widen retry timing for unrelated HTTP 429s or generic processing errors", async () => {
+    const rateLimited = await runBridgeFailure("WordPress AI bridge returned HTTP 429", 0, true);
+    expect(rateLimited.q.retry).toHaveBeenCalledWith(
+      rateLimited.claimed,
+      new Date("2026-10-24T00:00:02.000Z"),
+      expect.anything()
+    );
+    const unrelated = await runBridgeFailure("unexpected upstream user text 502", 4, true);
+    expect(unrelated.q.retry).not.toHaveBeenCalled();
+    expect(unrelated.q.deadLetter).toHaveBeenCalledOnce();
+  });
+
   it("permanently skips events received before the configured cutover", async () => {
     const q = makeQueue();
     const e = makeEvents();

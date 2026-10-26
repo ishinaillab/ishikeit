@@ -9,6 +9,18 @@ const productionBase = {
 };
 
 describe("environment", () => {
+  it("keeps WordPress outage recovery opt-in and validates explicit flag values", () => {
+    expect(loadEnvironment(productionBase).AI_BRIDGE_OUTAGE_RECOVERY_ENABLED).toBe(false);
+    expect(loadEnvironment({
+      ...productionBase,
+      AI_BRIDGE_OUTAGE_RECOVERY_ENABLED: "true"
+    }).AI_BRIDGE_OUTAGE_RECOVERY_ENABLED).toBe(true);
+    expect(() => loadEnvironment({
+      ...productionBase,
+      AI_BRIDGE_OUTAGE_RECOVERY_ENABLED: "enable"
+    })).toThrow();
+  });
+
   it("requires a high-entropy operational metrics token when configured", () => {
     expect(() => loadEnvironment({
       ...productionBase,

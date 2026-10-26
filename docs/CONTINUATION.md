@@ -2433,3 +2433,26 @@ To use after authorized connection to **Hostinger's existing runtime only**, run
 Official Hostinger help confirms hPanel Websites → Dashboard → Backups → **Create Backup** supports on-demand full hosting-files/database snapshots for eligible Business-or-higher plans; actual Ishikeit hosting tier and successful current snapshot unverified. Existing automatic Hostinger backups may exist independently of UpdraftPlus's manual setting; do **not** conflate the two. Hostinger File Manager supports archive/ZIP upload and extraction. WordPress Admin → Plugins → Add New → Upload Plugin → existing-plugin **Replace current with uploaded** is a legitimate custom-plugin ZIP update route even without SSH, but it requires an interactive signed-in WordPress browser session, absent in these connected content APIs. Source: https://www.hostinger.com/support/2298928-how-to-create-backups-at-hostinger/ ; https://www.hostinger.com/support/5981435-how-to-download-backups-at-hostinger/ ; https://wordpress.org/documentation/article/manage-plugins/ .
 
 [docs/WORDPRESS_AI_BRIDGE_RELEASE_RUNBOOK.md](WORDPRESS_AI_BRIDGE_RELEASE_RUNBOOK.md) now provides exact approved backup/current-plugin-file verification, SHA256 release ZIP, WordPress admin upload, dedicated-bearer GET-only health probe, authorized provider tester canary, and *plugin-only* rollback steps. It explicitly forbids restoring an old WordPress database without protecting intervening LatePoint bookings/WooCommerce orders and forbids deploying to production without current successful backup and supported interactive installer. This is documentation only; no production plugin upload or rollback occurred.
+
+---
+
+## 2026-10-27 — opt-in read-only TikTok Messaging API live probe
+
+- New draft PR #95 based on unchanged main, independent of PRs #93 (local
+  authorization preflight) and #94 (conversation-history isolation).
+- Existing encrypted TikTok owner OAuth credential can be used for one
+  **operator-invoked** GET of the official Business Messaging conversation
+  list (SINGLE, limit 1), without setting TIKTOK_BUSINESS_ID.
+- New protected route /ops/tiktok/messaging/availability-probe is registered
+  with existing OAuth and OPS_METRICS_TOKEN, but never called during startup.
+  It returns only sanitized acceptance/rejection/prerequisite statuses and
+  bounded numeric provider codes, not token or conversation contents.
+- No OAuth refresh, messages sent, webhook writes, account activation,
+  database changes, dead-letter replay, or new environment variables.
+- Node 24 full checks: 39 test files / 281 tests, lint/typecheck/build
+  passed; production npm audit found zero vulnerabilities.
+- **Live provider check is not yet performed.** Windows environment lacks the
+  existing OPS_METRICS_TOKEN and Hostinger masks it. Requires reviewed CI,
+  controlled deployment, then one call from an existing authorized ops
+  environment without exposing credentials. Denial must not be bypassed.
+- Operational guide: docs/TIKTOK_MESSAGING_LIVE_PROBE_2026-10-27.md

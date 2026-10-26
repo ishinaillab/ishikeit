@@ -1,0 +1,55 @@
+name: TikTok Messaging API single read-only access diagnostic
+
+on:
+  pull_request:
+    types: [opened]
+    paths:
+      - .github/workflows/tiktok-messaging-access-once.yml
+
+permissions: {}
+
+jobs:
+  single-safe-read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      ISHI_OPS_BEARER: ${{ secrets.OPS_METRICS_TOKEN }}
+    steps:
+      - name: One authenticated read or explicit missing-secret result
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const credential = process.env.ISHI_OPS_BEARER;
+          if (!credential || credential.length < 12) {
+            console.log("RESULT: GitHub repository OPS_METRICS_TOKEN not configured; zero requests made.");
+            process.exit(0);
+          }
+          try {
+            const response = await fetch("https://apps.ishinaillab.com/ops/tiktok/messaging/availability-probe", {
+              method: "GET",
+              headers: {
+                Authorization: "Bearer " + credential,
+                Accept: "application/json"
+              },
+              redirect: "error",
+              signal: AbortSignal.timeout(12000)
+            });
+            const json = await response.json().catch(() => ({}));
+            const allowed = new Set([
+              "accepted", "provider_rejected", "provider_unavailable",
+              "invalid_provider_response", "no_stored_authorization",
+              "ambiguous_authorization", "access_token_expired",
+              "credential_store_unavailable", "unauthorized", "probe_unavailable"
+            ]);
+            const status = typeof json.status === "string" && allowed.has(json.status)
+              ? json.status : "unexpected_response";
+            const providerCode = /^(0|[1-9][0-9]{0,7})$/.test(String(json.providerCode || ""))
+              ? String(json.providerCode) : "none";
+            console.log("RESULT: http=" + response.status + " status=" + status + " provider_code=" + providerCode);
+            // Never print raw response bodies, tokens, customer identities or error detail.
+            if (response.status === 401) process.exitCode = 1;
+          } catch {
+            console.log("RESULT: secure diagnostic request unavailable; no raw network data emitted");
+            process.exitCode = 1;
+          }
+          NODE

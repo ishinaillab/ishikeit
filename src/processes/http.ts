@@ -40,6 +40,7 @@ import {
 } from "../marketing/tiktok-advertiser.js";
 import { TikTokAccessTokenManager, tiktokCredentialCanRefresh } from "../auth/tiktok-token-manager.js";
 import { TikTokBusinessMessagingReadClient } from "../messaging/tiktok-business-read.js";
+import { TikTokMessagingAvailabilityProbe } from "../messaging/tiktok-availability-probe.js";
 import {
   TikTokBusinessCommentToMessageClient,
   TikTokBusinessCommentToMessageService
@@ -380,6 +381,13 @@ const server = buildServer({
           service: tiktokBusinessMessagingRead
         }
       }),
+  ...(oauthStore === undefined || !tiktokOAuthConfigured
+    ? {}
+    : { tiktokMessagingAvailabilityProbe: new TikTokMessagingAvailabilityProbe({
+        store: oauthStore,
+        apiVersion: env.TIKTOK_BUSINESS_API_VERSION,
+        requestTimeoutMs: env.TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS
+      }) }),
   ...(tiktokCommentToMessageService === undefined
     ? {}
     : {

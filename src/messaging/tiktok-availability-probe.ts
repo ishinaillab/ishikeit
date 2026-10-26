@@ -1,0 +1,153 @@
+import type { OAuthCredentialStore } from "../auth/oauth-store.js";
+
+export type TikTokMessagingProbeState =
+  | "accepted"
+  | "provider_rejected"
+  | "provider_unavailable"
+  | "invalid_provider_response"
+  | "no_stored_authorization"
+  | "ambiguous_authorization"
+  | "access_token_expired"
+  | "credential_store_unavailable";
+
+export interface TikTokMessagingProbeResult {
+  status: TikTokMessagingProbeState;
+  /** HTTP status and TikTok numeric code only; no conversation data or identifiers. */
+  httpStatus?: number;
+  providerCode?: string;
+}
+
+export interface TikTokMessagingProbeController {
+  probe(): Promise<TikTokMessagingProbeResult>;
+}
+
+export interface TikTokMessagingProbeOptions {
+  store: Pick<OAuthCredentialStore, "list">;
+  apiVersion?: string;
+  requestTimeoutMs?: number;
+  fetchImpl?: typeof fetch;
+  now?: () => Date;
+}
+
+async function responseCode(response: Response): Promise<string | undefined> {
+  const reader = response.body?.getReader();
+  if (reader === undefined) return undefined;
+  const bytes: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      total += next.value.byteLength;
+      if (total > 48_000) {
+        await reader.cancel().catch(() => undefined);
+        return undefined;
+      }
+      bytes.push(next.value);
+    }
+    const buffer = Buffer.concat(bytes);
+    const parsed: unknown = JSON.parse(buffer.toString("utf8"));
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const raw = (parsed as Record<string, unknown>).code;
+    const candidate = typeof raw === "number" && Number.isSafeInteger(raw)
+      ? String(raw)
+      : typeof raw === "string" ? raw : undefined;
+    return candidate !== undefined && /^-?\d{1,8}$/u.test(candidate)
+      ? candidate
+      : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/**
+ * Read-only, opt-in TikTok Business Messaging entitlement smoke probe.
+ * Does not enable a TikTok account, refresh OAuth, subscribe webhooks,
+ * persist data, inspect message content, or send a message.
+ */
+export class TikTokMessagingAvailabilityProbe implements TikTokMessagingProbeController {
+  readonly #store: Pick<OAuthCredentialStore, "list">;
+  readonly #version: string;
+  readonly #timeout: number;
+  readonly #fetch: typeof fetch;
+  readonly #now: () => Date;
+
+  constructor(options: TikTokMessagingProbeOptions) {
+    this.#store = options.store;
+    this.#version = options.apiVersion ?? "v1.3";
+    this.#timeout = options.requestTimeoutMs ?? 8000;
+    this.#fetch = options.fetchImpl ?? fetch;
+    this.#now = options.now ?? (() => new Date());
+    if (!/^v1\.3$/u.test(this.#version) || !Number.isInteger(this.#timeout)
+      || this.#timeout < 500 || this.#timeout > 30_000) {
+      throw new Error("Invalid TikTok Messaging probe configuration");
+    }
+  }
+
+  async probe(): Promise<TikTokMessagingProbeResult> {
+    let credentials;
+    try {
+      credentials = await this.#store.list("tiktok");
+    } catch {
+      return { status: "credential_store_unavailable" };
+    }
+
+    if (credentials.length === 0) return { status: "no_stored_authorization" };
+    if (credentials.length !== 1) return { status: "ambiguous_authorization" };
+    const credential = credentials[0]!;
+    if (credential.provider !== "tiktok"
+      || credential.accountId.length < 1
+      || credential.accessToken.length < 8) {
+      return { status: "no_stored_authorization" };
+    }
+    if (credential.accessExpiresAt === undefined
+      || credential.accessExpiresAt.getTime() <= this.#now().getTime() + 60_000) {
+      return { status: "access_token_expired" };
+    }
+
+    const url = new URL(
+      `https://business-api.tiktok.com/open_api/${this.#version}/business/message/conversation/list/`
+    );
+    url.searchParams.set("business_id", credential.accountId);
+    url.searchParams.set("conversation_type", "SINGLE");
+    url.searchParams.set("limit", "1");
+
+    let response: Response;
+    try {
+      response = await this.#fetch(url, {
+        method: "GET",
+        headers: {
+          accept: "application/json",
+          "Access-Token": credential.accessToken
+        },
+        redirect: "error",
+        cache: "no-store",
+        signal: AbortSignal.timeout(this.#timeout)
+      });
+    } catch {
+      return { status: "provider_unavailable" };
+    }
+
+    const code = await responseCode(response);
+    const details = {
+      httpStatus: response.status,
+      ...(code === undefined ? {} : { providerCode: code })
+    };
+
+    if (response.ok && code === "0") {
+      return { status: "accepted", ...details };
+    }
+    if (response.status === 429 || response.status >= 500) {
+      return { status: "provider_unavailable", ...details };
+    }
+    if (response.status >= 400 && response.status < 500
+      || code !== undefined && code !== "0") {
+      return { status: "provider_rejected", ...details };
+    }
+    return { status: "invalid_provider_response", ...details };
+  }
+}

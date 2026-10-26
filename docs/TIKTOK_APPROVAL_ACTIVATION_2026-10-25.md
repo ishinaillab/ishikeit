@@ -2,6 +2,39 @@
 
 **Checked:** 2026-10-26 (Asia/Manila). **Production:** foundation deployed; TikTok Business Messaging **not activated**.
 
+## Authenticated developer-app permission readback (2026-10-26)
+
+An additional read-only check opened the existing **logged-in** TikTok API
+for Business developer app **ishikeit** on the authorized Windows Chrome
+profile and viewed its **Authorization > Scope of permission** page.
+
+- The developer portal displayed **"Your scope of permission changes have
+  been approved."** This confirms the application has an approved scope
+  change, not which additional product families it may use.
+- The visible selected categories included TikTok accounts, ad account
+  management, and other business tooling. The Accounts API list contained
+  /business/get/ and other profile, posts, comments, and publishing routes.
+- Browser Find reported **zero matches** for both "Business Messaging" and
+  "business/message/" on the displayed authorization page. This is positive
+  evidence that **no Business Messaging grant was visible there**, but it
+  is NOT definitive proof that a separate product authorization is absent
+  from another provider approval surface.
+- The current account-holder authorization URL visibly specified organic
+  /Accounts permissions, consistent with the 15 non-messaging scopes stored
+  in Supabase. Neither that OAuth consent nor an advertiser identity
+  can_manage_message field proves Business Messaging entitlement.
+- No permission boxes, approval requests, OAuth grants, business settings,
+  webhook subscriptions, or TikTok messages were modified.
+
+**Operational decision:** continue treating TikTok Business Messaging as
+UNVERIFIED and OFF until TikTok explicitly confirms this developer app has
+Business Messaging API product access and its approved messaging scopes,
+then the account owner completes the correct consent. Only after account
+mapping and account eligibility can Ishikeit perform protected readbacks.
+
+Official prerequisite sequence:
+https://business-api.tiktok.com/portal/docs/business-messaging-api-get-started/v1.3
+
 ## Read-only TikTok activation preflight (October 26)
 
 The development branch adds scripts/probe-tiktok-messaging-preflight.mjs and

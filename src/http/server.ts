@@ -13,6 +13,7 @@ import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
 import type { BuildIdentity } from "../observability/build-identity.js";
 import { verifyBearerAuthorization } from "../security/bearer.js";
+import type { TikTokActivationPreflight } from "../ops/tiktok-activation-preflight.js";
 import type { TikTokOAuthController } from "../auth/tiktok-oauth.js";
 import {
   TikTokMarketingOAuthNotAuthorizedError,
@@ -81,6 +82,7 @@ export interface ServerDeps {
   buildIdentity?: BuildIdentity;
   metrics?: OperationalMetricsReader;
   opsMetricsToken?: string;
+  tiktokActivationPreflight?: TikTokActivationPreflight;
   runtimeState?: {
     processorEnabled: boolean;
     actionDispatchEnabled: boolean;
@@ -124,6 +126,9 @@ export function buildServer(deps: ServerDeps) {
 
   if (deps.metrics !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("operational metrics require a bearer token");
+  }
+  if (deps.tiktokActivationPreflight !== undefined && deps.opsMetricsToken === undefined) {
+    throw new Error("TikTok activation preflight requires an operational bearer token");
   }
   if (deps.tiktokOAuth !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("TikTok OAuth operations require an operational bearer token");
@@ -191,6 +196,21 @@ export function buildServer(deps: ServerDeps) {
         deps.logger.error({ err: error }, "operational metrics snapshot failed");
         return reply.code(503).send({ status: "metrics_unavailable" });
       }
+    });
+  }
+
+  if (deps.tiktokActivationPreflight !== undefined && deps.opsMetricsToken !== undefined) {
+    const preflight = deps.tiktokActivationPreflight;
+    const token = deps.opsMetricsToken;
+    server.get("/ops/tiktok/activation/preflight", (req, reply) => {
+      reply.header("cache-control", "private, no-store");
+      if (!verifyBearerAuthorization(req.headers.authorization, token)) {
+        return reply
+          .header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401)
+          .send({ status: "unauthorized" });
+      }
+      return preflight;
     });
   }
 

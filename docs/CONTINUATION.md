@@ -1,5 +1,31 @@
 # Ishikeit continuation handoff
 
+## 2026-10-26 — TikTok read-only activation preflight (newest, default-off)
+
+- Continued from the October 26 authoritative checkpoint on branch
+  checkpoint/operational-review-2026-10-24, reconciled against latest main
+  (47a6f2ce0c809061ee6d69e3a701820d0d183c95).
+- PR #71 (Comment-to-Message) and PR #76 (Automatic Messages read client)
+  are merged. Neither establishes TikTok Business Messaging-specific app
+  approval or fresh account-level messaging consent.
+- Added local-only operational preflight
+  scripts/probe-tiktok-messaging-preflight.mjs, with seven mock tests and a
+  Node24 CI test step. It calls only Ishikeit GET routes, never TikTok
+  provider endpoints, OAuth start, webhook reconcile, provider sends, or DB
+  writes. It returns sanitized metadata, not account identity or secrets.
+- Subsequent **authenticated** TikTok developer-app Authorization readback
+  in the authorized Windows Chrome session confirmed an approved scope change
+  for ishikeit. The displayed permission categories included Accounts and
+  Marketing tooling, but searches found zero Business Messaging category or
+  business/message/ API routes. This does not prove a separate grant is
+  impossible, only that it was **not established** by the approved scope page.
+  Stored OAuth scopes remain organic/Accounts-oriented. No TikTok app settings,
+  OAuth consents, webhook subscriptions, or messages were modified.
+- Hostinger secrets remain masked; no changes to the 51-key environment set,
+  live integrations or the 43 historical dead letters. Next gate: verify
+  product approval and scopes with TikTok, then obtain account owner consent.
+- Procedure: docs/TIKTOK_APPROVAL_ACTIVATION_2026-10-25.md.
+
 Updated: 2026-10-02
 
 ## Canonical project

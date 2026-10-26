@@ -1,10 +1,12 @@
 # Production Ishi AI Bridge v0.3.1 rollout and rollback
 
-**Status: NOT DEPLOYED.** This is a controlled operations runbook, not a request
-to auto-install a plugin. Last verified production installation: active
-`ishi-ai-bridge` v0.3.0 at `www.ishinaillab.com`. Current GitHub source
-contains v0.3.1 (sanitized future exception diagnostics only). Historical
-October 20 origin-502 root cause is **not** proven or fixed by this release.
+**Current status (2026-10-26): DEPLOYED AND TESTED FOR INSTAGRAM.** This is the
+historical controlled rollout/rollback runbook, not a request to reinstall.
+A user-installed Ishi AI Bridge **v0.3.1** was independently verified active
+on `www.ishinaillab.com`; storage schema remained 1.1.1. The October 25
+Instagram tester canary passed inbound processing, outbound provider echo ID
+correlation, and human-confirmed tester inbox receipt. Historical October 20
+origin-502 root cause is **not** proven fixed by this diagnostic release.
 
 ## Preconditions: all required
 
@@ -124,10 +126,17 @@ live provider credentials or TikTok app permissions during this rollout.
 
 ## Release status / remaining blocker
 
-As of the latest verified read, WordPress remained on v0.3.0 and Hostinger
-hPanel/interactive WordPress ZIP installer was not available to the current
-ChatGPT tool session. The off-server October 12 plugin + DB backups passed
-ZIP CRC and gzip stream integrity checks but are **not current**. Production
-installation and dedicated-token live canary therefore remain **blocked**.
+**Superseded as of 2026-10-26.** User installed v0.3.1 manually; authenticated
+WPVibe plugin readback independently confirmed active v0.3.1 and schema 1.1.1.
+The Instagram production E2E tester reply was human-confirmed received.
+The separate dedicated-bearer `GET /wp-json/ishi-ai/v1/health` from the
+existing trusted Node runtime was not executed because Hostinger's management
+API masks secret values and exposes no approved runtime command execution.
+Do not report that dedicated health probe as passed. The October 12 older
+UpdraftPlus backups had integrity checks but a fresh pre-install full
+files+database rollback snapshot was not independently verified in this chat;
+DO NOT misrepresent the historical release as having met that recovery gate.
+Future plugin updates again require a fresh verified recovery plan. Preserve
+bookings/orders and do not restore a stale database indiscriminately.
 Code PR #80 adds a default-**off** long outage retry option; it must remain
 off pending user-experience/human-handoff review even after v0.3.1 deployment.

@@ -1,37 +1,41 @@
-# TikTok API for Business approval: Ishikeit activation gates
+# Ishikeit TikTok API activation checkpoint
 
-Date: 2026-10-25 (Asia/Manila). Status: **review branch / NOT ACTIVATED**.
+**Checked:** 2026-10-26 (Asia/Manila). **Production:** foundation deployed; TikTok Business Messaging **not activated**.
 
-## Evidence boundaries
+## Verified code and runtime release
 
-- The Ishikeit owner reported that TikTok approved the developer app named **ishikeit** for **TikTok Business API**. Treat this as a user-reported external approval, not independent proof of every product/scope being approved.
-- TikTok API for Business is a family: Marketing API, Organic/Accounts API, and **Business Messaging API** are not identical grants. Confirm the approved app's precise products/scopes and associated permissions in the authenticated TikTok developer portal.
-- As of October 25, Hostinger's masked environment-variable inventory for `apps.ishinaillab.com` contains **no `TIKTOK_*` keys**; previous TikTok messaging read/webhook/image features remain dormant in production. Do not invent values or assume consent.
-- The existing TikTok for Business MCP connected for advertising may use a different authorized advertiser/app. Never treat advertising account visibility as proof of Business Messaging scope or Account OAuth.
-- A live Instagram v0.3.1 E2E canary passed. Preserve existing Meta and Telegram behavior and the provider-neutral durable processing contracts.
+- The owner reports the developer app **ishikeit** received TikTok **API for Business** approval. This claim does not by itself establish separate access to TikTok **Business Messaging API** or approved message-handling scopes.
+- [PR #71](https://github.com/ishinaillab/ishikeit/pull/71), TikTok Comment-to-Message foundation, is **merged** into `main`; Hostinger's completed Node.js 24 build revision was `f7ad4759afa087b3fdb716208e51efe939014e18`. GitHub CI passed Node, PHP lint, and context-continuity. Its behavior is **default-off**.
+- [PR #76](https://github.com/ishinaillab/ishikeit/pull/76), TikTok automatic-message **read-only** foundation, is also **merged** into `main`; Hostinger successfully built commit `b0877d74fef5e35d8dab788be8845663e8627c3f`. The client is deliberately **not registered on live routes**. GitHub CI for the feature head `fd2d76fc71afff1c29f5a24af8a9708e0cf8695d` passed all Node/PHP/context jobs, including 37 test files / 271 tests. No provider settings writes.
+- At the latest post-build read, `https://apps.ishinaillab.com/health/ready` returned `{"status":"ready"}`, and the existing outbox held **0 pending records / 43 historical dead letters**. Do not replay historical records.
+- Production Hostinger account `u328762438`, Node app `apps.ishinaillab.com`. The official Hostinger read-only environment inventory now returns **51 configured keys**, all values masked; **15 named `TIKTOK_*` settings** include TikTok app ID/secret, OAuth authorization and redirect URLs, webhook callback URL, Marketing auth/redirect URLs, API version and timeouts. Contrary to the older Oct 25 checkpoint, app-level TikTok keys **are present now**.
+- **Missing:** `TIKTOK_BUSINESS_ID` and `TIKTOK_COMMENT_TO_MESSAGE_ENABLED`. Thus the Comment-to-Message activation gate is unset, and the Business Messaging conversation-read routes remain unregistered. Do not set these blindly.
 
-## Activation stages, in strict order
+## Verified TikTok account authorization evidence
 
-1. **App grant inspection (read-only):** confirm the app identifier, supported product(s), scope(s), status, region, any Business Messaging-specific security/privacy review and restrictions; record non-secret facts only. Distinguish TikTok Accounts/Marketing approvals from Business Messaging access.
-2. **Account eligibility and authorization:** use TikTok's official approved Business Account OAuth path; verify the chosen account is eligible (Advanced Access / Verified Business Account where the endpoint demands it), owner-age limits, and exactly granted scopes. Store client ID/secret and refresh tokens only in approved Hostinger/runtime secret storage; never commit, print, or paste into chat.
-3. **Safe runtime configuration:** confirm the correctly authorized production site `apps.ishinaillab.com`, current deployment artifact/revision and recovery plan. Configure only those `TIKTOK_*` runtime keys required for the approved capability. Hostinger's environment update endpoint replaces the **entire** environment and restarts Node; **never use masked readback values** to construct a replacement and never attempt a partial blind replace. Require complete existing values through an authorized secure deployment process, otherwise stop and request the required secure setup.
-4. **Read-only status:** with approved credentials, verify the dedicated TikTok Business Messaging capabilities, business account, conversation list, webhook status, and supported message types. Do not call advertiser marketing endpoints as substitutes. Preserve idempotency and per-account isolation.
-5. **Webhook reconciliation:** explicitly review callback `https://apps.ishinaillab.com/ishikeit/webhooks/tiktok` and event subscription, sign/verify ingestion as documented, then perform idempotent provider read-back. No startup auto-mutation or wholesale deletion.
-6. **Human-originated test:** only from an authorized TikTok test account, one inbound text DM -> durable record -> processed -> Meta-independent generic action -> TikTok outbound acceptance -> verified tester receipt. Verify idempotency, rate/eligibility limits and lease/backoff. No synthetic customer replies or historical queue replay.
-7. **Comment-to-Message:** draft PR #71 is a separate optional behavior. Validate `im_receive_high_intent_comment` availability, direct-reply scope, native settings status, idempotent reconciliation and controlled provider send. Keep default disabled until independently verified.
-8. **Automatic messages:** stacked draft PR #76 provides read-only foundations (welcome, suggested questions, chat prompts, follow-welcome). Confirm Business Messaging-specific `/business/message/auto_message/get/` endpoint, not marketing creative/auto_message; moderated writes require explicit review and provider readback.
-9. **Conversation unlock + reconciliation/backfill:** preserve provider eligibility and handoff state, compare history against durable event IDs and never auto-reply to historical imports or replay old dead letters.
+- `public.oauth_authorization_states` has one completed/consumed TikTok OAuth state, and `public.oauth_credentials` has one TikTok record with future access/refresh expirations. Encrypted token bytes and account IDs were **not read or exposed**.
+- The token's **stored scope names** are Accounts/organic-oriented: profile/user information, account type, publishing, comment listing/management, video insights, and other insights. **No explicit Business Messaging scope is present**. This means existing OAuth is real, but does not prove Business Messaging entitlement. Do not assume generic API for Business approval includes the higher-privacy Business Messaging product.
+- TikTok advertising-account API independently found an Ishi Nail Lab `TT_USER` identity with `available_status: AVAILABLE` and `can_manage_message: true`. This is **advertising identity eligibility evidence only**, not consent for Ishikeit's developer app to read or send private chats.
+- Public unauthenticated GET status codes (no secret or response bodies accessed): `/ops/tiktok/oauth/status` => **401** (registered, protected); `/ops/tiktok/messaging/webhook/status` => **401** (registered, protected); `/ops/tiktok/messaging/capabilities` => **404** (Business Account/reader not activated).
+- TikTok-for-Business MCP ad-account token is a **separate** authorization channel. Never use a Marketing `creative/auto_message` endpoint to implement Business Messaging account-level automatic messages.
 
-## Safe engineering / release requirements
+## Remaining external gates (perform in order)
 
-- PR #71: merge current main into isolated review branch; run Node **24** `npm run check`, `npm audit`, PHP lint where available, and GitHub CI before merge to main. A draft PR green locally is **not** live validation.
-- PR #76 is stacked on #71, so verify both once #71 is updated; do not independently promote it with unverified OAuth or provider capabilities.
-- Do not enable Comment-to-Message, TikTok outbound, automatic-message writes or WordPress outage-recovery retries just because the app received general Business API approval.
-- Existing E2E Instagram channel and WordPress AI Bridge v0.3.1 remain protected production baselines.
-- No Hostinger secrets, TikTok tokens, Supabase records, provider account settings or production DNS are modified by this document.
+1. Inspect the **ishikeit** developer app's approved products, Business Messaging API access, security/privacy review and precise grants in the TikTok developer dashboard. If only Accounts/Marketing was approved, apply for Business Messaging access rather than trying to bypass it.
+2. Under the **approved app**, obtain actual TikTok Business Account owner OAuth consent and validate the granted permissions plus appropriate entitlement (Advanced Access or Verified Business Account, relevant age/region restrictions). The prior token may need fresh consent with the newly approved product permissions. Keep all tokens encrypted and out of chat/source control.
+3. Verify the intended Business Account open ID/account mapping; configure `TIKTOK_BUSINESS_ID` securely only after proven entitlement and owner authorization. The Hostinger MCP env-replacement endpoint does an **entire-set replacement and Node restart** and masks all existing values. **Never send masked placeholders or update one variable by replacing all 51 secrets with unknown values.** Use a supported authenticated UI or secure full-state manager instead.
+4. Use the existing protected status routes for **read-only** TikTok business capabilities and webhook subscription checks. Confirm exact allowed webhook events and callback `https://apps.ishinaillab.com/ishikeit/webhooks/tiktok`; only then perform an explicitly reviewed idempotent webhook reconciliation with provider readback.
+5. Test one new human-originated TikTok Direct Message from an authorized tester and trace signed webhook → durable inbox → AI Bridge → outbound provider acceptance → confirmed tester inbox receipt; leave all historical dead letters untouched.
+6. For Comment-to-Message, verify provider-specific eligibility and direct-reply setting before setting the separate `TIKTOK_COMMENT_TO_MESSAGE_ENABLED` flag. Keep disabled until its own native comment event and provider reply canary pass.
+7. For Automatic Messages, validate the provider-approved account-level `/open_api/v1.3/business/message/auto_message/get/` **HTTP method and shape** with a read-only request before instantiating the dormant reader. Conflicting third-party descriptions require real-account or authoritative official documentation proof. Moderated writes need a separate review.
+8. After messaging authorization, implement gated conversation-unlock lifecycle and history-gap reconciliation that never send automated replies to old imported events.
 
-## Official sources
+## Protected baselines
 
-- TikTok Business Messaging Getting Started: https://business-api.tiktok.com/portal/docs/business-messaging-api-get-started/v1.3
-- TikTok Automatic Message: https://business-api.tiktok.com/portal/docs/update-the-automatic-message-for-a-business-account/v1.3
-- TikTok API for Business overview: https://ads.tiktok.com/resources/help/article/marketing-api
+Existing Instagram end-to-end messenger canary passed with human-verified tester receipt following Ishi AI Bridge **v0.3.1**. Preserve Messenger, Instagram, WhatsApp, Telegram, WordPress, LatePoint, WooCommerce and Supabase data. Maintain provider-neutral event/action queues and idempotency.
+
+## Official references
+
+- Business Messaging API onboarding: https://business-api.tiktok.com/portal/docs/business-messaging-api-get-started/v1.3
+- TikTok automatic messages, privacy checks and Business Account Advanced Access requirement: https://business-api.tiktok.com/portal/docs/update-the-automatic-message-for-a-business-account/v1.3
+- Accounts API overview (distinct product family): https://business-api.tiktok.com/portal/docs/accounts-api-overview/v1.3

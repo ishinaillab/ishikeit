@@ -2477,3 +2477,26 @@ Official Hostinger help confirms hPanel Websites → Dashboard → Backups → *
 - See docs/TIKTOK_HISTORY_ISOLATION_2026-10-26.md for regression proof and
   explicit activation/production safeguards. PR #93 remains separate
   and unmerged; do not accidentally bundle its working-tree changes.
+
+---
+
+## 2026-10-27 — opt-in read-only TikTok Messaging API live probe
+
+- New draft PR #95 based on unchanged main, independent of PRs #93 (local
+  authorization preflight) and #94 (conversation-history isolation).
+- Existing encrypted TikTok owner OAuth credential can be used for one
+  **operator-invoked** GET of the official Business Messaging conversation
+  list (SINGLE, limit 1), without setting TIKTOK_BUSINESS_ID.
+- New protected route /ops/tiktok/messaging/availability-probe is registered
+  with existing OAuth and OPS_METRICS_TOKEN, but never called during startup.
+  It returns only sanitized acceptance/rejection/prerequisite statuses and
+  bounded numeric provider codes, not token or conversation contents.
+- No OAuth refresh, messages sent, webhook writes, account activation,
+  database changes, dead-letter replay, or new environment variables.
+- Node 24 full checks: 39 test files / 281 tests, lint/typecheck/build
+  passed; production npm audit found zero vulnerabilities.
+- **Live provider check is not yet performed.** Windows environment lacks the
+  existing OPS_METRICS_TOKEN and Hostinger masks it. Requires reviewed CI,
+  controlled deployment, then one call from an existing authorized ops
+  environment without exposing credentials. Denial must not be bypassed.
+- Operational guide: docs/TIKTOK_MESSAGING_LIVE_PROBE_2026-10-27.md

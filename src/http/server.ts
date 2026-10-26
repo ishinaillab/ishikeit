@@ -25,6 +25,7 @@ import {
   TikTokBusinessMessagingValidationError
 } from "../messaging/tiktok-business-read.js";
 import type { TikTokBusinessWebhookController } from "../messaging/tiktok-webhook-config.js";
+import type { TikTokMessagingProbeController } from "../messaging/tiktok-availability-probe.js";
 import {
   TikTokCommentToMessageNotAuthorizedError,
   type TikTokBusinessCommentToMessageController
@@ -56,6 +57,7 @@ export interface ServerDeps {
   tiktokBusinessMessagingRead?: {
     service: TikTokBusinessMessagingReadController;
   };
+  tiktokMessagingAvailabilityProbe?: TikTokMessagingProbeController;
   tiktokBusinessMessagingWebhook?: {
     service: TikTokBusinessWebhookController;
   };
@@ -128,6 +130,10 @@ export function buildServer(deps: ServerDeps) {
   if (deps.tiktokOAuth !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("TikTok OAuth operations require an operational bearer token");
   }
+  if (deps.tiktokMessagingAvailabilityProbe !== undefined
+    && deps.opsMetricsToken === undefined) {
+    throw new Error("TikTok Messaging availability probe requires an operational bearer token");
+  }
   if (
     deps.tiktokBusinessMessagingRead !== undefined
     && deps.opsMetricsToken === undefined
@@ -190,6 +196,25 @@ export function buildServer(deps: ServerDeps) {
       } catch (error) {
         deps.logger.error({ err: error }, "operational metrics snapshot failed");
         return reply.code(503).send({ status: "metrics_unavailable" });
+      }
+    });
+  }
+
+  if (deps.tiktokMessagingAvailabilityProbe !== undefined
+    && deps.opsMetricsToken !== undefined) {
+    const probe = deps.tiktokMessagingAvailabilityProbe;
+    const opsToken = deps.opsMetricsToken;
+    server.get("/ops/tiktok/messaging/availability-probe", async (req, reply) => {
+      reply.header("cache-control", "private, no-store");
+      if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
+        return reply.header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401).send({ status: "unauthorized" });
+      }
+      try {
+        return await probe.probe();
+      } catch {
+        // Do not log provider responses, account identifiers or bearer tokens.
+        return reply.code(503).send({ status: "probe_unavailable" });
       }
     });
   }

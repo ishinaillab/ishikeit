@@ -13,10 +13,14 @@
   Node24 CI test step. It calls only Ishikeit GET routes, never TikTok
   provider endpoints, OAuth start, webhook reconcile, provider sends, or DB
   writes. It returns sanitized metadata, not account identity or secrets.
-- Developer portal was not authenticated in isolated browser; no Business
-  Messaging approval could be verified. Stored OAuth scopes are Accounts-
-  oriented, and the advertising identity's can_manage_message flag is not
-  sufficient evidence of messaging consent.
+- Subsequent **authenticated** TikTok developer-app Authorization readback
+  in the authorized Windows Chrome session confirmed an approved scope change
+  for ishikeit. The displayed permission categories included Accounts and
+  Marketing tooling, but searches found zero Business Messaging category or
+  business/message/ API routes. This does not prove a separate grant is
+  impossible, only that it was **not established** by the approved scope page.
+  Stored OAuth scopes remain organic/Accounts-oriented. No TikTok app settings,
+  OAuth consents, webhook subscriptions, or messages were modified.
 - Hostinger secrets remain masked; no changes to the 51-key environment set,
   live integrations or the 43 historical dead letters. Next gate: verify
   product approval and scopes with TikTok, then obtain account owner consent.

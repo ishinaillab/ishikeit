@@ -1,21 +1,5 @@
 # Ishikeit continuation handoff
 
-## 2026-10-26 — fail-closed TikTok message-history isolation
-
-- Building on latest `main` (47a6f2ce0c809061ee6d69e3a701820d0d183c95);
-  PRs #71/#76 are merged, and TikTok Business Messaging is still inactive.
-- Detected a cross-conversation isolation gap in the dormant TikTok history
-  read adapter: returned message conversation IDs were not checked against
-  the requested conversation. Verified a failing regression test first.
-- Reject the **entire** message-history response on a mismatch, including
-  partially malformed foreign items. Error metadata does not expose
-  private conversation IDs, texts, or credentials.
-- Preserve valid same-conversation and empty history behavior; no database
-  migrations, OAuth, webhook, provider writes, replay, or runtime startup edits.
-- See docs/TIKTOK_HISTORY_ISOLATION_2026-10-26.md for regression proof and
-  explicit activation/production safeguards. PR #93 remains separate
-  and unmerged; do not accidentally bundle its working-tree changes.
-
 Updated: 2026-10-02
 
 ## Canonical project
@@ -2449,3 +2433,21 @@ To use after authorized connection to **Hostinger's existing runtime only**, run
 Official Hostinger help confirms hPanel Websites → Dashboard → Backups → **Create Backup** supports on-demand full hosting-files/database snapshots for eligible Business-or-higher plans; actual Ishikeit hosting tier and successful current snapshot unverified. Existing automatic Hostinger backups may exist independently of UpdraftPlus's manual setting; do **not** conflate the two. Hostinger File Manager supports archive/ZIP upload and extraction. WordPress Admin → Plugins → Add New → Upload Plugin → existing-plugin **Replace current with uploaded** is a legitimate custom-plugin ZIP update route even without SSH, but it requires an interactive signed-in WordPress browser session, absent in these connected content APIs. Source: https://www.hostinger.com/support/2298928-how-to-create-backups-at-hostinger/ ; https://www.hostinger.com/support/5981435-how-to-download-backups-at-hostinger/ ; https://wordpress.org/documentation/article/manage-plugins/ .
 
 [docs/WORDPRESS_AI_BRIDGE_RELEASE_RUNBOOK.md](WORDPRESS_AI_BRIDGE_RELEASE_RUNBOOK.md) now provides exact approved backup/current-plugin-file verification, SHA256 release ZIP, WordPress admin upload, dedicated-bearer GET-only health probe, authorized provider tester canary, and *plugin-only* rollback steps. It explicitly forbids restoring an old WordPress database without protecting intervening LatePoint bookings/WooCommerce orders and forbids deploying to production without current successful backup and supported interactive installer. This is documentation only; no production plugin upload or rollback occurred.
+
+---
+
+## 2026-10-26 — fail-closed TikTok message-history isolation
+
+- Building on latest `main` (47a6f2ce0c809061ee6d69e3a701820d0d183c95);
+  PRs #71/#76 are merged, and TikTok Business Messaging is still inactive.
+- Detected a cross-conversation isolation gap in the dormant TikTok history
+  read adapter: returned message conversation IDs were not checked against
+  the requested conversation. Verified a failing regression test first.
+- Reject the **entire** message-history response on a mismatch, including
+  partially malformed foreign items. Error metadata does not expose
+  private conversation IDs, texts, or credentials.
+- Preserve valid same-conversation and empty history behavior; no database
+  migrations, OAuth, webhook, provider writes, replay, or runtime startup edits.
+- See docs/TIKTOK_HISTORY_ISOLATION_2026-10-26.md for regression proof and
+  explicit activation/production safeguards. PR #93 remains separate
+  and unmerged; do not accidentally bundle its working-tree changes.

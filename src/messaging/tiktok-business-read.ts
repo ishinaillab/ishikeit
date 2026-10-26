@@ -360,6 +360,18 @@ implements TikTokBusinessMessagingReadController {
       const messageId = nonEmptyString(message?.message_id);
       const providerConversationId = nonEmptyString(message?.conversation_id);
       const messageType = nonEmptyString(message?.message_type);
+      // Reject the entire result if TikTok returns an item from another
+      // conversation. Even a partially malformed foreign item must not
+      // disclose that other conversation through the history API.
+      if (
+        providerConversationId !== undefined
+        && providerConversationId !== conversationId
+      ) {
+        throw new TikTokBusinessMessagingReadError(
+          "TikTok returned a message for a different conversation",
+          { retryable: false, stage: "message_list" }
+        );
+      }
       if (
         messageId === undefined
         || providerConversationId === undefined

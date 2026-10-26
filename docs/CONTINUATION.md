@@ -2360,6 +2360,29 @@ Verification state at this checkpoint:
 - draft PR #71 remains unmerged and undeployed.
 
 
+### 2026-10-24 — TikTok automatic messages read-only foundation (stacked branch)
+
+After refreshing Comment-to-Message PR #71 with latest `main`, new stacked branch `feature/tiktok-automatic-messages-read-20261024` adds a **dormant, unregistered** client `src/messaging/tiktok-automatic-message-read.ts` and isolated mock-based tests. There are no new HTTP routes, environment flags, outgoing business messages, DB migrations, or TikTok provider settings writes.
+
+The read client is explicitly scoped to TikTok's **Business Messaging** `business/message/auto_message/get/` API, not Ads Manager's distinct `creative/auto_message` advertising template API. It accepts an existing authorized business ID and one access-token source, requests an automatic-message type, and returns only identifier/status/review metadata. It never logs/returns configured welcome text or private content. It rejects mismatched business IDs, malformed replies, unrecognized message types, missing authorization and invalid review states; provider errors retain sanitized codes but not body text.
+
+Provider documentation:
+- TikTok Business Messaging API v1.3 docs enumerate automatic-message create/update/status/get/delete/sort; private data/security review and approved API access required.
+- Official update contract: https://business-api.tiktok.com/portal/docs/update-the-automatic-message-for-a-business-account/v1.3
+- Official onboarding: https://business-api.tiktok.com/portal/docs/business-messaging-api-get-started/v1.3
+- `has_advanced_access=true` or Verified Business Account and adult account owner requirements must be confirmed; TikTok automatic-message moderation/status `REVIEWING` must be respected.
+- Until the exact `get` endpoint contract has been independently live-verified for the authorized business account, treat provider fields/request compatibility as mock-tested only and never activate automatic mutations on the strength of this code.
+
+**Gates:** Parent Comment-to-Message PR #71 remains draft/unmerged. This stacked branch must remain draft and must not deploy before parent approval, compatible API access, authorized test-account canaries and post-approval readbacks. Next build phases: capability readback; provider-native create/update/enable/delete/sort with explicit desired-state and moderation-aware control plane; welcome/suggested-question/chat-prompt/follower variation validations; conversation unlock; reconciliation/backfill. Keep each phase feature gated and provider-neutral.
+
+
+#### October 24 retrieval-contract discrepancy and fail-closed correction
+
+Provider-integration cross-check uncovered conflicting generated API descriptions of `/business/message/auto_message/get/`: a Go SDK defines a GET request with encoded query parameters, whereas a separate schema-generated catalog labels the same path POST with JSON request parameters. The official TikTok documentation *identifies the endpoint*, but an independently accessible authoritative method table for the GET operation was not confirmed. Do **not** assume that green mock tests establish the live provider's request method.
+
+Therefore `TikTokAutoMessageReader` now requires an explicit `transport: "GET_QUERY" | "POST_JSON"` on construction and rejects missing/unknown transport instead of guessing. Both branches call only the account-level `auto_message/get/` retrieval endpoint, never a provider mutation path; the POST variant carries parameters in JSON rather than the URL. Neither transport is configured or instantiated in the app's running HTTP process. This is an internal compatibility gate, **not** provider approval or proof either form works.
+
+References (method conflict to verify with approved account): https://pkg.go.dev/github.com/bububa/tiktok-business/model/business/message and https://mosaic.openpromo.app/reference/tiktok/endpoints/business-messaging/ . TikTok official landing page: https://business-api.tiktok.com/portal/docs/get-the-automatic-messages-for-a-business-account/v1.3 . Require authorized provider-specific readback and update the integration notes with exact verified request/response before registering live routes or automated settings changes.
 ### October 24 — WordPress AI Bridge: classify future upstream exceptions without disclosing them (review branch)
 
 Cloudflare historical GraphQL analytics for `/wp-json/ishi-ai/v1/turn` on 2026-10-20 UTC reported 47 origin-generated 502s (edge 502/origin 502), 2 edge 525s (origin 0), 1 edge 522 (origin 0), and 2 successes. Failures peaked at 14:00 UTC (42 of the 47 origin 502 responses). Supabase `public.inbound_events` failed rows on Oct20 show six Telegram, two WhatsApp and one Messenger with `last_error` mentioning HTTP 502, plus one WhatsApp 522. `outbox_attempts` labels these attempts `processing_failure`, including retry/dead-letter events. These are attempt counts, not unique customer messages.

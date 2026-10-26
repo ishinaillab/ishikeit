@@ -320,6 +320,102 @@ describe("TikTokBusinessMessagingReadClient", () => {
     expect(url.toString()).toContain("conversation_id=conv%2B1");
   });
 
+  it("fails closed on a cross-conversation message in a history response", async () => {
+    const leakedText = "do-not-expose-another-conversation";
+    const foreignConversationId = "foreign-conversation-private-id";
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({
+        code: 0,
+        data: {
+          messages: [
+            {
+              conversation_id: "expected-conversation",
+              message_id: "safe-message",
+              message_type: "TEXT",
+              text: { body: "safe message" }
+            },
+            {
+              conversation_id: foreignConversationId,
+              message_id: "foreign-message",
+              message_type: "TEXT",
+              text: { body: leakedText }
+            }
+          ]
+        }
+      }),
+      { status: 200 }
+    ));
+    const client = new TikTokBusinessMessagingReadClient({
+      businessId: "business-1",
+      accessToken: "secret-access-token",
+      fetchImpl
+    });
+
+    let caught: unknown;
+    try {
+      await client.listMessages("expected-conversation");
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(TikTokBusinessMessagingReadError);
+    expect(caught).toMatchObject({ stage: "message_list", retryable: false });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const rendered = String(caught);
+    expect(rendered).not.toContain(leakedText);
+    expect(rendered).not.toContain(foreignConversationId);
+    expect(rendered).not.toContain("secret-access-token");
+  });
+
+  it("rejects a malformed foreign item without returning partial history", async () => {
+    const client = new TikTokBusinessMessagingReadClient({
+      businessId: "business-1",
+      accessToken: "access-token-123456789",
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response(
+        JSON.stringify({
+          code: 0,
+          data: {
+            messages: [
+              {
+                conversation_id: "target",
+                message_id: "valid-id",
+                message_type: "TEXT",
+                text: { body: "valid body" }
+              },
+              {
+                conversation_id: "other-conversation",
+                message_type: "TEXT",
+                text: { body: "private body" }
+              }
+            ]
+          }
+        }),
+        { status: 200 }
+      ))
+    });
+
+    await expect(client.listMessages("target")).rejects.toMatchObject({
+      stage: "message_list",
+      retryable: false
+    });
+  });
+
+  it("allows an explicitly empty message history for the requested conversation", async () => {
+    const client = new TikTokBusinessMessagingReadClient({
+      businessId: "business-1",
+      accessToken: "access-token-123456789",
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response(
+        JSON.stringify({ code: 0, data: { messages: [] } }),
+        { status: 200 }
+      ))
+    });
+
+    await expect(client.listMessages("target")).resolves.toEqual({
+      conversationId: "target",
+      messages: []
+    });
+  });
+
   it("rejects invalid read inputs before token or network access", async () => {
     const getAccessToken = vi.fn();
     const fetchImpl = vi.fn<typeof fetch>();

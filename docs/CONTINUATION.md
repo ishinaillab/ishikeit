@@ -1,5 +1,31 @@
 # Ishikeit continuation handoff
 
+## 2026-10-26 — TikTok read-only activation preflight (newest, default-off)
+
+- Continued from the October 26 authoritative checkpoint on branch
+  checkpoint/operational-review-2026-10-24, reconciled against latest main
+  (47a6f2ce0c809061ee6d69e3a701820d0d183c95).
+- PR #71 (Comment-to-Message) and PR #76 (Automatic Messages read client)
+  are merged. Neither establishes TikTok Business Messaging-specific app
+  approval or fresh account-level messaging consent.
+- Added local-only operational preflight
+  scripts/probe-tiktok-messaging-preflight.mjs, with seven mock tests and a
+  Node24 CI test step. It calls only Ishikeit GET routes, never TikTok
+  provider endpoints, OAuth start, webhook reconcile, provider sends, or DB
+  writes. It returns sanitized metadata, not account identity or secrets.
+- Subsequent **authenticated** TikTok developer-app Authorization readback
+  in the authorized Windows Chrome session confirmed an approved scope change
+  for ishikeit. The displayed permission categories included Accounts and
+  Marketing tooling, but searches found zero Business Messaging category or
+  business/message/ API routes. This does not prove a separate grant is
+  impossible, only that it was **not established** by the approved scope page.
+  Stored OAuth scopes remain organic/Accounts-oriented. No TikTok app settings,
+  OAuth consents, webhook subscriptions, or messages were modified.
+- Hostinger secrets remain masked; no changes to the 51-key environment set,
+  live integrations or the 43 historical dead letters. Next gate: verify
+  product approval and scopes with TikTok, then obtain account owner consent.
+- Procedure: docs/TIKTOK_APPROVAL_ACTIVATION_2026-10-25.md.
+
 Updated: 2026-10-02
 
 ## Canonical project
@@ -2433,6 +2459,24 @@ To use after authorized connection to **Hostinger's existing runtime only**, run
 Official Hostinger help confirms hPanel Websites → Dashboard → Backups → **Create Backup** supports on-demand full hosting-files/database snapshots for eligible Business-or-higher plans; actual Ishikeit hosting tier and successful current snapshot unverified. Existing automatic Hostinger backups may exist independently of UpdraftPlus's manual setting; do **not** conflate the two. Hostinger File Manager supports archive/ZIP upload and extraction. WordPress Admin → Plugins → Add New → Upload Plugin → existing-plugin **Replace current with uploaded** is a legitimate custom-plugin ZIP update route even without SSH, but it requires an interactive signed-in WordPress browser session, absent in these connected content APIs. Source: https://www.hostinger.com/support/2298928-how-to-create-backups-at-hostinger/ ; https://www.hostinger.com/support/5981435-how-to-download-backups-at-hostinger/ ; https://wordpress.org/documentation/article/manage-plugins/ .
 
 [docs/WORDPRESS_AI_BRIDGE_RELEASE_RUNBOOK.md](WORDPRESS_AI_BRIDGE_RELEASE_RUNBOOK.md) now provides exact approved backup/current-plugin-file verification, SHA256 release ZIP, WordPress admin upload, dedicated-bearer GET-only health probe, authorized provider tester canary, and *plugin-only* rollback steps. It explicitly forbids restoring an old WordPress database without protecting intervening LatePoint bookings/WooCommerce orders and forbids deploying to production without current successful backup and supported interactive installer. This is documentation only; no production plugin upload or rollback occurred.
+
+---
+
+## 2026-10-26 — fail-closed TikTok message-history isolation
+
+- Building on latest `main` (47a6f2ce0c809061ee6d69e3a701820d0d183c95);
+  PRs #71/#76 are merged, and TikTok Business Messaging is still inactive.
+- Detected a cross-conversation isolation gap in the dormant TikTok history
+  read adapter: returned message conversation IDs were not checked against
+  the requested conversation. Verified a failing regression test first.
+- Reject the **entire** message-history response on a mismatch, including
+  partially malformed foreign items. Error metadata does not expose
+  private conversation IDs, texts, or credentials.
+- Preserve valid same-conversation and empty history behavior; no database
+  migrations, OAuth, webhook, provider writes, replay, or runtime startup edits.
+- See docs/TIKTOK_HISTORY_ISOLATION_2026-10-26.md for regression proof and
+  explicit activation/production safeguards. PR #93 remains separate
+  and unmerged; do not accidentally bundle its working-tree changes.
 
 ---
 

@@ -1,4 +1,6 @@
 import type { OAuthCredentialStore } from "../auth/oauth-store.js";
+import type { TikTokOAuthClientLike } from "../auth/tiktok-oauth.js";
+import { TikTokAccessTokenManager } from "../auth/tiktok-token-manager.js";
 
 export type TikTokMessagingProbeState =
   | "accepted"
@@ -23,6 +25,8 @@ export interface TikTokMessagingProbeController {
 
 export interface TikTokMessagingProbeOptions {
   store: Pick<OAuthCredentialStore, "list">;
+  refreshStore?: OAuthCredentialStore;
+  oauthClient?: TikTokOAuthClientLike;
   apiVersion?: string;
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -66,11 +70,14 @@ async function responseCode(response: Response): Promise<string | undefined> {
 
 /**
  * Read-only, opt-in TikTok Business Messaging entitlement smoke probe.
- * Does not enable a TikTok account, refresh OAuth, subscribe webhooks,
- * persist data, inspect message content, or send a message.
+ * Does not enable a TikTok account, subscribe webhooks, inspect message
+ * content, or send a message. May refresh and persist the existing OAuth
+ * credential when an explicitly configured refresh client is provided.
  */
 export class TikTokMessagingAvailabilityProbe implements TikTokMessagingProbeController {
   readonly #store: Pick<OAuthCredentialStore, "list">;
+  readonly #refreshStore: OAuthCredentialStore | undefined;
+  readonly #oauthClient: TikTokOAuthClientLike | undefined;
   readonly #version: string;
   readonly #timeout: number;
   readonly #fetch: typeof fetch;
@@ -78,6 +85,8 @@ export class TikTokMessagingAvailabilityProbe implements TikTokMessagingProbeCon
 
   constructor(options: TikTokMessagingProbeOptions) {
     this.#store = options.store;
+    this.#refreshStore = options.refreshStore;
+    this.#oauthClient = options.oauthClient;
     this.#version = options.apiVersion ?? "v1.3";
     this.#timeout = options.requestTimeoutMs ?? 8000;
     this.#fetch = options.fetchImpl ?? fetch;
@@ -98,7 +107,7 @@ export class TikTokMessagingAvailabilityProbe implements TikTokMessagingProbeCon
 
     if (credentials.length === 0) return { status: "no_stored_authorization" };
     if (credentials.length !== 1) return { status: "ambiguous_authorization" };
-    const credential = credentials[0]!;
+    let credential = credentials[0]!;
     if (credential.provider !== "tiktok"
       || credential.accountId.length < 1
       || credential.accessToken.length < 8) {
@@ -106,7 +115,25 @@ export class TikTokMessagingAvailabilityProbe implements TikTokMessagingProbeCon
     }
     if (credential.accessExpiresAt === undefined
       || credential.accessExpiresAt.getTime() <= this.#now().getTime() + 60_000) {
-      return { status: "access_token_expired" };
+      if (this.#refreshStore === undefined || this.#oauthClient === undefined) {
+        return { status: "access_token_expired" };
+      }
+      try {
+        const manager = new TikTokAccessTokenManager({
+          businessId: credential.accountId,
+          store: this.#refreshStore,
+          client: this.#oauthClient
+        });
+        await manager.getAccessToken();
+        const refreshed = await this.#refreshStore.get("tiktok", credential.accountId);
+        if (refreshed === undefined || refreshed.accessExpiresAt === undefined
+          || refreshed.accessExpiresAt.getTime() <= this.#now().getTime() + 60_000) {
+          return { status: "access_token_expired" };
+        }
+        credential = refreshed;
+      } catch {
+        return { status: "access_token_expired" };
+      }
     }
 
     const url = new URL(

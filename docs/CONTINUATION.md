@@ -2500,3 +2500,10 @@ Official Hostinger help confirms hPanel Websites → Dashboard → Backups → *
   controlled deployment, then one call from an existing authorized ops
   environment without exposing credentials. Denial must not be bypassed.
 - Operational guide: docs/TIKTOK_MESSAGING_LIVE_PROBE_2026-10-27.md
+
+## TikTok stored-account OAuth refresh repair (2026-10-27)
+
+- The protected messaging availability probe previously returned `access_token_expired` because it did not refresh credentials. A single TikTok OAuth credential was verified in the store, with a refresh token available, while production `TIKTOK_BUSINESS_ID` remains unset.
+- Branch `fix/tiktok-refresh-from-stored-account` adds optional locked refresh through the existing `TikTokAccessTokenManager`, using the **single stored credential's account ID**. The protected probe may now persist refreshed OAuth credentials; it must never be described as strictly read-only. It still does not enable messaging, send messages, or change webhooks.
+- Do not replace Hostinger's full environment variable set merely to add `TIKTOK_BUSINESS_ID`. Do not enable outbound TikTok messaging until the provider confirms entitlement and account mapping.
+- Verify CI, merge/deploy, protected probe result, and provider authorization independently. If the provider rejects the probe, keep TikTok messaging disabled.

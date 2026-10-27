@@ -53,6 +53,7 @@ describe("TikTokBusinessMessagingReadClient", () => {
     expect(url.searchParams.get("conversation_type")).toBe("SINGLE");
     expect(url.toString()).toContain("conversation_id=conv%2B1");
     expect(init?.method).toBe("GET");
+    expect(init?.redirect).toBe("error");
     expect(new Headers(init?.headers).get("Access-Token"))
       .toBe("access-token-123456789");
   });

@@ -19,7 +19,8 @@ describe("WhatsApp template adapter", () => {
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toContain("/123456789012/messages");
     expect(init?.redirect).toBe("error");
-    expect(JSON.parse(String(init?.body))).toMatchObject({ type: "template", template: { name: "hello_world", language: { code: "en_US" } } });
+    if (typeof init?.body !== "string") throw new Error("expected JSON request body");
+    expect(JSON.parse(init.body)).toMatchObject({ type: "template", template: { name: "hello_world", language: { code: "en_US" } } });
   });
   it("rejects invalid target and unapproved content shape before network", async () => {
     const fetchImpl = vi.fn<typeof fetch>();

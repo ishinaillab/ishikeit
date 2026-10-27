@@ -50,6 +50,7 @@ describe("TikTokOAuthClient", () => {
     expect(url).toBe(
       "https://business-api.tiktok.com/open_api/v1.3/tt_user/oauth2/token/"
     );
+    expect(init?.redirect).toBe("error");
     expect(bodyAsJson(init?.body)).toEqual({
       grant_type: "authorization_code",
       auth_code: "auth-code-123",

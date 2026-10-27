@@ -55,6 +55,28 @@ describe("MessageReceivedHandler", () => {
     expect(result.actions[1]?.idempotencyKey).toBe(stored.id + ":reply:1");
   });
 
+  it("preserves Meta provider message time in the durable reply for dispatch-time policy", async () => {
+    const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({
+      handoff: false,
+      parts: [{ kind: "text", text: "Hi" }]
+    });
+    const handler = new MessageReceivedHandler({ respond });
+    const result = await handler.handle({
+      ...stored,
+      event: {
+        ...stored.event,
+        provider: "meta",
+        channel: "whatsapp",
+        accountId: "phone-1",
+        occurredAt: "2026-10-27T07:00:00.000Z"
+      }
+    });
+    expect(result.actions[0]?.body).toEqual({
+      part: { kind: "text", text: "Hi" },
+      customerMessageAt: "2026-10-27T07:00:00.000Z"
+    });
+  });
+
   it("records a human handoff with a durable reason and no outbound action", async () => {
     const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({
       handoff: true,

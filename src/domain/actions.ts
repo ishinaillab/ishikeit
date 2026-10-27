@@ -19,7 +19,8 @@ export type ActionEnvelope = z.infer<typeof actionEnvelopeSchema>;
 
 export const messageSendBodySchema = z.object({
   part: contentPartSchema,
-  replyTo: z.string().min(1).max(2048).optional()
+  replyTo: z.string().min(1).max(2048).optional(),
+  customerMessageAt: z.string().datetime({ offset: true }).optional()
 }).strict();
 
 export type MessageSendBody = z.infer<typeof messageSendBodySchema>;

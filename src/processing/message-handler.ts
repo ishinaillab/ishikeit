@@ -45,7 +45,12 @@ export class MessageReceivedHandler implements EventHandler {
         accountId: event.accountId,
         recipientId: event.identityId
       },
-      body: { part }
+      body: {
+        part,
+        ...(event.provider === "meta" && event.occurredAt !== undefined
+          ? { customerMessageAt: event.occurredAt }
+          : {})
+      }
     }));
 
     return { actions, outcome: "handled" };

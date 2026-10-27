@@ -2528,3 +2528,10 @@ Official Hostinger help confirms hPanel Websites → Dashboard → Backups → *
 
 - Meta Graph outbound `message.send` requests now use `redirect: "error"`, preventing automatic forwarding of bearer tokens and message payloads if Graph responds with a redirect. Regression assertions cover Messenger and Instagram; shared Meta sender applies to WhatsApp as well.
 - Verified with local `npm run check` (lint, typecheck, 284 tests and build) before publishing the branch. This does **not** implement the still-required platform-specific customer-service window guard, delivery-state lifecycle, WhatsApp template support, handover coordination or Advanced Access approval. Preserve working Meta and TikTok routes; do not enable policy-gated features without tests.
+
+## Meta standard 24-hour reply window guard (2026-10-27)
+
+- Automated replies generated from signed Messenger, Instagram and WhatsApp inbound messages now carry the provider's original `occurredAt` timestamp as `customerMessageAt` in the durable action. The Meta dispatch adapter re-checks age immediately before each send/retry, rather than only when the AI first responds.
+- Standard reply policy is **fail closed**: no timestamp, malformed timestamp, timestamps more than five minutes in the future, and customer messages at least 23h55m old all produce a permanent no-send failure. The five-minute margin is deliberately conservative to avoid sending at the provider's 24h boundary. Legacy queued Meta actions without the new field will be dead-lettered rather than sent. This is an operational tradeoff; inspect old queues before deploying, and do not replay dead letters automatically.
+- This policy covers standard replies only. It does **not** grant HUMAN_AGENT tags, extended Instagram windows, outbound marketing, WhatsApp templates or opt-in. No templates are sent, no provider settings changed. Existing Telegram/TikTok message action schemas are unchanged.
+- Regression tests cover boundary conditions, fail-closed Meta adapter and durable timestamp propagation. Validate full CI and inspect production queue state before release.

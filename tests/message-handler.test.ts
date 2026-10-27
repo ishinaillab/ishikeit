@@ -61,6 +61,8 @@ describe("MessageReceivedHandler", () => {
       parts: [{ kind: "text", text: "Hi" }]
     });
     const handler = new MessageReceivedHandler({ respond });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-27T08:00:00.000Z"));
     const result = await handler.handle({
       ...stored,
       event: {
@@ -75,6 +77,7 @@ describe("MessageReceivedHandler", () => {
       part: { kind: "text", text: "Hi" },
       customerMessageAt: "2026-10-27T07:00:00.000Z"
     });
+    vi.useRealTimers();
   });
 
   it("does not invoke the brain for stale or untimestamped Meta messages", async () => {

@@ -21,4 +21,12 @@ describe("WhatsApp template adapter", () => {
     expect(init?.redirect).toBe("error");
     expect(JSON.parse(String(init?.body))).toMatchObject({ type: "template", template: { name: "hello_world", language: { code: "en_US" } } });
   });
+  it("rejects invalid target and unapproved content shape before network", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const sender = new MetaSender({ graphApiVersion: "v26.0", whatsappAccessToken: "test-token", instagramGraphHost: "graph.instagram.com", fetchImpl });
+    const adapter = new WhatsAppTemplateAdapter(sender);
+    await expect(adapter.execute({ ...action, target: { ...action.target, channel: "messenger" } })).rejects.toMatchObject({ retryable: false });
+    await expect(adapter.execute({ ...action, body: { templateName: "BAD NAME", languageCode: "en_US" } })).rejects.toMatchObject({ retryable: false });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
 });

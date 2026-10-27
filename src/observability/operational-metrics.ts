@@ -33,6 +33,12 @@ interface AttemptRow extends pg.QueryResultRow {
   count: string;
 }
 
+interface DeliveryRow extends pg.QueryResultRow {
+  channel: string;
+  event_type: string;
+  count: string;
+}
+
 interface HandoffRow extends pg.QueryResultRow {
   reason: string;
   count: string;
@@ -57,6 +63,9 @@ export interface OperationalMetricsSnapshot {
       p95: number | null;
       max: number | null;
     };
+  };
+  delivery: {
+    byChannel: Array<{ channel: string; status: string; count: number }>;
   };
   handoffs: {
     total: number;
@@ -100,7 +109,7 @@ export class PostgresOperationalMetrics implements OperationalMetricsReader {
   constructor(private readonly db: PostgresDatabase) {}
 
   async snapshot(windowMinutes: number): Promise<OperationalMetricsSnapshot> {
-    const [inbound, queue, attempts, handoffs] = await Promise.all([
+    const [inbound, queue, attempts, handoffs, delivery] = await Promise.all([
       this.db.query<InboundSummaryRow>(
         `SELECT
            count(*)::bigint AS received_count,
@@ -159,6 +168,17 @@ export class PostgresOperationalMetrics implements OperationalMetricsReader {
          GROUP BY COALESCE(NULLIF(handoff_reason, ''), 'unspecified')
          ORDER BY count(*) DESC, reason`,
         [windowMinutes]
+      ),
+      this.db.query<DeliveryRow>(
+        `SELECT channel, event_type, count(*)::bigint AS count
+         FROM inbound_events
+         WHERE provider = 'meta'
+           AND channel IN ('messenger','instagram','whatsapp')
+           AND event_type IN ('delivery.sent','delivery.delivered','delivery.read','delivery.failed')
+           AND received_at >= now() - make_interval(mins => $1)
+         GROUP BY channel,event_type
+         ORDER BY channel,event_type`,
+        [windowMinutes]
       )
     ]);
 
@@ -207,6 +227,13 @@ export class PostgresOperationalMetrics implements OperationalMetricsReader {
           p95: nullableNumber(summary.p95_ms),
           max: nullableNumber(summary.max_ms)
         }
+      },
+      delivery: {
+        byChannel: delivery.rows.map((row) => ({
+          channel: row.channel,
+          status: row.event_type.slice("delivery.".length),
+          count: Number(row.count)
+        }))
       },
       handoffs: {
         total: handoffsByReason.reduce((sum, row) => sum + row.count, 0),

@@ -45,6 +45,12 @@ describe("PostgresOperationalMetrics", () => {
           { reason: "customer_requested_human", count: "1" },
           { reason: "unspecified", count: "1" }
         ]
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          { channel: "whatsapp", event_type: "delivery.delivered", count: "4" },
+          { channel: "whatsapp", event_type: "delivery.read", count: "2" }
+        ]
       });
 
     const metrics = new PostgresOperationalMetrics({
@@ -73,7 +79,11 @@ describe("PostgresOperationalMetrics", () => {
       ]
     });
     expect(snapshot.attempts.published).toBe(3);
-    expect(query).toHaveBeenCalledTimes(4);
+    expect(snapshot.delivery.byChannel).toEqual([
+      { channel: "whatsapp", status: "delivered", count: 4 },
+      { channel: "whatsapp", status: "read", count: 2 }
+    ]);
+    expect(query).toHaveBeenCalledTimes(5);
     expect(String(query.mock.calls[0]?.[0]))
       .toContain("processed_at IS NOT NULL AND processing_outcome IS NULL");
   });

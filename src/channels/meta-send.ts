@@ -215,6 +215,7 @@ export class MetaSender implements MetaMessageSender {
     try {
       response = await this.#fetch(url, {
         method: "POST",
+        redirect: "error",
         headers: {
           authorization: `Bearer ${token}`,
           "content-type": "application/json"

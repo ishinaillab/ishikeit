@@ -385,6 +385,8 @@ const server = buildServer({
     ? {}
     : { tiktokMessagingAvailabilityProbe: new TikTokMessagingAvailabilityProbe({
         store: oauthStore,
+        refreshStore: oauthStore,
+        oauthClient: tiktokOAuthClient!,
         apiVersion: env.TIKTOK_BUSINESS_API_VERSION,
         requestTimeoutMs: env.TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS
       }) }),

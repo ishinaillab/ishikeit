@@ -87,7 +87,7 @@ describe("TikTok Messaging API availability probe", () => {
       { status: 200 }
     ));
     await expect(makeProbe([credential], fetchImpl).service.probe()).resolves.toEqual({
-      status: "provider_rejected", httpStatus: 200, providerCode: "40100"
+      status: "provider_rejected", httpStatus: 200, providerCode: "40100", providerErrorCategory: "permission"
     });
   });
 

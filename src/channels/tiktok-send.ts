@@ -441,7 +441,8 @@ export class TikTokBusinessSender {
             "Access-Token": accessToken
           },
           body: form,
-          signal: AbortSignal.timeout(this.#requestTimeoutMs)
+          redirect: "error",
+        signal: AbortSignal.timeout(this.#requestTimeoutMs)
         }
       );
     } catch (error) {
@@ -505,7 +506,8 @@ export class TikTokBusinessSender {
             "Access-Token": accessToken
           },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(this.#requestTimeoutMs)
+          redirect: "error",
+        signal: AbortSignal.timeout(this.#requestTimeoutMs)
         }
       );
     } catch (error) {

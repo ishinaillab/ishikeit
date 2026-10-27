@@ -2512,3 +2512,9 @@ Official Hostinger help confirms hPanel Websites → Dashboard → Backups → *
 
 - Refreshed TikTok OAuth succeeded; the protected messaging availability probe returned `provider_rejected` with TikTok numeric code `40000`.
 - The probe now returns a narrowly categorized provider error (`permission`, `scope`, `account`, `parameter`, `authentication`, `other`) derived from TikTok's response message without returning raw message, identifiers, or tokens. Use this to distinguish missing access from request formatting; do not enable outbound on any rejected result.
+
+## TikTok provider-API redirect hardening (2026-10-27)
+
+- Security audit identified default HTTP redirect following on fixed-host TikTok credential-bearing requests (owner OAuth, Business Messaging reads/sends, webhook configuration, Comment-to-Message, automatic-message reads, Marketing OAuth, advertiser reads and media API calls). Hardened each to `redirect: "error"` so a redirected host cannot receive sensitive custom headers, OAuth payloads or messages. Existing deliberately manual untrusted-media redirects remain unchanged.
+- Added request-option regression assertions and updated stale probe documentation. See `docs/TIKTOK_STANDARDS_SECURITY_REVIEW_2026-10-27.md` for current official v1.3 Business Messaging prerequisites and activation gates. TikTok Marketing/Reporting v2.0 documentation does not justify changing the Messaging API version.
+- The live Messaging API error category `scope` is an **inferred message classification**, not proof of specific approved or missing permissions. Existing owner token contains no explicit Messaging scope. Keep `TIKTOK_BUSINESS_ID` and TikTok outbound disabled until separate Messaging API approval, owner reauthorization and eligible-account verification are confirmed.

@@ -157,7 +157,8 @@ export class TikTokMediaResolver implements MediaResolver {
             "Access-Token": accessToken
           },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(this.#requestTimeoutMs)
+          redirect: "error",
+        signal: AbortSignal.timeout(this.#requestTimeoutMs)
         }
       );
     } catch (error) {

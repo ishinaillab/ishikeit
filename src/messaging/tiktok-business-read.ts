@@ -427,6 +427,7 @@ implements TikTokBusinessMessagingReadController {
           accept: "application/json",
           "Access-Token": accessToken
         },
+        redirect: "error",
         signal: AbortSignal.timeout(this.#requestTimeoutMs)
       });
     } catch (error) {

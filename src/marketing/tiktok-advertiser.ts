@@ -131,6 +131,7 @@ implements TikTokMarketingAdvertiserClientLike {
           accept: "application/json",
           "Access-Token": accessToken
         },
+        redirect: "error",
         signal: AbortSignal.timeout(this.#requestTimeoutMs)
       });
     } catch (error) {
@@ -208,6 +209,7 @@ implements TikTokMarketingAdvertiserClientLike {
           accept: "application/json",
           "Access-Token": accessToken
         },
+        redirect: "error",
         signal: AbortSignal.timeout(this.#requestTimeoutMs)
       });
     } catch (error) {

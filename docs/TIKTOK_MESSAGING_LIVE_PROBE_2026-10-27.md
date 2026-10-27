@@ -26,15 +26,15 @@ Source: https://business-api.tiktok.com/portal/docs/business-messaging-api-get-s
   https://business-api.tiktok.com/open_api/v1.3/business/message/conversation/list/
   with the **stored open_id** as business_id, conversation_type=SINGLE and
   limit=1, under a bounded timeout. No other host or redirect.
-- Parses only the provider's numeric response code. Provider conversation
+- Parses the provider numeric code and a coarse allowlisted error category (heuristic, not proof of scope or entitlement). Provider conversation
   payloads, message text, account IDs, tokens, and user identities are
   **never logged, returned, stored, or forwarded**.
-- Never refreshes OAuth, consumes consent, writes to Supabase, sends messages,
+- May refresh and persist the sole stored OAuth credential under its existing database lock; never consumes new consent, sends messages,
   touches webhooks, replays dead letters, or enables TikTok outbound.
 - Response types: accepted, provider_rejected, provider_unavailable,
   invalid_provider_response, no_stored_authorization,
   ambiguous_authorization, access_token_expired, credential_store_unavailable.
-  Optional HTTP status and bounded provider numeric code help diagnose denial
+  Optional HTTP status, bounded provider numeric code and coarse error category help diagnose denial
   without disclosing private response messages.
 
 ## Execution and interpretation

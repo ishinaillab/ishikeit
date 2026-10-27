@@ -157,7 +157,8 @@ export class TikTokOAuthClient implements TikTokOAuthClientLike {
             accept: "application/json"
           },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(this.#requestTimeoutMs)
+          redirect: "error",
+        signal: AbortSignal.timeout(this.#requestTimeoutMs)
         }
       );
     } catch (error) {

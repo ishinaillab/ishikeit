@@ -156,6 +156,7 @@ export class TikTokAutoMessageReader {
     try {
       response = await this.#fetch(url, {
         ...request,
+        redirect: "error",
         signal: AbortSignal.timeout(this.#timeoutMs)
       });
     } catch (error) {

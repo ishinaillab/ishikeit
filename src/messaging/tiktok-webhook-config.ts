@@ -140,6 +140,7 @@ implements TikTokBusinessWebhookClientLike {
     try {
       response = await this.#fetch(url, {
         ...init,
+        redirect: "error",
         signal: AbortSignal.timeout(this.#requestTimeoutMs)
       });
     } catch (error) {

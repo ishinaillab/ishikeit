@@ -2,6 +2,7 @@ import { MetaSender } from "../channels/meta-send.js";
 import { loadEnvironment } from "../config/env.js";
 import { ActionDispatcher } from "../dispatch/dispatcher.js";
 import { MetaMessagingAdapter } from "../adapters/meta/messaging.js";
+import { WhatsAppTemplateAdapter } from "../adapters/meta/whatsapp-template.js";
 import { TelegramMessagingAdapter } from "../adapters/telegram/messaging.js";
 import { TikTokBusinessMessagingAdapter } from "../adapters/tiktok/messaging.js";
 import { TikTokCommentToMessageAdapter } from "../adapters/tiktok/comment-to-message.js";
@@ -455,7 +456,7 @@ const server = buildServer({
 let outboundWorker: OutboxWorker | undefined;
 if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
   const dispatcher = new ActionDispatcher();
-  dispatcher.register(new MetaMessagingAdapter(new MetaSender({
+  const metaSender = new MetaSender({
     graphApiVersion: env.META_GRAPH_API_VERSION,
     messengerAccessToken: env.META_MESSENGER_ACCESS_TOKEN,
     instagramAccessToken: env.META_INSTAGRAM_ACCESS_TOKEN,
@@ -463,7 +464,11 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
     whatsappAccessToken: env.META_WHATSAPP_ACCESS_TOKEN,
     instagramGraphHost: env.META_INSTAGRAM_GRAPH_HOST,
     requestTimeoutMs: env.META_OUTBOUND_REQUEST_TIMEOUT_MS
-  })));
+  });
+  dispatcher.register(new MetaMessagingAdapter(metaSender));
+  if (env.META_WHATSAPP_ACCESS_TOKEN !== undefined) {
+    dispatcher.register(new WhatsAppTemplateAdapter(metaSender));
+  }
   if (env.TELEGRAM_BOT_TOKEN !== undefined) {
     dispatcher.register(new TelegramMessagingAdapter(new TelegramSender({
       botToken: env.TELEGRAM_BOT_TOKEN,

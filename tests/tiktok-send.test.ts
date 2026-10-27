@@ -43,6 +43,7 @@ describe("TikTokBusinessSender", () => {
       "https://business-api.tiktok.com/open_api/v1.3/business/message/send/"
     );
     expect(init?.headers).toMatchObject({ "Access-Token": "access-token-123456789" });
+    expect(init?.redirect).toBe("error");
     expect(bodyAsJson(init?.body)).toEqual({
       business_id: "business-1",
       recipient_type: "CONVERSATION",

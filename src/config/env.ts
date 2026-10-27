@@ -40,6 +40,7 @@ const schema = z.object({
   META_MESSENGER_ACCESS_TOKEN: z.string().min(1).optional(),
   META_INSTAGRAM_ACCESS_TOKEN: z.string().min(1).optional(),
   META_WHATSAPP_ACCESS_TOKEN: z.string().min(1).optional(),
+  META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED: booleanFromEnv.default(false),
   META_INSTAGRAM_GRAPH_HOST: z.enum(["graph.instagram.com", "graph.facebook.com"]).default("graph.instagram.com"),
   META_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   META_INSTAGRAM_OAUTH_APP_ID: z.string().regex(/^\d+$/).optional(),

@@ -61,6 +61,8 @@ describe("MessageReceivedHandler", () => {
       parts: [{ kind: "text", text: "Hi" }]
     });
     const handler = new MessageReceivedHandler({ respond });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-27T08:00:00.000Z"));
     const result = await handler.handle({
       ...stored,
       event: {
@@ -75,6 +77,21 @@ describe("MessageReceivedHandler", () => {
       part: { kind: "text", text: "Hi" },
       customerMessageAt: "2026-10-27T07:00:00.000Z"
     });
+    vi.useRealTimers();
+  });
+
+  it("does not invoke the brain for stale or untimestamped Meta messages", async () => {
+    const respond = vi.fn<BrainClient["respond"]>();
+    const handler = new MessageReceivedHandler({ respond });
+    const meta = { ...stored.event, provider: "meta", channel: "whatsapp" };
+    await expect(handler.handle({ ...stored, event: meta })).resolves.toEqual({
+      actions: [], outcome: "ignored"
+    });
+    await expect(handler.handle({
+      ...stored,
+      event: { ...meta, occurredAt: "2020-01-01T00:00:00.000Z" }
+    })).resolves.toEqual({ actions: [], outcome: "ignored" });
+    expect(respond).not.toHaveBeenCalled();
   });
 
   it("records a human handoff with a durable reason and no outbound action", async () => {

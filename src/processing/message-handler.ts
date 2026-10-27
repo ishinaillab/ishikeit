@@ -4,6 +4,7 @@ import type { BrainClient } from "../brain/types.js";
 import type { StoredInboundEvent } from "../persistence/inbound.js";
 import { ProcessingFailure } from "./failure.js";
 import type { EventHandler } from "./registry.js";
+import { standardMetaReplyEligibility } from "../dispatch/meta-customer-window.js";
 
 export class MessageReceivedHandler implements EventHandler {
   constructor(private readonly brain: BrainClient) {}
@@ -14,6 +15,9 @@ export class MessageReceivedHandler implements EventHandler {
 
   async handle(stored: StoredInboundEvent): Promise<EventHandlingResult> {
     const event = stored.event;
+    if (event.provider === "meta" && standardMetaReplyEligibility(event.occurredAt) !== "eligible") {
+      return { actions: [], outcome: "ignored" };
+    }
     if (event.identityId === undefined) {
       throw new ProcessingFailure("Inbound message has no reply identity", { retryable: false });
     }

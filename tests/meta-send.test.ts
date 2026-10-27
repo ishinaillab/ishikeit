@@ -35,6 +35,7 @@ describe("MetaSender", () => {
     await expect(makeSender(fetchImpl).send(base)).resolves.toEqual({ providerMessageId: "m-1" });
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toBe("https://graph.facebook.com/v26.0/page-1/messages");
+    expect(init?.redirect).toBe("error");
     expect(JSON.parse(bodyAsString(init?.body))).toEqual({
       recipient: { id: "user-1" },
       messaging_type: "RESPONSE",
@@ -72,6 +73,7 @@ describe("MetaSender", () => {
     });
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toBe("https://graph.instagram.com/v26.0/ig-1/messages");
+    expect(init?.redirect).toBe("error");
     expect(JSON.parse(bodyAsString(init?.body))).toMatchObject({
       recipient: { id: "user-1" },
       message: { attachment: { type: "file", payload: { url: "https://example.test/file.pdf" } } }

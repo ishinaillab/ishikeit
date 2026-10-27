@@ -70,8 +70,9 @@ async function responseCode(response: Response): Promise<string | undefined> {
 
 /**
  * Read-only, opt-in TikTok Business Messaging entitlement smoke probe.
- * Does not enable a TikTok account, refresh OAuth, subscribe webhooks,
- * persist data, inspect message content, or send a message.
+ * Does not enable a TikTok account, subscribe webhooks, inspect message
+ * content, or send a message. May refresh and persist the existing OAuth
+ * credential when an explicitly configured refresh client is provided.
  */
 export class TikTokMessagingAvailabilityProbe implements TikTokMessagingProbeController {
   readonly #store: Pick<OAuthCredentialStore, "list">;

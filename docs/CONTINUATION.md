@@ -2523,3 +2523,8 @@ Official Hostinger help confirms hPanel Websites → Dashboard → Backups → *
 
 - Owner is submitting TikTok Messaging API application for `ishikeit`. TikTok development is paused at the external approval/owner-consent gate while Messenger, Instagram and WhatsApp development continues. The exact current technical and operational TikTok state, merged PR #100, deployed commit `0558f4a`, live diagnostic result, authorization scope caveat, safeguards, and ordered post-approval checklist are recorded in **`docs/TIKTOK_APPROVAL_WAIT_HANDOFF_2026-10-27.md`**. Read that checkpoint and reconcile it against live `main`/production when TikTok approval arrives.
 - Do not activate TikTok outbound, set `TIKTOK_BUSINESS_ID`, alter TikTok webhooks or replay historical messages during the wait. Preserve all working channels and secret-bearing configuration.
+
+## Meta Messenger / Instagram / WhatsApp outbound redirect hardening (2026-10-27)
+
+- Meta Graph outbound `message.send` requests now use `redirect: "error"`, preventing automatic forwarding of bearer tokens and message payloads if Graph responds with a redirect. Regression assertions cover Messenger and Instagram; shared Meta sender applies to WhatsApp as well.
+- Verified with local `npm run check` (lint, typecheck, 284 tests and build) before publishing the branch. This does **not** implement the still-required platform-specific customer-service window guard, delivery-state lifecycle, WhatsApp template support, handover coordination or Advanced Access approval. Preserve working Meta and TikTok routes; do not enable policy-gated features without tests.

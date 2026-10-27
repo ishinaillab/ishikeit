@@ -169,7 +169,7 @@ export class TikTokMessagingAvailabilityProbe implements TikTokMessagingProbeCon
     const details = {
       httpStatus: response.status,
       ...(code === undefined ? {} : { providerCode: code }),
-      ...(category === undefined ? {} : { providerErrorCategory: category })
+      ...(code === undefined || code === "0" || category === undefined || category === "other" ? {} : { providerErrorCategory: category })
     };
 
     if (response.ok && code === "0") {

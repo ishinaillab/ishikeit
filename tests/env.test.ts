@@ -9,6 +9,12 @@ const productionBase = {
 };
 
 describe("environment", () => {
+  it("keeps WhatsApp template dispatch disabled without explicit opt-in", () => {
+    expect(loadEnvironment(productionBase).META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED).toBe(false);
+    expect(loadEnvironment({ ...productionBase, META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED: "true" })
+      .META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED).toBe(true);
+  });
+
   it("requires a high-entropy operational metrics token when configured", () => {
     expect(() => loadEnvironment({
       ...productionBase,

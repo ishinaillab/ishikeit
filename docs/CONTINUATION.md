@@ -2540,3 +2540,9 @@ Official Hostinger help confirms hPanel Websites → Dashboard → Backups → *
 
 - In addition to the mandatory dispatch-time 24h guard, `MessageReceivedHandler` now ignores Meta messages whose provider timestamp is missing, implausibly future, or outside the conservative standard customer-service reply window. This prevents unnecessary AI processing and futile outbound dead letters for delayed/replayed webhook events. Non-Meta providers are unaffected. Existing dispatch-time check remains the final authority for queued retries.
 - Regression tests include stale and untimestamped Meta messages and deterministic clock control. Do not interpret this as permission to send WhatsApp template messages or Messenger HUMAN_AGENT tagged messages.
+
+## Explicit WhatsApp template dispatch capability (2026-10-27)
+
+- Added an explicit `meta/messaging/message.template.send` action adapter, registered only when a WhatsApp access token is configured. It validates WhatsApp-only target, numeric phone-number ID and E.164-style recipient digits, template name, language code, and up to ten text body parameters. The Graph request uses `type: template` with `template.name`, `template.language.code`, optional `components` and `redirect: "error"`. Provider rejection is sanitized; retry semantics match Meta standard sender.
+- Ordinary AI replies still use `message.send` and remain subject to the 24h standard reply guard. The AI does **not** generate template actions. Template sends require an explicitly enqueued action and must have separate consent/opt-in, approved template, correct template parameter mapping and account ownership verification upstream. No scheduled reminder automation or automatic outbound campaign is enabled by this change.
+- Tests cover template wire shape, redirect rejection, invalid targets and names. Do not send `hello_world` to customers as a booking reminder; create and obtain approval for real booking templates first.

@@ -17,6 +17,7 @@ export interface TikTokMessagingProbeResult {
   /** HTTP status and TikTok numeric code only; no conversation data or identifiers. */
   httpStatus?: number;
   providerCode?: string;
+  providerErrorCategory?: "permission" | "scope" | "account" | "parameter" | "authentication" | "other";
 }
 
 export interface TikTokMessagingProbeController {
@@ -33,9 +34,9 @@ export interface TikTokMessagingProbeOptions {
   now?: () => Date;
 }
 
-async function responseCode(response: Response): Promise<string | undefined> {
+async function responseDetails(response: Response): Promise<{ code?: string; category?: TikTokMessagingProbeResult["providerErrorCategory"] }> {
   const reader = response.body?.getReader();
-  if (reader === undefined) return undefined;
+  if (reader === undefined) return {};
   const bytes: Uint8Array[] = [];
   let total = 0;
   try {
@@ -45,24 +46,29 @@ async function responseCode(response: Response): Promise<string | undefined> {
       total += next.value.byteLength;
       if (total > 48_000) {
         await reader.cancel().catch(() => undefined);
-        return undefined;
+        return {};
       }
       bytes.push(next.value);
     }
     const buffer = Buffer.concat(bytes);
     const parsed: unknown = JSON.parse(buffer.toString("utf8"));
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return undefined;
+      return {};
     }
+    const message = (parsed as Record<string, unknown>).message;
+    const normalized = typeof message === "string" ? message.toLowerCase().slice(0, 500) : "";
+    const category = /permission|not authorized|not allowed|access denied|no access/u.test(normalized) ? "permission"
+      : /scope/u.test(normalized) ? "scope"
+      : /business.account|business_id|account/u.test(normalized) ? "account"
+      : /parameter|param|invalid request/u.test(normalized) ? "parameter"
+      : /token|authentication|oauth/u.test(normalized) ? "authentication" : "other";
     const raw = (parsed as Record<string, unknown>).code;
     const candidate = typeof raw === "number" && Number.isSafeInteger(raw)
       ? String(raw)
       : typeof raw === "string" ? raw : undefined;
-    return candidate !== undefined && /^-?\d{1,8}$/u.test(candidate)
-      ? candidate
-      : undefined;
+    return { ...(candidate !== undefined && /^-?\d{1,8}$/u.test(candidate) ? { code: candidate } : {}), category };
   } catch {
-    return undefined;
+    return {};
   } finally {
     reader.releaseLock();
   }
@@ -159,10 +165,11 @@ export class TikTokMessagingAvailabilityProbe implements TikTokMessagingProbeCon
       return { status: "provider_unavailable" };
     }
 
-    const code = await responseCode(response);
+    const { code, category } = await responseDetails(response);
     const details = {
       httpStatus: response.status,
-      ...(code === undefined ? {} : { providerCode: code })
+      ...(code === undefined ? {} : { providerCode: code }),
+      ...(category === undefined ? {} : { providerErrorCategory: category })
     };
 
     if (response.ok && code === "0") {

@@ -466,7 +466,7 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
     requestTimeoutMs: env.META_OUTBOUND_REQUEST_TIMEOUT_MS
   });
   dispatcher.register(new MetaMessagingAdapter(metaSender));
-  if (env.META_WHATSAPP_ACCESS_TOKEN !== undefined) {
+  if (env.META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED && env.META_WHATSAPP_ACCESS_TOKEN !== undefined) {
     dispatcher.register(new WhatsAppTemplateAdapter(metaSender));
   }
   if (env.TELEGRAM_BOT_TOKEN !== undefined) {

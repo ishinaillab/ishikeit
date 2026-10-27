@@ -2535,3 +2535,8 @@ Official Hostinger help confirms hPanel Websites → Dashboard → Backups → *
 - Standard reply policy is **fail closed**: no timestamp, malformed timestamp, timestamps more than five minutes in the future, and customer messages at least 23h55m old all produce a permanent no-send failure. The five-minute margin is deliberately conservative to avoid sending at the provider's 24h boundary. Legacy queued Meta actions without the new field will be dead-lettered rather than sent. This is an operational tradeoff; inspect old queues before deploying, and do not replay dead letters automatically.
 - This policy covers standard replies only. It does **not** grant HUMAN_AGENT tags, extended Instagram windows, outbound marketing, WhatsApp templates or opt-in. No templates are sent, no provider settings changed. Existing Telegram/TikTok message action schemas are unchanged.
 - Regression tests cover boundary conditions, fail-closed Meta adapter and durable timestamp propagation. Validate full CI and inspect production queue state before release.
+
+## Meta pre-AI expired-window guard (2026-10-27)
+
+- In addition to the mandatory dispatch-time 24h guard, `MessageReceivedHandler` now ignores Meta messages whose provider timestamp is missing, implausibly future, or outside the conservative standard customer-service reply window. This prevents unnecessary AI processing and futile outbound dead letters for delayed/replayed webhook events. Non-Meta providers are unaffected. Existing dispatch-time check remains the final authority for queued retries.
+- Regression tests include stale and untimestamped Meta messages and deterministic clock control. Do not interpret this as permission to send WhatsApp template messages or Messenger HUMAN_AGENT tagged messages.

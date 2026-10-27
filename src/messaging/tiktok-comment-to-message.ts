@@ -201,6 +201,7 @@ implements TikTokBusinessCommentToMessageClientLike {
           ...init.headers,
           "Access-Token": accessToken
         },
+        redirect: "error",
         signal: AbortSignal.timeout(this.#requestTimeoutMs)
       });
     } catch (error) {

@@ -75,8 +75,8 @@ async function responseCode(response: Response): Promise<string | undefined> {
  */
 export class TikTokMessagingAvailabilityProbe implements TikTokMessagingProbeController {
   readonly #store: Pick<OAuthCredentialStore, "list">;
-  refreshStore?: OAuthCredentialStore;
-  oauthClient?: TikTokOAuthClientLike;
+  readonly #refreshStore?: OAuthCredentialStore;
+  readonly #oauthClient?: TikTokOAuthClientLike;
   readonly #version: string;
   readonly #timeout: number;
   readonly #fetch: typeof fetch;

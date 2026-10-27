@@ -256,6 +256,72 @@ export class MetaSender implements MetaMessageSender {
     return providerMessageId === undefined ? {} : { providerMessageId };
   }
 
+  /**
+   * Sends an explicitly requested, provider-approved WhatsApp template.
+   * This is not the ordinary 24-hour standard reply path.
+   */
+  async sendWhatsAppTemplate(input: {
+    accountId: string;
+    recipientId: string;
+    templateName: string;
+    languageCode: string;
+    bodyParameters: string[];
+  }): Promise<MetaSendResult> {
+    if (this.#whatsappAccessToken === undefined) {
+      throw new MetaSendFailure("No Meta access token is configured for whatsapp", { retryable: false });
+    }
+    const body = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: input.recipientId,
+      type: "template",
+      template: {
+        name: input.templateName,
+        language: { code: input.languageCode },
+        ...(input.bodyParameters.length === 0 ? {} : {
+          components: [{
+            type: "body",
+            parameters: input.bodyParameters.map((text) => ({ type: "text", text }))
+          }]
+        })
+      }
+    };
+    const url = `https://graph.facebook.com/${this.#graphApiVersion}/${encodeURIComponent(input.accountId)}/messages`;
+    let response: Response;
+    try {
+      response = await this.#fetch(url, {
+        method: "POST",
+        redirect: "error",
+        headers: {
+          authorization: `Bearer ${this.#whatsappAccessToken}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.#requestTimeoutMs)
+      });
+    } catch (error) {
+      throw new MetaSendFailure("WhatsApp template request failed before a response was received", {
+        retryable: true, ambiguous: true, cause: error
+      });
+    }
+    const result = await readJson(response);
+    if (!response.ok) {
+      const graphError = typeof result.error === "object" && result.error !== null
+        ? result.error as GraphErrorBody["error"] : undefined;
+      const transient = graphError?.is_transient === true || response.status === 429 || response.status >= 500;
+      const retryAfter = retryAfterMs(response.headers.get("retry-after"));
+      throw new MetaSendFailure("WhatsApp template provider request rejected", {
+        retryable: transient,
+        status: response.status,
+        ...(graphError?.code === undefined ? {} : { graphCode: graphError.code }),
+        ...(graphError?.error_subcode === undefined ? {} : { graphSubcode: graphError.error_subcode }),
+        ...(retryAfter === undefined ? {} : { retryAfterMs: retryAfter })
+      });
+    }
+    const providerMessageId = whatsappMessageId(result);
+    return providerMessageId === undefined ? {} : { providerMessageId };
+  }
+
   async #instagramToken(accountId: string): Promise<string | undefined> {
     if (this.#instagramAccessTokenProvider === undefined) {
       return this.#instagramAccessToken;

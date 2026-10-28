@@ -336,6 +336,33 @@ describe("Meta normalizer", () => {
     expect(event?.providerMessageId).toBeUndefined();
   });
 
+  it("normalizes customer Messenger postback selections with a stable identity", () => {
+    const payload = {
+      object: "page",
+      entry: [{ id: "page-1", messaging: [{
+        sender: { id: "psid-1" },
+        recipient: { id: "page-1" },
+        timestamp: 1790000000000,
+        postback: { title: "Book an appointment", payload: "open_booking" }
+      }] }]
+    };
+    const [event] = normalizeMetaEnvelope(payload);
+    expect(event).toMatchObject({
+      provider: "meta",
+      channel: "messenger",
+      capability: "messaging",
+      eventType: "message.postback",
+      identityId: "psid-1",
+      content: [
+        { kind: "text", text: "Book an appointment" },
+        { kind: "structured", format: "meta.postback", data: { payload: "open_booking" } }
+      ]
+    });
+    const [retried] = normalizeMetaEnvelope(payload, "2026-10-01T00:00:00.000Z");
+    expect(metaIngressIdentity(event!).deduplicationKey)
+      .toBe(metaIngressIdentity(retried!).deduplicationKey);
+  });
+
   it("normalizes WhatsApp media IDs without downloading before the webhook ACK", () => {
     const [event] = normalizeMetaEnvelope({
       object: "whatsapp_business_account",

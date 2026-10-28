@@ -11,8 +11,33 @@ const productionBase = {
 describe("environment", () => {
   it("keeps WhatsApp template dispatch disabled without explicit opt-in", () => {
     expect(loadEnvironment(productionBase).META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED).toBe(false);
-    expect(loadEnvironment({ ...productionBase, META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED: "true" })
-      .META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED).toBe(true);
+    expect(() => loadEnvironment({
+      ...productionBase, META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED: "true"
+    })).toThrow();
+    const activated = loadEnvironment({
+      ...productionBase,
+      META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED: "true",
+      META_WHATSAPP_ACCESS_TOKEN: "test-token",
+      META_WHATSAPP_TEMPLATE_PHONE_NUMBER_ID: "123456789012",
+      META_WHATSAPP_APPROVED_TEMPLATE_KEYS: "hello_world@en_US,reminder_v1@fil_PH"
+    });
+    expect(activated.META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED).toBe(true);
+    expect(activated.META_WHATSAPP_APPROVED_TEMPLATE_KEYS_EFFECTIVE)
+      .toEqual(["hello_world@en_US", "reminder_v1@fil_PH"]);
+  });
+
+  it("rejects invalid or duplicated approved template keys without weakening default-off", () => {
+    expect(() => loadEnvironment({
+      ...productionBase, META_WHATSAPP_APPROVED_TEMPLATE_KEYS: "hello_world@en_US,hello_world@en_US"
+    })).toThrow(/unique/);
+    expect(() => loadEnvironment({
+      ...productionBase, META_WHATSAPP_APPROVED_TEMPLATE_KEYS: "hello_world@*"
+    })).toThrow(/unique/);
+    expect(() => loadEnvironment({
+      ...productionBase, META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED: "true",
+      META_WHATSAPP_ACCESS_TOKEN: "test-token",
+      META_WHATSAPP_APPROVED_TEMPLATE_KEYS: "hello_world@en_US"
+    })).toThrow();
   });
 
   it("requires a high-entropy operational metrics token when configured", () => {

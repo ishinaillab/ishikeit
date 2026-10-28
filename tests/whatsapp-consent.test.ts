@@ -34,11 +34,19 @@ describe("WhatsApp private consent verification", () => {
     const query = vi.fn().mockResolvedValue({ rowCount: 1 });
     const store = new PostgresWhatsAppConsentStore({ query } as unknown as PostgresDatabase, key);
     const tx = { query } as unknown as SqlExecutor;
-    await store.revokeInTransaction(tx, account, recipient);
+    const when = new Date("2026-10-29T00:00:00.000Z");
+    await store.revokeInTransaction(tx, account, recipient, "89fb5263-e127-4982-b04e-7dd48374a227", when);
     const [sql, params] = (query.mock.calls as Array<[string, readonly unknown[]]>)[0]!;
-    expect(sql).toContain("revoked_at=now()");
+    expect(sql).toContain("INSERT INTO public.meta_whatsapp_template_opt_outs");
+    expect(sql).toContain("ON CONFLICT");
     expect(params[0]).toMatch(/^[a-f0-9]{64}$/u);
+    expect(params[1]).toBe("89fb5263-e127-4982-b04e-7dd48374a227");
+    expect(params[2]).toEqual(when);
     expect(sql).not.toContain(recipient);
+    const [update] = (query.mock.calls as Array<[string, readonly unknown[]]>)[1]!;
+    expect(update).toContain("UPDATE public.meta_whatsapp_template_opt_ins");
+    expect(update).toContain("GREATEST(now(),consented_at");
+    expect(query).toHaveBeenCalledTimes(2);
   });
 
   it("revokes a verified WhatsApp STOP in the same durable ingest transaction", async () => {
@@ -70,8 +78,32 @@ describe("WhatsApp private consent verification", () => {
     if (event === undefined) throw new Error("missing normalized event");
     await expect(store.ingest(event, metaIngressIdentity(event), "a".repeat(64)))
       .resolves.toBe("created");
-    expect(revokeInTransaction).toHaveBeenCalledWith(tx, account, recipient);
+    expect(revokeInTransaction).toHaveBeenCalledWith(tx, account, recipient, expect.any(String), expect.any(Date));
     expect(calls).toEqual(["inbound", "revoke", "outbox"]);
+  });
+
+  it("denies stale opt-ins after an explicit STOP tombstone at final dispatch", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ active: false }] });
+    const store = new PostgresWhatsAppConsentStore({ query } as unknown as PostgresDatabase, key);
+    await expect(store.hasActiveConsent(account, recipient, "appointment_updates"))
+      .resolves.toBe(false);
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("meta_whatsapp_template_opt_outs");
+    expect(sql).toContain("stopped.opted_out_at >= meta_whatsapp_template_opt_ins.consented_at");
+  });
+
+  it("does not insert a delayed opt-in if a newer STOP tombstone exists", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 0 });
+    const store = new PostgresWhatsAppConsentStore({ query } as unknown as PostgresDatabase, key);
+    const tx = { query } as unknown as SqlExecutor;
+    await store.grantInTransaction(
+      tx, account, recipient, "89fb5263-e127-4982-b04e-7dd48374a227",
+      new Date("2026-10-28T23:59:00.000Z")
+    );
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("SELECT 1 FROM public.meta_whatsapp_template_opt_outs");
+    expect(sql).toContain("opted_out_at >= LEAST(");
+    expect(sql).toContain("LEAST($3::timestamptz,now())");
   });
 
   it("does not treat normal WhatsApp text as opt-out", async () => {

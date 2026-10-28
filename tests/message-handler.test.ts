@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BrainClient } from "../src/brain/types.js";
 import type { StoredInboundEvent } from "../src/persistence/inbound.js";
 import { MessageReceivedHandler } from "../src/processing/message-handler.js";
+import { messageSendBodySchema } from "../src/domain/actions.js";
 
 const stored: StoredInboundEvent = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -171,8 +172,9 @@ describe("MessageReceivedHandler", () => {
         result.actions.map((_, index) => stored.id + ":reply:" + index)
       );
       expect(result.actions.every((a) => a.orderingKey === stored.partitionKey)).toBe(true);
-      expect(result.actions.every((a) => a.body.customerMessageAt === event.occurredAt)).toBe(true);
-      expect(result.actions.map((a) => a.body.part.kind === "text" ? a.body.part.text : "").join("")).toBe(text);
+      const bodies = result.actions.map((a) => messageSendBodySchema.parse(a.body));
+      expect(bodies.every((b) => b.customerMessageAt === event.occurredAt)).toBe(true);
+      expect(bodies.map((b) => b.part.kind === "text" ? b.part.text : "").join("")).toBe(text);
       const repeated = await handler.handle({ ...stored, event });
       expect(repeated.actions).toEqual(result.actions);
     } finally {

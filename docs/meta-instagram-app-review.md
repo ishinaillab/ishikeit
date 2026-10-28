@@ -1,6 +1,6 @@
 # Meta Instagram App Review package
 
-Updated: 2026-10-03
+Updated: 2026-10-28
 
 ## Production state
 
@@ -17,14 +17,14 @@ Current verified state:
 - App Review: `NO_SUBMISSION`
 - `can_submit=true`
 - Advanced Access grants: none
-- Production app SHA: `ce25903aa21ff0fa23c6eacaa0971499c1a7c231`
+- Production revision must be verified against Hostinger `/health/build` before submission; prior October 3 fingerprint is historical.
 - Production health: ready
-- Authorized Instagram Professional account: **@povnailstudio.ph**
-- Professional account ID: `17841437646366614`
-- OAuth credential: encrypted at rest and approximately 60-day lifetime
+- Previously authorized OAuth account: **@povnailstudio.ph** (tester; current Graph account resolution returns code 190).
+- The actual business account used to receive customers' DMs must be verified as **@ishinaillab** before App Review.
+- OAuth credential: encrypted at rest, locally unexpired but currently rejected by Graph API error 190; reauthorization may be required.
 - Required scopes are present
-- Account-level webhook subscription is reconciled for `messages`, `standby`, and `messaging_handover`
-- Instagram routing is OAuth-only whenever the OAuth provider is configured; the retired static token is not used as fallback
+- App-level subscription exists for `messages`, `standby`, and `messaging_handover`; account-level reconciliation is currently warning and needs a verified owner token.
+- Instagram outgoing token routing is OAuth-first, with a strictly account-matched managed owner token allowed when no OAuth grant exists. Do not assume the historic tester OAuth grant authorizes the business inbox.
 
 Public reviewer entry point:
 
@@ -65,7 +65,7 @@ The use case is an automated customer-support experience for Ishi Nail Lab. Ishi
 3. Complete Instagram Business Login using an Instagram Professional test account permitted for this review.
 4. Approve `instagram_business_basic` and `instagram_business_manage_messages`.
 5. Confirm Instagram redirects to Ishikeit's callback and the page reports successful authorization.
-6. To test the live Ishi Nail Lab experience, send a new Instagram Direct Message such as `Hello` to **@povnailstudio.ph** from a separate Instagram account permitted to participate in the review.
+6. To test the live Ishi Nail Lab experience, send a new Instagram Direct Message such as `Hello` to the verified **@ishinaillab** business inbox from a separate Instagram account permitted to participate in the review.
 7. Confirm the message reaches the Instagram conversation.
 8. Confirm Ishikeit receives the `messages` webhook, processes the customer-support message, and sends a reply through the Instagram Messaging API.
 9. Confirm the reply appears in the same Instagram conversation.
@@ -123,7 +123,7 @@ Attention before final submission:
 
 ## Final submission gate
 
-The technical integration is ready for App Review. The remaining review artifact is the real screencast required by Meta's dashboard.
+**Do not submit yet.** The October 28 runtime diagnosis identified Graph error 190 on the stored tester OAuth grant and an identity mismatch between the sole OAuth account alias and the account receiving Instagram customer DMs. First confirm that @ishinaillab is authorized through the reviewer's actual Instagram Business Login flow, that the account-level webhook subscription succeeds, and that a fresh tester-initiated DM gets a verified reply. The real Meta screencast must then demonstrate that exact working configuration.
 
 Before clicking Submit:
 

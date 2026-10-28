@@ -57,6 +57,33 @@ export class PostgresWhatsAppConsentStore implements WhatsAppConsentReader {
     return result.rows[0]?.active === true;
   }
 
+  /**
+   * Record only an exact, independently authenticated customer opt-in.
+   * Called after the signed inbound Meta message is persisted in this same SQL
+   * transaction; sourceEventId is an existing inbound_events UUID.
+   */
+  async grantInTransaction(
+    tx: SqlExecutor,
+    accountId: string,
+    recipientId: string,
+    sourceEventId: string
+  ): Promise<void> {
+    if (!/^[0-9a-f-]{36}$/iu.test(sourceEventId)) {
+      throw new Error("Invalid WhatsApp opt-in source event ID");
+    }
+    const key = this.recipientKey(accountId, recipientId);
+    await tx.query(
+      `INSERT INTO public.meta_whatsapp_template_opt_ins
+         (recipient_key,purpose,source_event_id,consented_at,revoked_at)
+       VALUES ($1,'appointment_updates',$2::uuid,now(),NULL)
+       ON CONFLICT (recipient_key,purpose) DO UPDATE
+         SET source_event_id=EXCLUDED.source_event_id,
+             consented_at=EXCLUDED.consented_at,
+             revoked_at=NULL`,
+      [key, sourceEventId]
+    );
+  }
+
   /** Idempotent opt-out; only operate on a verified, signed customer message. */
   async revokeInTransaction(
     tx: SqlExecutor,

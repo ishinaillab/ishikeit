@@ -1,5 +1,6 @@
 import type { ContentPart } from "../domain/content.js";
 import { quickReplyChoicesSchema } from "../domain/quick-replies.js";
+import { interactiveListSchema } from "../domain/interactive-lists.js";
 import type { MetaOutboundPayload, MetaSendResult } from "../domain/outbound.js";
 import { DispatchFailure } from "../dispatch/failure.js";
 import { AccessTokenError } from "../auth/token-provider.js";
@@ -91,6 +92,17 @@ function whatsappMessageId(result: Record<string, unknown>): string | undefined 
 
 function validatePart(payload: MetaOutboundPayload): void {
   const part = payload.message;
+  if (payload.interactiveList !== undefined) {
+    if (payload.channel !== "whatsapp"
+      || part.kind !== "text"
+      || payload.quickReplies !== undefined
+      || !interactiveListSchema.safeParse(payload.interactiveList).success) {
+      throw new MetaSendFailure(
+        "Interactive lists require a valid WhatsApp text message with exclusive list choices",
+        { retryable: false }
+      );
+    }
+  }
   if (payload.quickReplies !== undefined) {
     if (part.kind !== "text"
       || !quickReplyChoicesSchema.safeParse(payload.quickReplies).success) {
@@ -207,22 +219,35 @@ export class MetaSender implements MetaMessageSender {
       };
       if (payload.replyTo !== undefined) base.context = { message_id: payload.replyTo };
       if (payload.message.kind === "text") {
-        body = payload.quickReplies === undefined
-          ? { ...base, type: "text", text: { preview_url: false, body: payload.message.text } }
-          : {
+        body = payload.interactiveList !== undefined
+          ? {
               ...base,
               type: "interactive",
               interactive: {
-                type: "button",
+                type: "list",
                 body: { text: payload.message.text },
                 action: {
-                  buttons: payload.quickReplies.map((choice) => ({
-                    type: "reply",
-                    reply: { id: choice.payload, title: choice.title }
-                  }))
+                  button: payload.interactiveList.button,
+                  sections: payload.interactiveList.sections
                 }
               }
-            };
+            }
+          : payload.quickReplies === undefined
+            ? { ...base, type: "text", text: { preview_url: false, body: payload.message.text } }
+            : {
+                ...base,
+                type: "interactive",
+                interactive: {
+                  type: "button",
+                  body: { text: payload.message.text },
+                  action: {
+                    buttons: payload.quickReplies.map((choice) => ({
+                      type: "reply",
+                      reply: { id: choice.payload, title: choice.title }
+                    }))
+                  }
+                }
+              };
       } else if (payload.message.kind !== "structured") {
         const media = whatsappMedia(payload.message);
         body = { ...base, type: media.type, [media.type]: media.value };

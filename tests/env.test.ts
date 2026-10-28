@@ -19,6 +19,7 @@ describe("environment", () => {
       META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED: "true",
       META_WHATSAPP_ACCESS_TOKEN: "test-token",
       META_WHATSAPP_TEMPLATE_PHONE_NUMBER_ID: "123456789012",
+      META_WHATSAPP_CONSENT_HASH_KEY_B64: Buffer.alloc(32, 7).toString("base64"),
       META_WHATSAPP_APPROVED_TEMPLATE_KEYS: "hello_world@en_US,reminder_v1@fil_PH"
     });
     expect(activated.META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED).toBe(true);
@@ -38,6 +39,17 @@ describe("environment", () => {
       META_WHATSAPP_ACCESS_TOKEN: "test-token",
       META_WHATSAPP_APPROVED_TEMPLATE_KEYS: "hello_world@en_US"
     })).toThrow();
+  });
+
+  it("requires a correctly encoded dedicated WhatsApp consent HMAC key", () => {
+    expect(() => loadEnvironment({
+      ...productionBase,
+      META_WHATSAPP_CONSENT_HASH_KEY_B64: "not-valid-base64"
+    })).toThrow();
+    expect(loadEnvironment({
+      ...productionBase,
+      META_WHATSAPP_CONSENT_HASH_KEY_B64: Buffer.alloc(32, 1).toString("base64")
+    }).META_WHATSAPP_CONSENT_HASH_KEY_B64).toBe(Buffer.alloc(32, 1).toString("base64"));
   });
 
   it("requires a high-entropy operational metrics token when configured", () => {

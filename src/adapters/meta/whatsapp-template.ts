@@ -3,6 +3,7 @@ import type { ActionAdapter } from "../../dispatch/dispatcher.js";
 import { DispatchFailure } from "../../dispatch/failure.js";
 import type { ActionEnvelope, ActionResult } from "../../domain/actions.js";
 import { MetaSender } from "../../channels/meta-send.js";
+import type { WhatsAppConsentReader } from "../../persistence/whatsapp-consent.js";
 
 const targetSchema = z.object({
   channel: z.literal("whatsapp"),
@@ -12,6 +13,7 @@ const targetSchema = z.object({
 
 const bodySchema = z.object({
   templateName: z.string().min(1).max(512).regex(/^[a-z0-9_]+$/),
+  purpose: z.literal("appointment_updates"),
   languageCode: z.string().min(2).max(20).regex(/^[A-Za-z]{2,3}(?:[_-][A-Za-z]{2,4})?$/),
   bodyParameters: z.array(z.string().min(1).max(1024)).max(10).default([])
 }).strict();
@@ -29,7 +31,8 @@ export class WhatsAppTemplateAdapter implements ActionAdapter {
       phoneNumberId: string;
       /** Provider-approved template name plus language, separated by @. */
       approvedTemplateKeys: readonly string[];
-    }
+    },
+    private readonly consent: WhatsAppConsentReader
   ) {
     if (!/^\d{5,32}$/u.test(policy.phoneNumberId) || policy.approvedTemplateKeys.length === 0) {
       throw new Error("WhatsApp template dispatcher requires approved account and template policy");
@@ -50,6 +53,15 @@ export class WhatsAppTemplateAdapter implements ActionAdapter {
     const approvedKey = `${body.data.templateName}@${body.data.languageCode}`;
     if (!this.policy.approvedTemplateKeys.includes(approvedKey)) {
       throw new DispatchFailure("WhatsApp template name and language are not approved for dispatch", {
+        retryable: false
+      });
+    }
+    // Approval of a template does not substitute for an individual customer's
+    // durable, purpose-specific opt-in. No consent means no provider call.
+    if (!await this.consent.hasActiveConsent(
+      target.data.accountId, target.data.recipientId, body.data.purpose
+    )) {
+      throw new DispatchFailure("WhatsApp recipient has no active appointment-update consent", {
         retryable: false
       });
     }

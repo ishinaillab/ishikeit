@@ -7,7 +7,7 @@ const action: ActionEnvelope = {
   schemaVersion: 1, idempotencyKey: "template-1", provider: "meta",
   capability: "messaging", operation: "message.template.send", orderingKey: "thread-1",
   target: { channel: "whatsapp", accountId: "123456789012", recipientId: "639123456789" },
-  body: { templateName: "hello_world", languageCode: "en_US", bodyParameters: [] }
+  body: { templateName: "hello_world", languageCode: "en_US", purpose: "appointment_updates", bodyParameters: [] }
 };
 
 describe("WhatsApp template adapter", () => {
@@ -16,7 +16,7 @@ describe("WhatsApp template adapter", () => {
     const sender = new MetaSender({ graphApiVersion: "v26.0", whatsappAccessToken: "test-token", instagramGraphHost: "graph.instagram.com", fetchImpl });
     const adapter = new WhatsAppTemplateAdapter(sender, {
       phoneNumberId: "123456789012", approvedTemplateKeys: ["hello_world@en_US"]
-    });
+    }, { hasActiveConsent: vi.fn().mockResolvedValue(true) });
     await expect(adapter.execute(action)).resolves.toEqual({ providerResourceId: "wamid.example" });
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toContain("/123456789012/messages");
@@ -24,12 +24,30 @@ describe("WhatsApp template adapter", () => {
     if (typeof init?.body !== "string") throw new Error("expected JSON request body");
     expect(JSON.parse(init.body)).toMatchObject({ type: "template", template: { name: "hello_world", language: { code: "en_US" } } });
   });
+  it("fails closed when the recipient has no current appointment-update opt-in", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const hasActiveConsent = vi.fn().mockResolvedValue(false);
+    const sender = new MetaSender({
+      graphApiVersion: "v26.0", whatsappAccessToken: "test-token",
+      instagramGraphHost: "graph.instagram.com", fetchImpl
+    });
+    const adapter = new WhatsAppTemplateAdapter(sender, {
+      phoneNumberId: "123456789012", approvedTemplateKeys: ["hello_world@en_US"]
+    }, { hasActiveConsent });
+    await expect(adapter.execute(action)).rejects.toMatchObject({
+      retryable: false,
+      message: "WhatsApp recipient has no active appointment-update consent"
+    });
+    expect(hasActiveConsent).toHaveBeenCalledWith("123456789012", "639123456789", "appointment_updates");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid target and unapproved content shape before network", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const sender = new MetaSender({ graphApiVersion: "v26.0", whatsappAccessToken: "test-token", instagramGraphHost: "graph.instagram.com", fetchImpl });
     const adapter = new WhatsAppTemplateAdapter(sender, {
       phoneNumberId: "123456789012", approvedTemplateKeys: ["hello_world@en_US"]
-    });
+    }, { hasActiveConsent: vi.fn().mockResolvedValue(true) });
     await expect(adapter.execute({ ...action, target: { ...action.target, channel: "messenger" } })).rejects.toMatchObject({ retryable: false });
     await expect(adapter.execute({ ...action, body: { templateName: "BAD NAME", languageCode: "en_US" } })).rejects.toMatchObject({ retryable: false });
     await expect(adapter.execute({
@@ -41,14 +59,14 @@ describe("WhatsApp template adapter", () => {
     });
     await expect(adapter.execute({
       ...action,
-      body: { templateName: "unapproved_template", languageCode: "en_US" }
+      body: { templateName: "unapproved_template", languageCode: "en_US", purpose: "appointment_updates" }
     })).rejects.toMatchObject({
       retryable: false,
       message: "WhatsApp template name and language are not approved for dispatch"
     });
     await expect(adapter.execute({
       ...action,
-      body: { templateName: "hello_world", languageCode: "en_GB" }
+      body: { templateName: "hello_world", languageCode: "en_GB", purpose: "appointment_updates" }
     })).rejects.toMatchObject({ retryable: false });
     expect(fetchImpl).not.toHaveBeenCalled();
   });

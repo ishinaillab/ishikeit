@@ -51,6 +51,12 @@ describe("PostgresOperationalMetrics", () => {
           { channel: "whatsapp", event_type: "delivery.delivered", count: "4" },
           { channel: "whatsapp", event_type: "delivery.read", count: "2" }
         ]
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          { channel: "whatsapp", status: "delivery.read", count: "2" },
+          { channel: "messenger", status: "delivery.unconfirmed", count: "3" }
+        ]
       });
 
     const metrics = new PostgresOperationalMetrics({
@@ -83,7 +89,15 @@ describe("PostgresOperationalMetrics", () => {
       { channel: "whatsapp", status: "delivered", count: 4 },
       { channel: "whatsapp", status: "read", count: 2 }
     ]);
-    expect(query).toHaveBeenCalledTimes(5);
+    expect(snapshot.delivery.outboundLifecycle).toEqual([
+      { channel: "whatsapp", status: "read", count: 2 },
+      { channel: "messenger", status: "unconfirmed", count: 3 }
+    ]);
+    expect(query).toHaveBeenCalledTimes(6);
+    const reconciliationQuery = String(query.mock.calls[5]?.[0]);
+    expect(reconciliationQuery).toContain("ie.account_id = sent.account_id");
+    expect(reconciliationQuery).toContain("ie.provider_message_id = sent.provider_message_id");
+    expect(reconciliationQuery).toContain("LEFT JOIN LATERAL");
     expect(String(query.mock.calls[0]?.[0]))
       .toContain("processed_at IS NOT NULL AND processing_outcome IS NULL");
   });

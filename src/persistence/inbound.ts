@@ -137,7 +137,7 @@ export class PostgresInboundEventRepository implements InboundEventProcessingSto
            SELECT partition_key,$2 FROM inbound_events
            WHERE id=$1::uuid AND provider='meta'
              AND channel IN ('messenger','instagram','whatsapp')
-             AND event_type='message.received'
+             AND event_type IN ('message.received','message.postback')
              AND normalized_payload->>'identityId' IS NOT NULL
            ON CONFLICT (partition_key) DO UPDATE
              SET reason=EXCLUDED.reason,opened_at=now(),released_at=NULL`,

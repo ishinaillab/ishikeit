@@ -318,6 +318,30 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
           if (distinctIds.length > 0) continue;
         }
 
+        if (item.postback !== undefined && typeof item.postback === "object"
+          && item.postback !== null) {
+          const postback = item.postback as Record<string, unknown>;
+          const title = typeof postback.title === "string" ? postback.title.trim() : "";
+          const content: ContentPart[] = [];
+          if (title.length > 0 && title.length <= 2048) {
+            content.push({ kind: "text", text: title });
+          }
+          content.push({ kind: "structured", format: "meta.postback", data: postback });
+          events.push(makeEvent({
+            provider: "meta",
+            channel,
+            capability: "messaging",
+            accountId,
+            eventType: "message.postback",
+            ...(senderId === undefined ? {} : { identityId: senderId }),
+            ...(occurredAt === undefined ? {} : { occurredAt }),
+            receivedAt,
+            content,
+            data: { postback }
+          }));
+          continue;
+        }
+
         const eventType = item.postback !== undefined
           ? "message.postback"
           : item.reaction !== undefined

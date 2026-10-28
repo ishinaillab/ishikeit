@@ -118,6 +118,38 @@ describe("MessageReceivedHandler", () => {
     }
   });
 
+  it("handles Meta customer postbacks inside the standard reply policy and handoff guard", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-28T11:00:00.000Z"));
+    try {
+      const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({
+        handoff: false, parts: [{ kind: "text", text: "Booking options" }]
+      });
+      const isActive = vi.fn().mockResolvedValue(false);
+      const handler = new MessageReceivedHandler({ respond }, { isActive });
+      const event = {
+        ...stored.event,
+        provider: "meta", channel: "messenger", accountId: "page-1",
+        eventType: "message.postback",
+        identityId: "psid-1",
+        occurredAt: "2026-10-28T10:59:00.000Z",
+        content: [{ kind: "text" as const, text: "Book" }]
+      };
+      const result = await handler.handle({ ...stored, event });
+      expect(result.outcome).toBe("handled");
+      expect(result.actions).toHaveLength(1);
+      expect(result.actions[0]?.target).toMatchObject({ channel: "messenger", recipientId: "psid-1" });
+      expect(isActive).toHaveBeenCalledWith("partition-1");
+      expect(respond).toHaveBeenCalledTimes(1);
+      await expect(handler.handle({
+        ...stored, event: { ...event, occurredAt: "2020-01-01T00:00:00.000Z" }
+      })).resolves.toEqual({ actions: [], outcome: "ignored" });
+      expect(respond).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("records a human handoff with a durable reason and no outbound action", async () => {
     const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({
       handoff: true,

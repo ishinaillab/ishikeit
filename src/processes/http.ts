@@ -18,6 +18,7 @@ import { createLogger } from "../observability/logger.js";
 import { PostgresOperationalMetrics } from "../observability/operational-metrics.js";
 import { runtimeBuildIdentity } from "../observability/build-identity.js";
 import { PostgresInboundEventRepository, PostgresInboundStore } from "../persistence/inbound.js";
+import { PostgresMetaHandoffStore } from "../persistence/meta-handoff.js";
 import { PostgresOutboxStore } from "../persistence/outbox.js";
 import { PostgresDatabase } from "../persistence/postgres.js";
 import { MessageReceivedHandler } from "../processing/message-handler.js";
@@ -62,6 +63,7 @@ if (env.DATABASE_URL === undefined || env.META_APP_SECRET === undefined || env.M
 }
 
 const db = new PostgresDatabase(env.DATABASE_URL);
+const metaHandoffs = new PostgresMetaHandoffStore(db);
 const queue = new PostgresOutboxStore(db);
 const telegram = env.TELEGRAM_BOT_TOKEN === undefined || env.TELEGRAM_WEBHOOK_SECRET === undefined
   ? undefined
@@ -367,6 +369,7 @@ const server = buildServer({
     && (instagramDataLifecycle === undefined || await instagramDataLifecycle.ready())
     && await tiktokAuthorizationReady(),
   inbound: new PostgresInboundStore(db),
+  metaHandoffs,
   appSecret: env.META_APP_SECRET,
   verifyToken: env.META_WEBHOOK_VERIFY_TOKEN,
   ...(telegram === undefined ? {} : { telegram }),
@@ -559,7 +562,7 @@ if (env.PROCESSOR_ENABLED) {
   });
 
   const handlers = new EventHandlerRegistry();
-  handlers.register(new MessageReceivedHandler(brain));
+  handlers.register(new MessageReceivedHandler(brain, metaHandoffs));
   if (env.TIKTOK_COMMENT_TO_MESSAGE_ENABLED === true) {
     handlers.register(new TikTokHighIntentCommentHandler(brain));
   }

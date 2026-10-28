@@ -390,6 +390,11 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
   throw new Error("unsupported Meta object");
 }
 
+/** Stable per-customer Meta conversation key, excluding raw identifiers at rest. */
+export function metaConversationPartitionKey(channel: string, accountId: string, identityId: string): string {
+  return hash(["conversation-v1", channel, accountId, identityId]);
+}
+
 export function metaIngressIdentity(event: CanonicalEvent): IngressIdentity {
   if (event.provider !== "meta") {
     throw new Error("Meta ingress identity requires a Meta canonical event");
@@ -398,11 +403,10 @@ export function metaIngressIdentity(event: CanonicalEvent): IngressIdentity {
   const stable = event.providerEventId ?? event.id;
   return {
     deduplicationKey: hash(["meta-event-v1", event.channel, event.accountId, event.eventType, stable]),
-    partitionKey: hash([
-      "conversation-v1",
+    partitionKey: metaConversationPartitionKey(
       event.channel,
       event.accountId,
       event.identityId ?? event.providerMessageId ?? "account"
-    ])
+    )
   };
 }

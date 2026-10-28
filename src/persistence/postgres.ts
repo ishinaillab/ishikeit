@@ -20,6 +20,7 @@ interface ReadinessRow extends pg.QueryResultRow {
   partition_key: boolean;
   processing_outcome: boolean;
   handoff_reason: boolean;
+  meta_handoff_blocks: boolean;
 }
 
 export class PostgresDatabase {
@@ -41,6 +42,7 @@ export class PostgresDatabase {
            to_regclass('public.inbound_events') IS NOT NULL AS inbound_events,
            to_regclass('public.outbox') IS NOT NULL AS outbox,
            to_regclass('public.outbox_attempts') IS NOT NULL AS outbox_attempts,
+           to_regclass('public.meta_handoff_blocks') IS NOT NULL AS meta_handoff_blocks,
            EXISTS (
              SELECT 1
              FROM information_schema.columns
@@ -94,7 +96,8 @@ export class PostgresDatabase {
         && row.last_error === true
         && row.partition_key === true
         && row.processing_outcome === true
-        && row.handoff_reason === true;
+        && row.handoff_reason === true
+        && row.meta_handoff_blocks === true;
     } catch {
       return false;
     }

@@ -94,6 +94,30 @@ describe("MessageReceivedHandler", () => {
     expect(respond).not.toHaveBeenCalled();
   });
 
+  it("does not invoke AI while a Meta conversation is under durable human handoff", async () => {
+    const respond = vi.fn<BrainClient["respond"]>();
+    const isActive = vi.fn().mockResolvedValue(true);
+    const handler = new MessageReceivedHandler({ respond }, { isActive });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-28T09:00:00.000Z"));
+    try {
+      const result = await handler.handle({
+        ...stored,
+        event: {
+          ...stored.event,
+          provider: "meta",
+          channel: "messenger",
+          occurredAt: "2026-10-28T08:59:00.000Z"
+        }
+      });
+      expect(result).toEqual({ actions: [], outcome: "ignored" });
+      expect(isActive).toHaveBeenCalledWith("partition-1");
+      expect(respond).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("records a human handoff with a durable reason and no outbound action", async () => {
     const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({
       handoff: true,

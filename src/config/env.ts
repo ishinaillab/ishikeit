@@ -41,6 +41,8 @@ const schema = z.object({
   META_INSTAGRAM_ACCESS_TOKEN: z.string().min(1).optional(),
   META_WHATSAPP_ACCESS_TOKEN: z.string().min(1).optional(),
   META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED: booleanFromEnv.default(false),
+  META_WHATSAPP_TEMPLATE_PHONE_NUMBER_ID: z.string().regex(/^\d{5,32}$/).optional(),
+  META_WHATSAPP_APPROVED_TEMPLATE_KEYS: z.string().max(4096).default(""),
   META_INSTAGRAM_GRAPH_HOST: z.enum(["graph.instagram.com", "graph.facebook.com"]).default("graph.instagram.com"),
   META_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   META_INSTAGRAM_OAUTH_APP_ID: z.string().regex(/^\d+$/).optional(),
@@ -295,6 +297,26 @@ const schema = z.object({
     }
   }
 
+  if (value.META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED) {
+    for (const key of [
+      "META_WHATSAPP_ACCESS_TOKEN",
+      "META_WHATSAPP_TEMPLATE_PHONE_NUMBER_ID"
+    ] as const) {
+      if (value[key] === undefined) {
+        ctx.addIssue({
+          code: "custom", path: [key],
+          message: "WhatsApp template dispatch must be bound to one configured sending number and access token"
+        });
+      }
+    }
+    if (value.META_WHATSAPP_APPROVED_TEMPLATE_KEYS.trim().length === 0) {
+      ctx.addIssue({
+        code: "custom", path: ["META_WHATSAPP_APPROVED_TEMPLATE_KEYS"],
+        message: "WhatsApp template dispatch requires an approved template name/language allowlist"
+      });
+    }
+  }
+
   if (value.VIDEO_INTERPRETER_PROVIDER === "gemini" && value.GEMINI_API_KEY === undefined) {
     ctx.addIssue({
       code: "custom",
@@ -331,6 +353,7 @@ export type Environment = z.infer<typeof schema> & {
   HTTP_PORT_EFFECTIVE: number;
   ACTION_DISPATCH_ENABLED_EFFECTIVE: boolean;
   PROCESSOR_CANARY_PARTITION_KEYS_EFFECTIVE: readonly string[];
+  META_WHATSAPP_APPROVED_TEMPLATE_KEYS_EFFECTIVE: readonly string[];
 };
 
 export function loadEnvironment(input: NodeJS.ProcessEnv = process.env): Environment {
@@ -348,6 +371,17 @@ export function loadEnvironment(input: NodeJS.ProcessEnv = process.env): Environ
 
   if (new Set(canaryPartitionKeys).size !== canaryPartitionKeys.length) {
     throw new Error("PROCESSOR_CANARY_PARTITION_KEYS must not contain duplicates");
+  }
+
+  // Fail on any malformed or duplicate template key, even with the sender off.
+  // A key identifies a single approved template language, not a wildcard.
+  const approvedWhatsAppTemplateKeys = parsed.META_WHATSAPP_APPROVED_TEMPLATE_KEYS
+    .split(",").map((key) => key.trim()).filter(Boolean);
+  if (approvedWhatsAppTemplateKeys.length > 32
+    || approvedWhatsAppTemplateKeys.some((key) =>
+      !/^[a-z0-9_]{1,512}@[A-Za-z]{2,3}(?:[_-][A-Za-z]{2,4})?$/u.test(key))
+    || new Set(approvedWhatsAppTemplateKeys).size !== approvedWhatsAppTemplateKeys.length) {
+    throw new Error("META_WHATSAPP_APPROVED_TEMPLATE_KEYS requires unique name@language pairs (maximum 32)");
   }
 
   if (parsed.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined) {
@@ -422,6 +456,7 @@ export function loadEnvironment(input: NodeJS.ProcessEnv = process.env): Environ
     ...parsed,
     HTTP_PORT_EFFECTIVE: parsed.HTTP_PORT ?? parsed.PORT ?? 3000,
     ACTION_DISPATCH_ENABLED_EFFECTIVE: parsed.ACTION_DISPATCH_ENABLED || parsed.META_OUTBOUND_ENABLED,
-    PROCESSOR_CANARY_PARTITION_KEYS_EFFECTIVE: canaryPartitionKeys
+    PROCESSOR_CANARY_PARTITION_KEYS_EFFECTIVE: canaryPartitionKeys,
+    META_WHATSAPP_APPROVED_TEMPLATE_KEYS_EFFECTIVE: approvedWhatsAppTemplateKeys
   };
 }

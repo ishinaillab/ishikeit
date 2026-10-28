@@ -14,7 +14,9 @@ describe("WhatsApp template adapter", () => {
   it("posts an explicit template request without following redirects", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ messages: [{ id: "wamid.example" }] }), { status: 200 }));
     const sender = new MetaSender({ graphApiVersion: "v26.0", whatsappAccessToken: "test-token", instagramGraphHost: "graph.instagram.com", fetchImpl });
-    const adapter = new WhatsAppTemplateAdapter(sender);
+    const adapter = new WhatsAppTemplateAdapter(sender, {
+      phoneNumberId: "123456789012", approvedTemplateKeys: ["hello_world@en_US"]
+    });
     await expect(adapter.execute(action)).resolves.toEqual({ providerResourceId: "wamid.example" });
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toContain("/123456789012/messages");
@@ -25,9 +27,29 @@ describe("WhatsApp template adapter", () => {
   it("rejects invalid target and unapproved content shape before network", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const sender = new MetaSender({ graphApiVersion: "v26.0", whatsappAccessToken: "test-token", instagramGraphHost: "graph.instagram.com", fetchImpl });
-    const adapter = new WhatsAppTemplateAdapter(sender);
+    const adapter = new WhatsAppTemplateAdapter(sender, {
+      phoneNumberId: "123456789012", approvedTemplateKeys: ["hello_world@en_US"]
+    });
     await expect(adapter.execute({ ...action, target: { ...action.target, channel: "messenger" } })).rejects.toMatchObject({ retryable: false });
     await expect(adapter.execute({ ...action, body: { templateName: "BAD NAME", languageCode: "en_US" } })).rejects.toMatchObject({ retryable: false });
+    await expect(adapter.execute({
+      ...action,
+      target: { ...action.target, accountId: "987654321098" }
+    })).rejects.toMatchObject({
+      retryable: false,
+      message: "WhatsApp template action targets an unapproved sending account"
+    });
+    await expect(adapter.execute({
+      ...action,
+      body: { templateName: "unapproved_template", languageCode: "en_US" }
+    })).rejects.toMatchObject({
+      retryable: false,
+      message: "WhatsApp template name and language are not approved for dispatch"
+    });
+    await expect(adapter.execute({
+      ...action,
+      body: { templateName: "hello_world", languageCode: "en_GB" }
+    })).rejects.toMatchObject({ retryable: false });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

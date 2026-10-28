@@ -495,8 +495,13 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
     requestTimeoutMs: env.META_OUTBOUND_REQUEST_TIMEOUT_MS
   });
   dispatcher.register(new MetaMessagingAdapter(metaSender, metaHandoffs));
-  if (env.META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED && env.META_WHATSAPP_ACCESS_TOKEN !== undefined) {
-    dispatcher.register(new WhatsAppTemplateAdapter(metaSender));
+  if (env.META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED
+    && env.META_WHATSAPP_ACCESS_TOKEN !== undefined
+    && env.META_WHATSAPP_TEMPLATE_PHONE_NUMBER_ID !== undefined) {
+    dispatcher.register(new WhatsAppTemplateAdapter(metaSender, {
+      phoneNumberId: env.META_WHATSAPP_TEMPLATE_PHONE_NUMBER_ID,
+      approvedTemplateKeys: env.META_WHATSAPP_APPROVED_TEMPLATE_KEYS_EFFECTIVE
+    }));
   }
   if (env.TELEGRAM_BOT_TOKEN !== undefined) {
     dispatcher.register(new TelegramMessagingAdapter(new TelegramSender({

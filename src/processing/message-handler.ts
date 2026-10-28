@@ -2,6 +2,8 @@ import type { ActionEnvelope } from "../domain/actions.js";
 import { normalizeHandoffReason, type EventHandlingResult } from "../domain/processing.js";
 import type { BrainClient, BrainTurnResponse } from "../brain/types.js";
 import { isWhatsAppTemplateOptOut, WHATSAPP_OPT_OUT_CONFIRMATION } from "../domain/meta-whatsapp-optout.js";
+import { isWhatsAppAppointmentOptIn, WHATSAPP_APPOINTMENT_OPT_IN_CONFIRMATION } from "../domain/meta-whatsapp-optin.js";
+import type { WhatsAppConsentReader } from "../persistence/whatsapp-consent.js";
 import type { StoredInboundEvent } from "../persistence/inbound.js";
 import type { MetaHandoffReader } from "../persistence/meta-handoff.js";
 import { ProcessingFailure } from "./failure.js";
@@ -12,7 +14,8 @@ import { splitMetaReplyParts, type MetaTextChannel } from "./meta-reply-split.js
 export class MessageReceivedHandler implements EventHandler {
   constructor(
     private readonly brain: BrainClient,
-    private readonly metaHandoffs?: MetaHandoffReader
+    private readonly metaHandoffs?: MetaHandoffReader,
+    private readonly whatsappConsent?: WhatsAppConsentReader
   ) {}
 
   canHandle(stored: StoredInboundEvent): boolean {
@@ -45,12 +48,25 @@ export class MessageReceivedHandler implements EventHandler {
           handoff: false,
           parts: [{ kind: "text", text: WHATSAPP_OPT_OUT_CONFIRMATION }]
         }
-      : await this.brain.respond({
-          turnId: stored.id,
-          conversationId: stored.partitionKey,
-          event,
-          input: event.content
-        });
+      : isWhatsAppAppointmentOptIn(event)
+        ? {
+            handoff: false,
+            parts: [{
+              kind: "text",
+              text: this.whatsappConsent !== undefined
+                && await this.whatsappConsent.hasActiveConsent(
+                  event.accountId, event.identityId, "appointment_updates"
+                )
+                ? WHATSAPP_APPOINTMENT_OPT_IN_CONFIRMATION
+                : "We couldn't activate WhatsApp appointment reminders. Please contact Ishi Nail Lab."
+            }]
+          }
+        : await this.brain.respond({
+            turnId: stored.id,
+            conversationId: stored.partitionKey,
+            event,
+            input: event.content
+          });
 
     if (reply.handoff) {
       return {

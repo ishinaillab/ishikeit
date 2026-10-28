@@ -14,7 +14,12 @@ export class MessageReceivedHandler implements EventHandler {
   ) {}
 
   canHandle(stored: StoredInboundEvent): boolean {
-    return stored.event.capability === "messaging" && stored.event.eventType === "message.received";
+    const event = stored.event;
+    return event.capability === "messaging"
+      && (event.eventType === "message.received"
+        || (event.provider === "meta"
+          && (event.channel === "messenger" || event.channel === "instagram")
+          && event.eventType === "message.postback"));
   }
 
   async handle(stored: StoredInboundEvent): Promise<EventHandlingResult> {

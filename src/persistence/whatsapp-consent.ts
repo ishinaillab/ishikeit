@@ -57,6 +57,34 @@ export class PostgresWhatsAppConsentStore implements WhatsAppConsentReader {
     return result.rows[0]?.active === true;
   }
 
+  /**
+   * Record the explicit signed opt-in atomically with inbound ingestion.
+   * Out-of-order/old messages cannot override a later STOP or a newer opt-in.
+   */
+  async grantInTransaction(
+    tx: SqlExecutor,
+    accountId: string,
+    recipientId: string,
+    sourceEventId: string,
+    occurredAt: Date
+  ): Promise<void> {
+    if (!Number.isFinite(occurredAt.getTime())) throw new Error("Invalid consent timestamp");
+    const key = this.recipientKey(accountId, recipientId);
+    await tx.query(
+      `INSERT INTO public.meta_whatsapp_template_opt_ins
+       (recipient_key,purpose,source_event_id,consented_at,revoked_at)
+       VALUES ($1,'appointment_updates',$2::uuid,$3,NULL)
+       ON CONFLICT(recipient_key,purpose) DO UPDATE SET
+         source_event_id=EXCLUDED.source_event_id,
+         consented_at=EXCLUDED.consented_at,
+         revoked_at=NULL
+       WHERE EXCLUDED.consented_at >
+         GREATEST(meta_whatsapp_template_opt_ins.consented_at,
+           COALESCE(meta_whatsapp_template_opt_ins.revoked_at, meta_whatsapp_template_opt_ins.consented_at))`,
+      [key, sourceEventId, occurredAt]
+    );
+  }
+
   /** Idempotent opt-out; only operate on a verified, signed customer message. */
   async revokeInTransaction(
     tx: SqlExecutor,

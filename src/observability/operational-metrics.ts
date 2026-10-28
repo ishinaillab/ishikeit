@@ -225,14 +225,18 @@ export class PostgresOperationalMetrics implements OperationalMetricsReader {
              AND ie.account_id = sent.account_id
              AND ie.provider_message_id = sent.provider_message_id
              AND ie.event_type IN ('delivery.sent','delivery.delivered','delivery.read','delivery.failed')
-           ORDER BY COALESCE(ie.occurred_at,ie.received_at) DESC,
-                    ie.received_at DESC,
-                    CASE ie.event_type
-                      WHEN 'delivery.failed' THEN 4
-                      WHEN 'delivery.read' THEN 3
-                      WHEN 'delivery.delivered' THEN 2
+           -- Provider callbacks may arrive out of order. A later-arriving
+           -- 'sent' or 'delivered' receipt must not overwrite proof of 'read'.
+           -- A failure supersedes 'sent' when no success receipt exists.
+           -- Never infer recipient delivery from an accepted send API response.
+           ORDER BY CASE ie.event_type
+                      WHEN 'delivery.read' THEN 4
+                      WHEN 'delivery.delivered' THEN 3
+                      WHEN 'delivery.failed' THEN 2
                       WHEN 'delivery.sent' THEN 1
-                      ELSE 0 END DESC
+                      ELSE 0 END DESC,
+                    COALESCE(ie.occurred_at,ie.received_at) DESC,
+                    ie.received_at DESC
            LIMIT 1
          ) AS receipt ON true
          GROUP BY sent.channel,COALESCE(receipt.event_type, 'delivery.unconfirmed')

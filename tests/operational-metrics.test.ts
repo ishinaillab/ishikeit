@@ -109,6 +109,17 @@ describe("PostgresOperationalMetrics", () => {
     expect(reconciliationQuery).toContain("ie.account_id = sent.account_id");
     expect(reconciliationQuery).toContain("ie.provider_message_id = sent.provider_message_id");
     expect(reconciliationQuery).toContain("LEFT JOIN LATERAL");
+    // Provider webhooks can arrive out of order: read outranks delivered,
+    // failed outranks only sent, and event time only breaks priority ties.
+    const priority = reconciliationQuery.indexOf("ORDER BY CASE ie.event_type");
+    const eventTime = reconciliationQuery.indexOf(
+      "COALESCE(ie.occurred_at,ie.received_at) DESC", priority
+    );
+    expect(priority).toBeGreaterThan(-1);
+    expect(eventTime).toBeGreaterThan(priority);
+    expect(reconciliationQuery).toMatch(
+      /WHEN 'delivery.read' THEN 4[\s\S]*WHEN 'delivery.delivered' THEN 3[\s\S]*WHEN 'delivery.failed' THEN 2[\s\S]*WHEN 'delivery.sent' THEN 1/u
+    );
     expect(String(query.mock.calls[0]?.[0]))
       .toContain("processed_at IS NOT NULL AND processing_outcome IS NULL");
   });

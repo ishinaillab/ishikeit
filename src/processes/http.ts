@@ -411,7 +411,10 @@ async function reconcileMessengerManagedPage(): Promise<void> {
     );
   } catch (error) {
     const diagnostic = error instanceof MessengerPageSubscriptionError
-      ? error.stage + (error.status === undefined ? "" : " http_status=" + error.status)
+      ? error.stage
+        + (error.status === undefined ? "" : " http_status=" + error.status)
+        + (error.graphCode === undefined ? "" : " provider_code=graph:" + error.graphCode)
+        + (error.graphSubcode === undefined ? "" : " subcode=" + error.graphSubcode)
       : "unexpected_failure";
     logger.warn("Messenger Page webhook field reconciliation failed: " + diagnostic);
   }

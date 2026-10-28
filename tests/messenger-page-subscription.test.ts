@@ -83,11 +83,14 @@ describe("Messenger verified Page webhook subscriptions", () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json({ id: accountId }))
       .mockResolvedValueOnce(json({
-        error: { message: "SECRET_FROM_PROVIDER" }
+        error: { message: "SECRET_FROM_PROVIDER", code: 190, error_subcode: 463 }
       }, 403));
     const err = await client(fetchImpl).reconcile("private-page-access", () => Promise.resolve(true))
       .catch((error: unknown) => error);
-    expect(err).toMatchObject({ stage: "subscription_read", status: 403 });
+    expect(err).toMatchObject({
+      stage: "subscription_read", status: 403,
+      graphCode: 190, graphSubcode: 463
+    });
     const message = String(err);
     expect(message).not.toContain("SECRET_FROM_PROVIDER");
     expect(message).not.toContain("private-page-access");

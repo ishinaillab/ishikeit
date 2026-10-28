@@ -7,6 +7,7 @@ import { enqueueAction, INBOUND_ACCEPTED_TOPIC } from "./outbox.js";
 import type { PostgresDatabase } from "./postgres.js";
 import type { PostgresWhatsAppConsentStore } from "./whatsapp-consent.js";
 import { isWhatsAppTemplateOptOut } from "../domain/meta-whatsapp-optout.js";
+import { isWhatsAppAppointmentOptIn } from "../domain/meta-whatsapp-optin.js";
 
 export interface InboundStore {
   ingest(event: CanonicalEvent, identity: IngressIdentity, rawBodyHash: string): Promise<"created"|"duplicate">;
@@ -38,7 +39,7 @@ interface EventRow extends pg.QueryResultRow {
 export class PostgresInboundStore implements InboundStore {
   constructor(
     private readonly db: PostgresDatabase,
-    private readonly whatsappConsents?: Pick<PostgresWhatsAppConsentStore, "revokeInTransaction">
+    private readonly whatsappConsents?: Pick<PostgresWhatsAppConsentStore, "revokeInTransaction" | "grantInTransaction">
   ) {}
 
   async ingest(event: CanonicalEvent, identity: IngressIdentity, rawBodyHash: string): Promise<"created"|"duplicate"> {
@@ -75,6 +76,16 @@ export class PostgresInboundStore implements InboundStore {
       const optOut = isWhatsAppTemplateOptOut(event);
       if (optOut && this.whatsappConsents !== undefined && event.identityId !== undefined) {
         await this.whatsappConsents.revokeInTransaction(tx, event.accountId, event.identityId);
+      }
+      // Consent is granted only by a fresh, explicit, purpose-specific
+      // customer-authored WhatsApp message from a signed Meta webhook.
+      if (isWhatsAppAppointmentOptIn(event)
+        && this.whatsappConsents !== undefined
+        && event.identityId !== undefined
+        && event.occurredAt !== undefined) {
+        await this.whatsappConsents.grantInTransaction(
+          tx, event.accountId, event.identityId, id, new Date(event.occurredAt)
+        );
       }
       await tx.query(
         "INSERT INTO outbox (id,topic,partition_key,payload) VALUES ($1,$2,$3,$4::jsonb)",

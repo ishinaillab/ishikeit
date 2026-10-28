@@ -1,6 +1,7 @@
 import type { ActionEnvelope } from "../domain/actions.js";
 import { normalizeHandoffReason, type EventHandlingResult } from "../domain/processing.js";
-import type { BrainClient } from "../brain/types.js";
+import type { BrainClient, BrainTurnResponse } from "../brain/types.js";
+import { isWhatsAppTemplateOptOut, WHATSAPP_OPT_OUT_CONFIRMATION } from "../domain/meta-whatsapp-optout.js";
 import type { StoredInboundEvent } from "../persistence/inbound.js";
 import type { MetaHandoffReader } from "../persistence/meta-handoff.js";
 import { ProcessingFailure } from "./failure.js";
@@ -36,12 +37,20 @@ export class MessageReceivedHandler implements EventHandler {
       throw new ProcessingFailure("Inbound message has no reply identity", { retryable: false });
     }
 
-    const reply = await this.brain.respond({
-      turnId: stored.id,
-      conversationId: stored.partitionKey,
-      event,
-      input: event.content
-    });
+    // A customer explicitly opting out of reminders receives only a concise
+    // functional confirmation. Do not route STOP to a generative bot or
+    // accidentally invite them to opt in again.
+    const reply: BrainTurnResponse = isWhatsAppTemplateOptOut(event)
+      ? {
+          handoff: false,
+          parts: [{ kind: "text", text: WHATSAPP_OPT_OUT_CONFIRMATION }]
+        }
+      : await this.brain.respond({
+          turnId: stored.id,
+          conversationId: stored.partitionKey,
+          event,
+          input: event.content
+        });
 
     if (reply.handoff) {
       return {

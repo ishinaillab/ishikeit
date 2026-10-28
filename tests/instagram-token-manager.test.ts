@@ -221,17 +221,19 @@ describe("InstagramAccessTokenRouter", () => {
 
 
 
-  it("does not use a managed token for OAuth-unmapped accounts when OAuth is configured", async () => {
+  it("uses a managed token only for its verified owner when OAuth belongs to another account", async () => {
     const oauthProvider = { getAccessToken: vi.fn().mockResolvedValue(undefined) };
     const resolveProfessionalAccountId = vi.fn().mockResolvedValue("business-account");
     const router = new InstagramAccessTokenRouter({
       oauthProvider,
-      managedAccessToken: "legacy-token",
+      managedAccessToken: "verified-owner-token",
       client: { resolveProfessionalAccountId }
     });
-    await expect(router.getAccessToken("business-account")).resolves.toBeUndefined();
+    await expect(router.getAccessToken("business-account")).resolves.toBe("verified-owner-token");
+    await expect(router.getAccessToken("different-account")).resolves.toBeUndefined();
     expect(oauthProvider.getAccessToken).toHaveBeenCalledWith("business-account");
-    expect(resolveProfessionalAccountId).not.toHaveBeenCalled();
+    expect(oauthProvider.getAccessToken).toHaveBeenCalledWith("different-account");
+    expect(resolveProfessionalAccountId).toHaveBeenCalledTimes(1);
   });
 
   it("reports no managed account when no App Dashboard token is configured", async () => {

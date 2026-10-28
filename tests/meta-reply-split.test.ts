@@ -46,7 +46,7 @@ describe("lossless Meta AI reply segmentation", () => {
     const result = splitMetaReplyParts(parts, "instagram");
     expect(result).toHaveLength(3);
     expect(result?.[2]).toBe(media);
-    expect(result?.slice(0,2).map((part) => part.kind === "text" ? part.text : "").join("")).toBe(parts[0]?.text);
+    expect(result?.slice(0,2).map((part) => part.kind === "text" ? part.text : "").join("")).toBe("a".repeat(1100));
   });
 
   it("hands off instead of partially sending a reply above the flood limit", () => {

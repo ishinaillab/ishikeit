@@ -914,15 +914,23 @@ export function buildServer(deps: ServerDeps) {
         }
       });
 
-      server.get<{ Querystring: { account_id?: string } }>
+      server.get<{ Querystring: { account_id?: string; validate_live?: string } }>
       ("/ops/instagram/oauth/status", async (req, reply) => {
         if (!verifyBearerAuthorization(req.headers.authorization, opsToken)) {
           return reply.header("www-authenticate", 'Bearer realm="ishikeit-ops"')
             .code(401).send({ status: "unauthorized" });
         }
         reply.header("cache-control", "private, no-store");
+        if (req.query.validate_live !== undefined
+          && req.query.validate_live !== "true"
+          && req.query.validate_live !== "false") {
+          return reply.code(400).send({ status: "invalid_validation_option" });
+        }
         try {
-          return await instagramOAuth.service.status(req.query.account_id);
+          return await instagramOAuth.service.status(
+            req.query.account_id,
+            req.query.validate_live === "true"
+          );
         } catch (error) {
           deps.logger.error({ err: error }, "Instagram OAuth status failed");
           return reply.code(503).send({ status: "oauth_unavailable" });

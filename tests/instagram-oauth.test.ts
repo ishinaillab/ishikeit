@@ -331,6 +331,54 @@ describe("InstagramOAuthService", () => {
     });
   });
 
+  it("distinguishes stored Instagram OAuth token from current provider validity", async () => {
+    const now = new Date("2026-10-28T14:00:00.000Z");
+    const store = new MemoryOAuthStore();
+    await store.put({
+      provider: "instagram",
+      accountId: "oauth-tester",
+      accessToken: "private-tester-token",
+      scopes: [...INSTAGRAM_REVIEW_SCOPES],
+      accessExpiresAt: new Date(now.getTime() + 20 * 24 * 60 * 60 * 1000)
+    });
+    await store.putAccountAlias(
+      "instagram", "professional-tester", "oauth-tester", "instagram_professional_account"
+    );
+    const resolveProfessionalAccountId = vi.fn().mockResolvedValue("professional-tester");
+    const client: InstagramOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn(), exchangeLongLived: vi.fn(),
+      refresh: vi.fn(), resolveProfessionalAccountId, ensureWebhookSubscription: vi.fn()
+    };
+    const service = new InstagramOAuthService({
+      appId: "123456789012345",
+      redirectUri: "https://apps.example.test/ishikeit/oauth/instagram/callback/",
+      store, client, now: () => now
+    });
+
+    expect((await service.status("professional-tester")).providerValidation).toBeUndefined();
+    expect(resolveProfessionalAccountId).not.toHaveBeenCalled();
+    expect((await service.status("professional-tester", true)).providerValidation).toBe("valid");
+    expect(resolveProfessionalAccountId).toHaveBeenCalledWith("private-tester-token");
+
+    resolveProfessionalAccountId.mockResolvedValueOnce("other-owner");
+    expect((await service.status("professional-tester", true)).providerValidation)
+      .toBe("identity_mismatch");
+
+    resolveProfessionalAccountId.mockRejectedValueOnce(
+      new InstagramOAuthRequestError("private provider response", {
+        retryable: false, status: 400, providerCode: "190"
+      })
+    );
+    const invalid = await service.status("professional-tester", true);
+    expect(invalid).toMatchObject({
+      authorized: true,
+      accountId: "professional-tester",
+      providerValidation: "reauthorization_required"
+    });
+    expect(JSON.stringify(invalid)).not.toContain("private-tester-token");
+    expect(JSON.stringify(invalid)).not.toContain("private provider response");
+  });
+
   it("identifies the exact failing OAuth stage after state validation", async () => {
     const store = new MemoryOAuthStore();
     const client: InstagramOAuthClientLike = {

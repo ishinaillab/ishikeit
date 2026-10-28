@@ -1278,7 +1278,20 @@ describe("webhook routes", () => {
       headers: { authorization: "Bearer " + opsToken }
     });
     expect(authorized.statusCode).toBe(200);
-    expect(status).toHaveBeenCalledWith("17841430000000000");
+    expect(status).toHaveBeenCalledWith("17841430000000000", false);
+    const validated = await server.inject({
+      method: "GET",
+      url: "/ops/instagram/oauth/status?account_id=17841430000000000&validate_live=true",
+      headers: { authorization: "Bearer " + opsToken }
+    });
+    expect(validated.statusCode).toBe(200);
+    expect(status).toHaveBeenCalledWith("17841430000000000", true);
+    const invalidMode = await server.inject({
+      method: "GET",
+      url: "/ops/instagram/oauth/status?validate_live=unsafe",
+      headers: { authorization: "Bearer " + opsToken }
+    });
+    expect(invalidMode.statusCode).toBe(400);
     expect(authorized.body).not.toContain("accessToken");
 
     const signed = metaSignedRequest("17841430000000000", "instagram-secret");

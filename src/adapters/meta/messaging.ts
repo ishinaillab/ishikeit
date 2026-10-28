@@ -49,7 +49,8 @@ export class MetaMessagingAdapter implements ActionAdapter {
       recipientId: target.data.recipientId,
       message: body.data.part,
       ...(body.data.replyTo === undefined ? {} : { replyTo: body.data.replyTo }),
-      ...(body.data.quickReplies === undefined ? {} : { quickReplies: body.data.quickReplies })
+      ...(body.data.quickReplies === undefined ? {} : { quickReplies: body.data.quickReplies }),
+      ...(body.data.interactiveList === undefined ? {} : { interactiveList: body.data.interactiveList })
     });
 
     const result = await this.sender.send(payload);

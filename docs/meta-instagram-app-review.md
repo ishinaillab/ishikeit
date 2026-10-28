@@ -99,7 +99,7 @@ Meta requires at least one successful API call for certain Advanced Access reque
 
 Ishikeit's production database contains successful published Instagram `message.send` actions for this Meta app, including a successful publish on **2026-10-01** and multiple earlier successful sends. These are durable outbox records, not simulated responses.
 
-The current OAuth routing path has also been verified against Meta with the newly authorized Professional account: Meta accepted the OAuth token and Professional-account routing identity. A canary to an existing first-party conversation was rejected only because that conversation was outside the 24-hour response window, which confirms routing/authentication were accepted.
+**Historical evidence only:** The OAuth routing path previously passed Meta tests. As of 2026-10-28, the separate stored OAuth tester credential is rejected by Graph account-resolution with HTTP 400, code 190, despite a future stored expiry. This is not a valid current authentication canary. The independently verified managed Instagram Professional token succeeds in webhook subscription reconciliation and matches the account ID in previously signed inbound customer messages. Do not delete or overwrite the OAuth credential merely to hide the warning; obtain an authorized fresh Business Login when that specific tester integration is needed.
 
 The account-level `POST /me/subscribed_apps` reconciliation also succeeds for `messages`, `standby`, and `messaging_handover`.
 
@@ -138,3 +138,10 @@ Before clicking Submit:
 - the real end-to-end screencast is uploaded
 
 Do not submit a mocked or incomplete recording. Do not reauthorize the production account merely to recreate routing aliases or webhook subscriptions; startup reconciliation is idempotent.
+
+## Current review and production prerequisites (2026-10-28)
+
+- Meta developer app ID `1042452472116584` remains **Live**; read-only App Review status is **NO_SUBMISSION**. The app's verified business and live webhook setup do not confer Advanced Access. A real uninterrupted review screencast, current permitted reviewer credentials/test account and app contact-email confirmation remain external prerequisites.
+- Production evidence on 2026-10-28: the managed Instagram Professional token successfully reconciles its webhook subscription, and the account ID independently validated by that token matches a previously signed inbound Instagram customer-message account ID. A different stored OAuth credential with scopes `instagram_business_basic` and `instagram_business_manage_messages` fails Meta Graph `/me` / account resolution with numeric provider code **190**. Local expiry timestamps cannot override provider rejection. No authorization or consent was fabricated.
+- Confirm any new tester reply with a fresh opted-in, tester-originated DM; never replay historical messages, retry closed-window sends or trigger a new customer message without an authorized test sender. Ensure Meta's Advanced Access permission review is complete before describing ordinary non-role customers as generally supported.
+- Current engineering improvements in repository include signed webhook persistence, 24-hour standard reply policy, private human-handoff and Meta native ownership checks, per-message delivery correlation and provider-error privacy minimization. TikTok Business Messaging remains separately parked pending provider approval.

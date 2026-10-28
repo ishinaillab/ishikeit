@@ -35,6 +35,10 @@ import {
 import { instagramOAuthFailureDiagnostic, type InstagramOAuthController } from "../auth/instagram-oauth.js";
 import type { InstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 import { verifyMetaSignedRequest } from "../security/meta-signed-request.js";
+import {
+  normalizeLatePointBookingChange,
+  verifyLatePointWebhook
+} from "../appointments/latepoint-booking-ingress.js";
 
 export interface ServerDeps {
   logger: Logger;
@@ -42,6 +46,8 @@ export interface ServerDeps {
   inbound: InboundStore;
   appSecret: string;
   verifyToken: string;
+  /** Independently keyed, non-sending WordPress booking lifecycle ingress. */
+  latePointWebhook?: { secret: string };
   telegram?: {
     botId: string;
     webhookSecret: string;
@@ -126,6 +132,48 @@ export function buildServer(deps: ServerDeps) {
       ? { status: "ready" }
       : reply.code(503).send({ status: "not_ready" })
   );
+
+  // Default off. No endpoint is registered without a dedicated key.
+  if (deps.latePointWebhook !== undefined) {
+    if (Buffer.byteLength(deps.latePointWebhook.secret, "utf8") < 32) {
+      throw new Error("LatePoint webhook requires an independent 32-byte secret");
+    }
+    const secret = deps.latePointWebhook.secret;
+    server.register((scope, _opts, done) => {
+      scope.removeContentTypeParser("application/json");
+      scope.addContentTypeParser("application/json", {
+        parseAs: "buffer", bodyLimit: 4096
+      }, (_req, body, cb) => cb(null, body));
+      scope.post<{ Body: Buffer }>("/ishikeit/webhooks/latepoint", async (req, reply) => {
+        reply.header("cache-control", "no-store");
+        if (!Buffer.isBuffer(req.body)) {
+          return reply.code(415).send({ status: "unsupported_body" });
+        }
+        const timestamp = Array.isArray(req.headers["x-ishi-latepoint-timestamp"])
+          ? undefined : req.headers["x-ishi-latepoint-timestamp"];
+        const signature = Array.isArray(req.headers["x-ishi-latepoint-signature-256"])
+          ? undefined : req.headers["x-ishi-latepoint-signature-256"];
+        if (!verifyLatePointWebhook(req.body, timestamp, signature, secret)) {
+          return reply.code(401).send({ status: "rejected" });
+        }
+        let snapshot;
+        try {
+          snapshot = normalizeLatePointBookingChange(
+            JSON.parse(req.body.toString("utf8")) as unknown
+          );
+        } catch {
+          return reply.code(422).send({ status: "invalid_booking_change" });
+        }
+        const outcome = await deps.inbound.ingest(
+          snapshot.event, snapshot.identity, sha256Hex(req.body)
+        );
+        return reply.code(200).send({
+          status: outcome === "created" ? "accepted" : "duplicate"
+        });
+      });
+      done();
+    });
+  }
 
   if (deps.metrics !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("operational metrics require a bearer token");

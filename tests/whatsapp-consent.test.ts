@@ -13,7 +13,7 @@ describe("WhatsApp private consent verification", () => {
     const query = vi.fn().mockResolvedValue({ rows: [{ active: true }] });
     const store = new PostgresWhatsAppConsentStore({ query } as unknown as PostgresDatabase, key);
     await expect(store.hasActiveConsent(account, recipient, "appointment_updates")).resolves.toBe(true);
-    const [, params] = query.mock.calls[0]!;
+    const [, params] = (query.mock.calls as Array<[string, readonly unknown[]]>)[0]!;
     expect(params[0]).toMatch(/^[a-f0-9]{64}$/u);
     expect(params[0]).not.toContain(recipient);
     expect(params[1]).toBe("appointment_updates");
@@ -24,7 +24,8 @@ describe("WhatsApp private consent verification", () => {
     const store = new PostgresWhatsAppConsentStore({ query } as unknown as PostgresDatabase, key);
     await expect(store.hasActiveConsent(account, recipient, "appointment_updates")).resolves.toBe(false);
     await store.hasActiveConsent(account, "639123456788", "appointment_updates");
-    expect(query.mock.calls[0]?.[1]?.[0]).not.toBe(query.mock.calls[1]?.[1]?.[0]);
+    expect((query.mock.calls as Array<[string, readonly unknown[]]>)[0]?.[1]?.[0])
+      .not.toBe((query.mock.calls as Array<[string, readonly unknown[]]>)[1]?.[1]?.[0]);
     await expect(store.hasActiveConsent("wrong-account", recipient, "appointment_updates"))
       .rejects.toThrow(/Invalid WhatsApp/);
   });
@@ -34,7 +35,7 @@ describe("WhatsApp private consent verification", () => {
     const store = new PostgresWhatsAppConsentStore({ query } as unknown as PostgresDatabase, key);
     const tx = { query } as unknown as SqlExecutor;
     await store.revokeInTransaction(tx, account, recipient);
-    const [sql, params] = query.mock.calls[0]!;
+    const [sql, params] = (query.mock.calls as Array<[string, readonly unknown[]]>)[0]!;
     expect(sql).toContain("revoked_at=now()");
     expect(params[0]).toMatch(/^[a-f0-9]{64}$/u);
     expect(sql).not.toContain(recipient);
@@ -49,7 +50,7 @@ describe("WhatsApp private consent verification", () => {
     });
     const tx = { query } as unknown as SqlExecutor;
     const db = {
-      transaction: async (work: (executor: SqlExecutor) => Promise<unknown>) => await work(tx)
+      transaction: (work: (executor: SqlExecutor) => Promise<unknown>) => work(tx)
     } as unknown as PostgresDatabase;
     const revokeInTransaction = vi.fn().mockImplementation(async () => {
       calls.push("revoke");

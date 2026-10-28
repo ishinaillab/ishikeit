@@ -47,7 +47,7 @@ describe("WhatsApp template adapter", () => {
     const sender = new MetaSender({ graphApiVersion: "v26.0", whatsappAccessToken: "test-token", instagramGraphHost: "graph.instagram.com", fetchImpl });
     const adapter = new WhatsAppTemplateAdapter(sender, {
       phoneNumberId: "123456789012", approvedTemplateKeys: ["hello_world@en_US"]
-    });
+    }, { hasActiveConsent: vi.fn().mockResolvedValue(true) });
     await expect(adapter.execute({ ...action, target: { ...action.target, channel: "messenger" } })).rejects.toMatchObject({ retryable: false });
     await expect(adapter.execute({ ...action, body: { templateName: "BAD NAME", languageCode: "en_US" } })).rejects.toMatchObject({ retryable: false });
     await expect(adapter.execute({

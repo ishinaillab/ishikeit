@@ -331,12 +331,25 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
             content.push({ kind: "text", text: title });
           }
           content.push({ kind: "structured", format: "meta.postback", data: postback });
+          // Instagram self-messaging events (is_self=true) originate from
+          // the Professional account operator, not a customer. Store them
+          // for audit, but never let the customer reply handler auto-answer.
+          // Keep the provider postback mid so retries remain idempotent even
+          // when Meta redelivers with altered timestamps or extra metadata.
+          const mid = typeof postback.mid === "string"
+            && postback.mid.length > 0 && postback.mid.length <= 2048
+            ? postback.mid : undefined;
           events.push(makeEvent({
             provider: "meta",
             channel,
             capability: "messaging",
             accountId,
-            eventType: "message.postback",
+            eventType: channel === "instagram" && item.is_self === true
+              ? "message.self_postback" : "message.postback",
+            ...(mid === undefined ? {} : {
+              providerMessageId: mid,
+              providerEventId: "postback:" + mid
+            }),
             ...(senderId === undefined ? {} : { identityId: senderId }),
             ...(occurredAt === undefined ? {} : { occurredAt }),
             receivedAt,

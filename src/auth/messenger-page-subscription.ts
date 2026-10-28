@@ -57,20 +57,18 @@ export class MessengerPageSubscriptionClient {
 
   async reconcile(
     accessToken: string,
+    pageId: string,
     isKnownSignedInboundPage: (pageId: string) => Promise<boolean>
   ): Promise<{ changed: boolean }> {
     if (accessToken.trim().length === 0) {
       throw new MessengerPageSubscriptionError("access_token_missing");
     }
 
-    // Resolve identity through the credential itself. Never infer the Page
-    // from an unrelated OAuth tester or a caller-supplied page identifier.
-    const identity = await this.#request(
-      new URL(`https://graph.facebook.com/${this.#graphApiVersion}/me?fields=id`),
-      accessToken, "identity_resolution"
-    );
-    const pageId = identity.id;
-    if (typeof pageId !== "string" || !/^\d{5,32}$/u.test(pageId)) {
+    // Choose the page only from a unique recent, signed inbound Page ID.
+    // The Graph /me alias is not supported by every Page token and returned
+    // Graph 100 for this environment. Reading this exact Page's edge with
+    // the credential still requires provider-level access to that Page.
+    if (!/^\d{5,32}$/u.test(pageId)) {
       throw new MessengerPageSubscriptionError("invalid_page_identity");
     }
     if (!await isKnownSignedInboundPage(pageId)) {

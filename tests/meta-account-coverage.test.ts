@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { PostgresDatabase } from "../src/persistence/postgres.js";
 import {
   instagramManagedAccountMatchesInbound,
-  messengerManagedPageMatchesInbound
+  messengerManagedPageMatchesInbound,
+  messengerRecentSignedPageId
 } from "../src/observability/meta-account-coverage.js";
 
 describe("Instagram verified managed owner routing coverage", () => {
@@ -37,5 +38,22 @@ describe("Messenger signed Page identity evidence", () => {
     expect(query).toHaveBeenCalledTimes(2);
     expect(String(query.mock.calls[0]?.[0])).toContain("channel='messenger'");
     expect(query.mock.calls[0]?.[1]).toEqual(["123456789012"]);
+  });
+});
+
+
+describe("Recent signed Messenger Page selection", () => {
+  it("chooses only a unique recent numeric Page from the verified inbound log", async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [{ account_id: "123456789012" }] })
+      .mockResolvedValueOnce({ rows: [
+        { account_id: "123456789012" }, { account_id: "123456789013" }
+      ] });
+    const db = { query } as unknown as PostgresDatabase;
+    await expect(messengerRecentSignedPageId(db)).resolves.toBe("123456789012");
+    await expect(messengerRecentSignedPageId(db)).resolves.toBeUndefined();
+    expect(String(query.mock.calls[0]?.[0])).toContain("account_id ~ '^[0-9]{5,32}$'");
+    expect(String(query.mock.calls[0]?.[0])).toContain("received_at >= now() - interval '30 days'");
+    expect(query).toHaveBeenCalledTimes(2);
   });
 });

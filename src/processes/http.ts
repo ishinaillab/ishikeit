@@ -598,7 +598,7 @@ if (env.PROCESSOR_ENABLED) {
   if (env.META_APP_ID !== undefined) {
     handlers.register(new MetaRoutingOwnershipHandler(metaHandoffs, env.META_APP_ID));
   }
-  handlers.register(new MessageReceivedHandler(brain, metaHandoffs));
+  handlers.register(new MessageReceivedHandler(brain, metaHandoffs, whatsappConsents));
   if (env.TIKTOK_COMMENT_TO_MESSAGE_ENABLED === true) {
     handlers.register(new TikTokHighIntentCommentHandler(brain));
   }

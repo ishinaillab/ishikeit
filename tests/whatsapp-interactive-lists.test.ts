@@ -82,12 +82,23 @@ describe("WhatsApp native interactive list menus", () => {
       { ...payload, channel: "messenger" },
       { ...payload, quickReplies: [{ title: "BIAB", payload: "biab" }] },
       { ...payload, message: { kind: "image", source: { kind: "url", value: "https://example.test/a.jpg" } } },
-      { ...payload, interactiveList: { ...menu, sections: [{ title: "x", rows: [] }] } }
+      { ...payload, interactiveList: { ...menu, sections: [{ title: "x", rows: [] }] } },
+      { ...payload, message: { kind: "text", text: "x".repeat(1025) } }
     ];
     for (const input of invalid) {
       await expect(api.send(input)).rejects.toMatchObject({ retryable: false });
     }
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("accepts the maximum 1024-character WhatsApp list prompt", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ messages: [{ id: "wamid-boundary" }] }), { status: 200 })
+    );
+    await expect(sender(fetchImpl).send({
+      ...payload, message: { kind: "text", text: "x".repeat(1024) }
+    })).resolves.toEqual({ providerMessageId: "wamid-boundary" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("remains subject to the 24-hour window and private handoff block", async () => {

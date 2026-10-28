@@ -39,9 +39,11 @@ describe("Meta native routing ownership", () => {
     expect(h.handler.canHandle(event)).toBe(true);
     await expect(h.handler.handle(event)).resolves.toMatchObject({ outcome: "handled", actions: [] });
     await expect(h.handler.handle({
-      ...event, event: { ...event.event, eventType: "handover.take" }
+      ...event, event: { ...event.event, eventType: "handover.take",
+        data: { item: { take_thread_control: { new_owner_app_id: "different-app" } } } }
     })).resolves.toMatchObject({ outcome: "handled" });
     expect(h.blockNativeRouting).toHaveBeenCalledTimes(2);
+    expect(h.blockNativeRouting).toHaveBeenCalledWith("a".repeat(64), "2026-10-28T10:59:00.000Z");
     expect(h.releaseNativeRouting).not.toHaveBeenCalled();
   });
 
@@ -56,7 +58,7 @@ describe("Meta native routing ownership", () => {
       }
     };
     await expect(h.handler.handle(pass)).resolves.toMatchObject({ outcome: "handled" });
-    expect(h.releaseNativeRouting).toHaveBeenCalledWith("a".repeat(64));
+    expect(h.releaseNativeRouting).toHaveBeenCalledWith("a".repeat(64), "2026-10-28T10:59:00.000Z");
     expect(h.blockNativeRouting).not.toHaveBeenCalled();
   });
 
@@ -74,6 +76,28 @@ describe("Meta native routing ownership", () => {
     }
     expect(h.blockNativeRouting).toHaveBeenCalledTimes(2);
     expect(h.releaseNativeRouting).not.toHaveBeenCalled();
+  });
+
+  it("releases ownership on take_thread_control only when it gives this app control", async () => {
+    const h = harness();
+    await expect(h.handler.handle({
+      ...event,
+      event: { ...event.event, eventType: "handover.take",
+        data: { item: { take_thread_control: {
+          previous_owner_app_id: "999", new_owner_app_id: "1042452472116584"
+        } } }
+      }
+    })).resolves.toMatchObject({ outcome: "handled" });
+    expect(h.releaseNativeRouting).toHaveBeenCalledWith("a".repeat(64), "2026-10-28T10:59:00.000Z");
+    expect(h.blockNativeRouting).not.toHaveBeenCalled();
+  });
+
+  it("uses the ingress timestamp to block a callback that lacks provider event time", async () => {
+    const h = harness();
+    await h.handler.handle({ ...event, event: {
+      ...event.event, occurredAt: undefined, eventType: "standby.message"
+    }});
+    expect(h.blockNativeRouting).toHaveBeenCalledWith("a".repeat(64), "2026-10-28T10:59:01.000Z");
   });
 
   it("ignores routing requests, non-Meta events, and identity-less notices", async () => {

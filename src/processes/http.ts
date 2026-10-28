@@ -17,7 +17,14 @@ import { MediaResolverRegistry } from "../media/resolver.js";
 import { createLogger } from "../observability/logger.js";
 import { PostgresOperationalMetrics } from "../observability/operational-metrics.js";
 import { runtimeBuildIdentity } from "../observability/build-identity.js";
-import { instagramManagedAccountMatchesInbound } from "../observability/meta-account-coverage.js";
+import {
+  instagramManagedAccountMatchesInbound,
+  messengerManagedPageMatchesInbound
+} from "../observability/meta-account-coverage.js";
+import {
+  MessengerPageSubscriptionClient,
+  MessengerPageSubscriptionError
+} from "../auth/messenger-page-subscription.js";
 import { PostgresInboundEventRepository, PostgresInboundStore } from "../persistence/inbound.js";
 import { PostgresMetaHandoffStore } from "../persistence/meta-handoff.js";
 import { PostgresWhatsAppConsentStore } from "../persistence/whatsapp-consent.js";
@@ -387,6 +394,29 @@ async function reconcileInstagramManagedAccount(): Promise<void> {
   }
 }
 
+async function reconcileMessengerManagedPage(): Promise<void> {
+  if (env.META_MESSENGER_ACCESS_TOKEN === undefined) return;
+  try {
+    const client = new MessengerPageSubscriptionClient({
+      appId: env.META_APP_ID,
+      graphApiVersion: env.META_GRAPH_API_VERSION,
+      requestTimeoutMs: env.META_OUTBOUND_REQUEST_TIMEOUT_MS
+    });
+    const result = await client.reconcile(
+      env.META_MESSENGER_ACCESS_TOKEN,
+      (pageId) => messengerManagedPageMatchesInbound(db, pageId)
+    );
+    logger.info(
+      "Messenger verified Page webhook subscription reconciled; changed=" + String(result.changed)
+    );
+  } catch (error) {
+    const diagnostic = error instanceof MessengerPageSubscriptionError
+      ? error.stage + (error.status === undefined ? "" : " http_status=" + error.status)
+      : "unexpected_failure";
+    logger.warn("Messenger Page webhook field reconciliation failed: " + diagnostic);
+  }
+}
+
 const server = buildServer({
   logger,
   buildIdentity: runtimeBuildIdentity(),
@@ -640,6 +670,7 @@ async function main(): Promise<void> {
     }
     await reconcileInstagramOAuthAccounts();
     await reconcileInstagramManagedAccount();
+    await reconcileMessengerManagedPage();
     if (!await tiktokAuthorizationReady()) {
       throw new Error("TikTok Business Account activation requires a usable durable OAuth credential");
     }

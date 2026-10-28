@@ -131,9 +131,9 @@ export class PostgresWhatsAppConsentStore implements WhatsAppConsentReader {
     );
     await tx.query(
       `UPDATE public.meta_whatsapp_template_opt_ins
-       SET revoked_at=GREATEST(now(),consented_at,$3::timestamptz)
+       SET revoked_at=GREATEST(now(),consented_at,$2::timestamptz)
        WHERE recipient_key=$1 AND purpose='appointment_updates' AND revoked_at IS NULL`,
-      [key, "appointment_updates", occurredAt]
+      [key, occurredAt]
     );
   }
 }

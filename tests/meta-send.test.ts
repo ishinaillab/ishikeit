@@ -160,6 +160,30 @@ describe("MetaSender", () => {
     });
   });
 
+  it("does not persist sensitive Graph error descriptions in dispatch failures", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ error: {
+        message: "Invalid recipient 639000000000 text=PRIVATE_CUSTOMER_MESSAGE token=PRIVATE_ACCESS_TOKEN",
+        code: 100,
+        error_subcode: 2018001
+      } }),
+      { status: 400 }
+    ));
+    let failure: unknown;
+    try {
+      await makeSender(fetchImpl).send(base);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      retryable: false, status: 400, graphCode: 100, graphSubcode: 2018001
+    });
+    const message = failure instanceof Error ? failure.message : "";
+    expect(message).not.toContain("639000000000");
+    expect(message).not.toContain("PRIVATE_CUSTOMER_MESSAGE");
+    expect(message).not.toContain("PRIVATE_ACCESS_TOKEN");
+  });
+
   it("marks transport failures as retryable and delivery-ambiguous", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockRejectedValue(new Error("socket reset"));
     await expect(makeSender(fetchImpl).send(base)).rejects.toBeInstanceOf(MetaSendFailure);

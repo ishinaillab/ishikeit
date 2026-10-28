@@ -160,6 +160,29 @@ describe("MetaSender", () => {
     });
   });
 
+  it("does not persist Graph error descriptions containing private data", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ error: {
+        message: "Private customer text and access token should never be persisted",
+        code: 100,
+        error_subcode: 2018001
+      } }),
+      { status: 400 }
+    ));
+    let failure: unknown;
+    try {
+      await makeSender(fetchImpl).send(base);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      retryable: false, status: 400, graphCode: 100, graphSubcode: 2018001
+    });
+    const description = failure instanceof Error ? failure.message : "";
+    expect(description).not.toContain("Private customer text");
+    expect(description).not.toContain("access token");
+  });
+
   it("marks transport failures as retryable and delivery-ambiguous", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockRejectedValue(new Error("socket reset"));
     await expect(makeSender(fetchImpl).send(base)).rejects.toBeInstanceOf(MetaSendFailure);

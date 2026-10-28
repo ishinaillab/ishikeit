@@ -45,7 +45,8 @@ function splitText(
 
     // A single Unicode grapheme must never be split into invalid fragments.
     if (end <= start) return undefined;
-    const boundary = whitespaceBoundary > start + Math.floor((end - start) * 0.65)
+    const boundary = end < value.length
+      && whitespaceBoundary > start + Math.floor((end - start) * 0.65)
       ? whitespaceBoundary
       : end;
     result.push(value.slice(start, boundary));

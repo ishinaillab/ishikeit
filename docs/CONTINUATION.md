@@ -2633,3 +2633,9 @@ Official Hostinger help confirms hPanel Websites → Dashboard → Backups → *
 - Messenger, Instagram and WhatsApp standard outbound failures no longer copy provider-supplied Graph error descriptions to durable outbox error reasons and operational logs. Errors contain sanitized HTTP status and numeric Graph codes/subcodes while preserving retry and Retry-After handling.
 - Test simulates private customer text and an access-token marker in the Graph response and confirms neither is present in the exception message. Explicit WhatsApp template sender already sanitized provider errors.
 - This replacement branch is based on latest main after PR #117 became conflict-dirty following parallel Meta work. Scope excludes TikTok and all provider permissions.
+
+## Meta native ownership vs. operator release guard (2026-10-28)
+
+- Fixed a subtle Messenger/Instagram handover authorization gap: the authenticated `/ops/meta/handoff/release` operation can now release **only** AI-requested human handoffs. It may **not** clear `native_thread_control_other_app` blocks owned by Meta Handover Protocol. Only the signed native `handover.pass` event identifying Ishikeit's app as the new owner may release that native block.
+- Enforced with an atomic reason-qualified SQL update and an explicit regression test; unknown/released/native blocked conversations return `not_active` without reopening AI replies. No migration or environment mutation required.
+- All changes confined to Meta Messenger/Instagram/WhatsApp work. TikTok messaging approval wait remains unchanged.

@@ -70,7 +70,7 @@ export class PostgresMetaHandoffStore implements MetaHandoffControl, MetaRouting
   ): Promise<boolean> {
     const key = metaConversationPartitionKey(channel, accountId, identityId);
     const result = await this.db.query(
-      "UPDATE public.meta_handoff_blocks SET released_at=now() WHERE partition_key=$1 AND released_at IS NULL RETURNING partition_key",
+      "UPDATE public.meta_handoff_blocks SET released_at=now() WHERE partition_key=$1 AND released_at IS NULL AND reason <> 'native_thread_control_other_app' RETURNING partition_key",
       [key]
     );
     return result.rowCount === 1;

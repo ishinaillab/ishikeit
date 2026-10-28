@@ -41,6 +41,18 @@ describe("Meta durable handoff store", () => {
     expect(query).toHaveBeenCalledWith(expect.any(String), [key]);
   });
 
+  it("prevents operator human-release from releasing native Meta ownership blocks", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 0 });
+    const store = new PostgresMetaHandoffStore({ query } as unknown as PostgresDatabase);
+    await expect(store.release("messenger", "page-1", "person-1")).resolves.toBe(false);
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("reason <> 'native_thread_control_other_app'");
+    expect(sql).toContain("released_at IS NULL");
+    expect(query.mock.calls[0]?.[1]).toEqual([
+      metaConversationPartitionKey("messenger", "page-1", "person-1")
+    ]);
+  });
+
   it("reports a non-active handoff without reopening it", async () => {
     const query = vi.fn().mockResolvedValue({ rowCount: 0 });
     const store = new PostgresMetaHandoffStore({ query } as unknown as PostgresDatabase);

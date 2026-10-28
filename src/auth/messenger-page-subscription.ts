@@ -80,7 +80,7 @@ export class MessengerPageSubscriptionClient {
     // never silently remove a Page's unrelated existing subscriptions.
     const desired = [...new Set([...current, ...MESSENGER_PAGE_WEBHOOK_FIELDS])];
     const body = new URLSearchParams({ subscribed_fields: desired.join(",") });
-    const result = await this.#request(this.#url(pageId), accessToken,
+    const result = await this.#request(this.#url(pageId, false), accessToken,
       "field_subscription", {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -97,10 +97,12 @@ export class MessengerPageSubscriptionClient {
     return { changed: true };
   }
 
-  #url(pageId: string): URL {
+  #url(pageId: string, forRead = true): URL {
     const url = new URL(`https://graph.facebook.com/${this.#graphApiVersion}/${pageId}/subscribed_apps`);
-    url.searchParams.set("fields", "id,subscribed_fields");
-    url.searchParams.set("limit", "100");
+    if (forRead) {
+      url.searchParams.set("fields", "id,subscribed_fields");
+      url.searchParams.set("limit", "100");
+    }
     return url;
   }
 

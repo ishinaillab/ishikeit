@@ -34,27 +34,33 @@ export class MetaRoutingOwnershipHandler implements EventHandler {
       return { actions: [], outcome: "ignored" };
     }
 
-    if (event.eventType.startsWith("standby.") || event.eventType === "handover.take") {
-      await this.routing.blockNativeRouting(stored.partitionKey);
+    // Use signed provider time for precedence. If it is missing, a signed
+    // ingress timestamp is safer than allowing an unverified takeover.
+    const occurredAt = event.occurredAt ?? event.receivedAt;
+    if (event.eventType.startsWith("standby.")) {
+      await this.routing.blockNativeRouting(stored.partitionKey, occurredAt);
       return { actions: [], outcome: "handled" };
     }
 
-    if (event.eventType === "handover.pass") {
+    if (event.eventType === "handover.pass" || event.eventType === "handover.take") {
       const data = event.data;
       const envelope = typeof data === "object" && data !== null && !Array.isArray(data)
         ? data as Record<string, unknown> : {};
       const item = typeof envelope.item === "object" && envelope.item !== null
         && !Array.isArray(envelope.item) ? envelope.item as Record<string, unknown> : {};
-      const pass = typeof item.pass_thread_control === "object"
-        && item.pass_thread_control !== null && !Array.isArray(item.pass_thread_control)
-        ? item.pass_thread_control as Record<string, unknown> : {};
-      const owner = pass.new_owner_app_id;
-      if (typeof owner === "string" && owner === this.thisMetaAppId
-        || typeof owner === "number" && String(owner) === this.thisMetaAppId) {
-        await this.routing.releaseNativeRouting(stored.partitionKey);
+      const field = event.eventType === "handover.pass"
+        ? "pass_thread_control" : "take_thread_control";
+      const raw = item[field];
+      const details = typeof raw === "object" && raw !== null && !Array.isArray(raw)
+        ? raw as Record<string, unknown> : {};
+      const owner = details.new_owner_app_id;
+      const isThisAppOwner = (typeof owner === "string" || typeof owner === "number")
+        && String(owner) === this.thisMetaAppId;
+      if (isThisAppOwner) {
+        await this.routing.releaseNativeRouting(stored.partitionKey, occurredAt);
       } else {
-        // Missing/other owner does not authorize Ishikeit to respond.
-        await this.routing.blockNativeRouting(stored.partitionKey);
+        // Missing, other, or malformed owner never grants our AI thread control.
+        await this.routing.blockNativeRouting(stored.partitionKey, occurredAt);
       }
       return { actions: [], outcome: "handled" };
     }

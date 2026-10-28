@@ -29,21 +29,15 @@ Current verified state:
 Public reviewer entry point:
 
 https://www.ishinaillab.com/instagram-connect-review/
-## Why Advanced Access is required
+## Instagram access-level decision: own-business case versus webhook delivery
 
-Meta's current Instagram Messaging documentation states that apps with Standard Access can only interact with people who have a role on the app. Ishikeit's production users are ordinary Instagram customers who send Direct Messages to the business and do not have app roles.
+**Do not assume App Review is invariably required or already approved.** Meta's [Instagram API App Review documentation](https://developers.facebook.com/documentation/instagram-platform/app-review) says an app used **only by a business it owns or manages** may use Standard Access without App Review, including Instagram Login. Ishikeit currently serves Ishi Nail Lab's own Professional account.
 
-Advanced Access is therefore required so Ishikeit can receive and respond to customer-initiated Instagram messages from non-role users in production.
+The separate [Instagram Messaging webhooks guide](https://developers.facebook.com/documentation/business-messaging/instagram-messaging/webhooks) also states that webhooks containing data owned by users without an app role require App Review and describes role-limited delivery when review is absent or not needed. The [Instagram API with Instagram Login send guide](https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-instagram-login/messaging-api) distinguishes own-managed Standard Access again. These statements must be reconciled for Ishikeit's exact product, permissions, recipient and ownership before any general-public delivery assertion.
 
-This is not for unsolicited outreach. The customer starts the conversation. Ishikeit receives the webhook, processes the message as customer support, and replies inside Meta's allowed messaging context.
+**Release test:** verify the actual Instagram Login path, `instagram_business_basic` and `instagram_business_manage_messages` grants, managed Professional-account identity and account-level webhook subscription, followed by a fresh **authorized** ordinary non-role sender-initiated message to `@ishinaillab`. Check actual signed ingress, durable message processing and legitimate outbound reply without creating an app role or using another account's credential. If Meta limits the webhook because of access, request the applicable permission review or authoritative provider clarification. The reviewer package below is a prepared conditional path, not proof that review is mandatory in all single-business scenarios.
 
-Official references:
-
-- https://developers.facebook.com/documentation/instagram-platform/app-review
-- https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-instagram-login/business-login
-- https://developers.facebook.com/docs/instagram-platform/overview/
-- https://developers.facebook.com/docs/instagram-platform/self-messaging/
-- https://developers.facebook.com/documentation/development/create-an-app/other-app-types/instagram-apis
+Ishikeit's use is customer-initiated support, not unsolicited messaging.
 
 ## Permission justification
 

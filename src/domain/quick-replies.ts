@@ -7,7 +7,10 @@ import { z } from "zod";
  */
 export const quickReplyChoiceSchema = z.object({
   title: z.string().trim().min(1).max(20),
-  payload: z.string().min(1).max(1000).regex(/^[^\u0000-\u001f\u007f]+$/u)
+  payload: z.string().min(1).max(1000).refine(
+    (value) => [...value].every((char) => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127),
+    "Quick reply payload must not contain control characters"
+  )
 }).strict();
 
 export const quickReplyChoicesSchema = z.array(quickReplyChoiceSchema).min(1).max(13)

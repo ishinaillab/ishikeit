@@ -6,6 +6,7 @@ import type { MetaHandoffReader } from "../persistence/meta-handoff.js";
 import { ProcessingFailure } from "./failure.js";
 import type { EventHandler } from "./registry.js";
 import { standardMetaReplyEligibility } from "../dispatch/meta-customer-window.js";
+import { splitMetaReplyParts, type MetaTextChannel } from "./meta-reply-split.js";
 
 export class MessageReceivedHandler implements EventHandler {
   constructor(
@@ -50,7 +51,19 @@ export class MessageReceivedHandler implements EventHandler {
       };
     }
 
-    const actions: ActionEnvelope[] = reply.parts.map((part, index) => ({
+    // Meta Graph rejects whole oversized AI messages. Expand into bounded,
+    // ordered durable chunks so retries are idempotent and no text is lost.
+    // Extremely long responses go to a human rather than flooding customers.
+    const isMetaTextChannel = event.channel === "messenger"
+      || event.channel === "instagram" || event.channel === "whatsapp";
+    const parts = event.provider === "meta" && isMetaTextChannel
+      ? splitMetaReplyParts(reply.parts, event.channel as MetaTextChannel)
+      : reply.parts;
+    if (parts === undefined) {
+      return { actions: [], outcome: "handoff", handoffReason: "reply_too_long" };
+    }
+
+    const actions: ActionEnvelope[] = parts.map((part, index) => ({
       schemaVersion: 1,
       idempotencyKey: `${stored.id}:reply:${index}`,
       provider: event.provider,

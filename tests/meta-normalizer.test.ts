@@ -246,6 +246,36 @@ describe("Meta normalizer", () => {
     });
   });
 
+  it("splits Messenger delivery batches into message-specific, retry-idempotent receipts", () => {
+    const payload = {
+      object: "page",
+      entry: [{
+        id: "page-1",
+        messaging: [{
+          sender: { id: "psid-1" },
+          recipient: { id: "page-1" },
+          timestamp: 1790000000000,
+          delivery: { mids: ["mid-out-1", "mid-out-2", "mid-out-1"], watermark: 1790000000000 }
+        }]
+      }]
+    };
+    const events = normalizeMetaEnvelope(payload, "2026-09-29T00:00:00.000Z");
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => event.providerMessageId)).toEqual(["mid-out-1", "mid-out-2"]);
+    for (const event of events) {
+      expect(event.eventType).toBe("delivery.delivered");
+      expect(event.channel).toBe("messenger");
+      expect(event.capability).toBe("messaging");
+    }
+    const retried = normalizeMetaEnvelope(payload, "2026-09-29T00:05:00.000Z");
+    expect(metaIngressIdentity(events[0]!).deduplicationKey).toBe(
+      metaIngressIdentity(retried[0]!).deduplicationKey
+    );
+    expect(metaIngressIdentity(events[0]!).deduplicationKey).not.toBe(
+      metaIngressIdentity(events[1]!).deduplicationKey
+    );
+  });
+
   it("normalizes WhatsApp media IDs without downloading before the webhook ACK", () => {
     const [event] = normalizeMetaEnvelope({
       object: "whatsapp_business_account",

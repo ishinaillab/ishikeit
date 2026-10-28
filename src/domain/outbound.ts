@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { contentPartSchema } from "./content.js";
 import { quickReplyChoicesSchema } from "./quick-replies.js";
+import { interactiveListSchema } from "./interactive-lists.js";
 
 export const metaOutboundPayloadSchema = z.object({
   schemaVersion: z.literal(2),
@@ -9,7 +10,8 @@ export const metaOutboundPayloadSchema = z.object({
   recipientId: z.string().min(1),
   message: contentPartSchema,
   replyTo: z.string().min(1).optional(),
-  quickReplies: quickReplyChoicesSchema.optional()
+  quickReplies: quickReplyChoicesSchema.optional(),
+  interactiveList: interactiveListSchema.optional()
 }).strict();
 
 export type MetaOutboundPayload = z.infer<typeof metaOutboundPayloadSchema>;

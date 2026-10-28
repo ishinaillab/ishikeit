@@ -65,11 +65,15 @@ describe("Meta native quick replies", () => {
     }
   );
 
-  it("fails closed on WhatsApp and media-only quick replies before networking", async () => {
+  it("fails closed on excessive WhatsApp buttons and media-only quick replies before networking", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const sender = makeSender(fetchImpl);
-    await expect(sender.send({ ...base, channel: "whatsapp" }))
-      .rejects.toMatchObject({ retryable: false });
+    await expect(sender.send({
+      ...base,
+      channel: "whatsapp",
+      quickReplies: [...choices, { title: "Nail art", payload: "service_art" },
+        { title: "Extensions", payload: "service_extensions" }]
+    })).rejects.toMatchObject({ retryable: false });
     await expect(sender.send({
       ...base, message: { kind: "image", source: { kind: "url", value: "https://example.test/a.jpg" } }
     })).rejects.toMatchObject({ retryable: false });

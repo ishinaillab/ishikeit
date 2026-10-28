@@ -23,6 +23,7 @@ import { PostgresMetaHandoffStore } from "../persistence/meta-handoff.js";
 import { PostgresOutboxStore } from "../persistence/outbox.js";
 import { PostgresDatabase } from "../persistence/postgres.js";
 import { MessageReceivedHandler } from "../processing/message-handler.js";
+import { MetaRoutingOwnershipHandler } from "../processing/meta-routing-ownership-handler.js";
 import { TikTokHighIntentCommentHandler } from "../processing/tiktok-comment-to-message-handler.js";
 import { EventHandlerRegistry } from "../processing/registry.js";
 import { InboundProcessorWorker } from "../workers/inbound-processor-worker.js";
@@ -584,6 +585,9 @@ if (env.PROCESSOR_ENABLED) {
   });
 
   const handlers = new EventHandlerRegistry();
+  if (env.META_APP_ID !== undefined) {
+    handlers.register(new MetaRoutingOwnershipHandler(metaHandoffs, env.META_APP_ID));
+  }
   handlers.register(new MessageReceivedHandler(brain, metaHandoffs));
   if (env.TIKTOK_COMMENT_TO_MESSAGE_ENABLED === true) {
     handlers.register(new TikTokHighIntentCommentHandler(brain));

@@ -341,33 +341,32 @@ async function reconcileInstagramOAuthAccounts(): Promise<void> {
 }
 
 async function reconcileInstagramManagedAccount(): Promise<void> {
-  // Do not reconcile a legacy App Dashboard token while durable OAuth is active.
-  // Only explicitly consented Professional accounts should receive messages.
+  // A managed token may belong to the business's Professional account even
+  // when OAuth credentials exist for a different (tester) account. Never
+  // trust its configured presence without resolving its exact owner first.
   if (
-    instagramOAuthConfigured
-    || instagramAccessTokenRouter === undefined
+    instagramAccessTokenRouter === undefined
     || instagramOAuthClient === undefined
     || env.META_INSTAGRAM_ACCESS_TOKEN === undefined
   ) {
     return;
   }
 
+  let stage: InstagramOAuthFlowStage = "account_resolution";
   try {
     const professionalAccountId = await instagramAccessTokenRouter.managedAccountId();
     if (professionalAccountId === undefined) return;
+    stage = "webhook_subscription";
     await instagramOAuthClient.ensureWebhookSubscription(
       env.META_INSTAGRAM_ACCESS_TOKEN,
       INSTAGRAM_WEBHOOK_FIELDS
     );
-    logger.info(
-      { professionalAccountId },
-      "Instagram managed-account token and webhook subscription reconciled"
-    );
+    logger.info("Instagram verified managed-account token and webhook subscription reconciled");
   } catch (error) {
-    logger.warn(
-      { err: error },
-      "Instagram managed-account token or webhook subscription reconciliation failed"
+    const diagnostic = instagramOAuthFailureDiagnostic(
+      new InstagramOAuthFlowError(stage, error)
     );
+    logger.warn("Instagram managed-account routing or webhook subscription failed: " + diagnostic);
   }
 }
 

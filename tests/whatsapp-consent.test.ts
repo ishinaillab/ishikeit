@@ -52,8 +52,9 @@ describe("WhatsApp private consent verification", () => {
     const db = {
       transaction: (work: (executor: SqlExecutor) => Promise<unknown>) => work(tx)
     } as unknown as PostgresDatabase;
-    const revokeInTransaction = vi.fn().mockImplementation(async () => {
+    const revokeInTransaction = vi.fn().mockImplementation(() => {
       calls.push("revoke");
+      return Promise.resolve();
     });
     const store = new PostgresInboundStore(db, { revokeInTransaction });
     const [event] = normalizeMetaEnvelope({

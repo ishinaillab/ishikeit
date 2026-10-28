@@ -2,12 +2,16 @@ import type { ActionEnvelope } from "../domain/actions.js";
 import { normalizeHandoffReason, type EventHandlingResult } from "../domain/processing.js";
 import type { BrainClient } from "../brain/types.js";
 import type { StoredInboundEvent } from "../persistence/inbound.js";
+import type { MetaHandoffReader } from "../persistence/meta-handoff.js";
 import { ProcessingFailure } from "./failure.js";
 import type { EventHandler } from "./registry.js";
 import { standardMetaReplyEligibility } from "../dispatch/meta-customer-window.js";
 
 export class MessageReceivedHandler implements EventHandler {
-  constructor(private readonly brain: BrainClient) {}
+  constructor(
+    private readonly brain: BrainClient,
+    private readonly metaHandoffs?: MetaHandoffReader
+  ) {}
 
   canHandle(stored: StoredInboundEvent): boolean {
     return stored.event.capability === "messaging" && stored.event.eventType === "message.received";
@@ -16,6 +20,10 @@ export class MessageReceivedHandler implements EventHandler {
   async handle(stored: StoredInboundEvent): Promise<EventHandlingResult> {
     const event = stored.event;
     if (event.provider === "meta" && standardMetaReplyEligibility(event.occurredAt) !== "eligible") {
+      return { actions: [], outcome: "ignored" };
+    }
+    if (event.provider === "meta" && this.metaHandoffs !== undefined
+      && await this.metaHandoffs.isActive(stored.partitionKey)) {
       return { actions: [], outcome: "ignored" };
     }
     if (event.identityId === undefined) {

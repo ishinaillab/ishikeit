@@ -21,6 +21,26 @@ describe("Meta durable handoff store", () => {
       [metaConversationPartitionKey("whatsapp", "phone-1", "639100000000")]
     );
   });
+  it("does not overwrite an active AI-requested human handoff with native standby", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 0 });
+    const store = new PostgresMetaHandoffStore({ query } as unknown as PostgresDatabase);
+    const key = "a".repeat(64);
+    await store.blockNativeRouting(key);
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("ON CONFLICT(partition_key)");
+    expect(sql).toContain("meta_handoff_blocks.released_at IS NOT NULL");
+    expect(sql).toContain("meta_handoff_blocks.reason='native_thread_control_other_app'");
+    expect(query).toHaveBeenCalledWith(expect.any(String), [key]);
+  });
+  it("releases ONLY native routing blocks and not human handoffs", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
+    const store = new PostgresMetaHandoffStore({ query } as unknown as PostgresDatabase);
+    const key = "b".repeat(64);
+    await store.releaseNativeRouting(key);
+    expect(String(query.mock.calls[0]?.[0])).toContain("reason='native_thread_control_other_app'");
+    expect(query).toHaveBeenCalledWith(expect.any(String), [key]);
+  });
+
   it("reports a non-active handoff without reopening it", async () => {
     const query = vi.fn().mockResolvedValue({ rowCount: 0 });
     const store = new PostgresMetaHandoffStore({ query } as unknown as PostgresDatabase);

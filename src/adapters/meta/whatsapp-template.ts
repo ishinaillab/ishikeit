@@ -22,13 +22,36 @@ export class WhatsAppTemplateAdapter implements ActionAdapter {
   readonly capability = "messaging";
   readonly operation = "message.template.send";
 
-  constructor(private readonly sender: MetaSender) {}
+  constructor(
+    private readonly sender: MetaSender,
+    private readonly policy: {
+      /** Exact approved business phone-number ID; never accept arbitrary account IDs. */
+      phoneNumberId: string;
+      /** Provider-approved template name plus language, separated by @. */
+      approvedTemplateKeys: readonly string[];
+    }
+  ) {
+    if (!/^\d{5,32}$/u.test(policy.phoneNumberId) || policy.approvedTemplateKeys.length === 0) {
+      throw new Error("WhatsApp template dispatcher requires approved account and template policy");
+    }
+  }
 
   async execute(action: ActionEnvelope): Promise<ActionResult> {
     const target = targetSchema.safeParse(action.target);
     const body = bodySchema.safeParse(action.body);
     if (!target.success || !body.success) {
       throw new DispatchFailure("Invalid WhatsApp template action", { retryable: false });
+    }
+    if (target.data.accountId !== this.policy.phoneNumberId) {
+      throw new DispatchFailure("WhatsApp template action targets an unapproved sending account", {
+        retryable: false
+      });
+    }
+    const approvedKey = `${body.data.templateName}@${body.data.languageCode}`;
+    if (!this.policy.approvedTemplateKeys.includes(approvedKey)) {
+      throw new DispatchFailure("WhatsApp template name and language are not approved for dispatch", {
+        retryable: false
+      });
     }
     const result = await this.sender.sendWhatsAppTemplate({
       accountId: target.data.accountId,

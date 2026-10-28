@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import Fastify from "fastify";
+import { z } from "zod";
 import type { Logger } from "pino";
 import type { InboundStore } from "../persistence/inbound.js";
+import type { MetaHandoffControl } from "../persistence/meta-handoff.js";
 import { sha256Hex } from "../persistence/inbound.js";
 import { metaIngressIdentity, normalizeMetaEnvelope } from "../channels/meta-normalizer.js";
 import { verifyMetaChallenge, verifyMetaSignature } from "../security/meta.js";
@@ -82,6 +84,7 @@ export interface ServerDeps {
   /** Compiled-source fingerprint supplied by the startup process, never credentials. */
   buildIdentity?: BuildIdentity;
   metrics?: OperationalMetricsReader;
+  metaHandoffs?: MetaHandoffControl;
   opsMetricsToken?: string;
   runtimeState?: {
     processorEnabled: boolean;
@@ -168,6 +171,39 @@ export function buildServer(deps: ServerDeps) {
     throw new Error(
       "TikTok Marketing advertiser operations require an operational bearer token"
     );
+  }
+
+  if (deps.metaHandoffs !== undefined && deps.opsMetricsToken === undefined) {
+    throw new Error("Meta human handoff release requires an operational bearer token");
+  }
+
+  if (deps.metaHandoffs !== undefined && deps.opsMetricsToken !== undefined) {
+    const handoffs = deps.metaHandoffs;
+    const token = deps.opsMetricsToken;
+    const releaseSchema = z.object({
+      channel: z.enum(["messenger", "instagram", "whatsapp"]),
+      accountId: z.string().min(1).max(1024),
+      identityId: z.string().min(1).max(2048)
+    }).strict();
+    server.post("/ops/meta/handoff/release", async (req, reply) => {
+      if (!verifyBearerAuthorization(req.headers.authorization, token)) {
+        return reply.header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401).send({ status: "unauthorized" });
+      }
+      reply.header("cache-control", "private, no-store");
+      const input = releaseSchema.safeParse(req.body);
+      if (!input.success) {
+        return reply.code(400).send({ status: "invalid_handoff_release" });
+      }
+      try {
+        const released = await handoffs.release(
+          input.data.channel, input.data.accountId, input.data.identityId
+        );
+        return { status: released ? "released" : "not_active" };
+      } catch {
+        return reply.code(503).send({ status: "handoff_unavailable" });
+      }
+    });
   }
 
   if (deps.metrics !== undefined && deps.opsMetricsToken !== undefined) {

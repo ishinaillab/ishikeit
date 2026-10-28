@@ -17,6 +17,7 @@ import { MediaResolverRegistry } from "../media/resolver.js";
 import { createLogger } from "../observability/logger.js";
 import { PostgresOperationalMetrics } from "../observability/operational-metrics.js";
 import { runtimeBuildIdentity } from "../observability/build-identity.js";
+import { instagramManagedAccountMatchesInbound } from "../observability/meta-account-coverage.js";
 import { PostgresInboundEventRepository, PostgresInboundStore } from "../persistence/inbound.js";
 import { PostgresMetaHandoffStore } from "../persistence/meta-handoff.js";
 import { PostgresOutboxStore } from "../persistence/outbox.js";
@@ -361,7 +362,18 @@ async function reconcileInstagramManagedAccount(): Promise<void> {
       env.META_INSTAGRAM_ACCESS_TOKEN,
       INSTAGRAM_WEBHOOK_FIELDS
     );
-    logger.info("Instagram verified managed-account token and webhook subscription reconciled");
+    let inboundMatch = "unavailable";
+    try {
+      inboundMatch = String(await instagramManagedAccountMatchesInbound(
+        db, professionalAccountId
+      ));
+    } catch {
+      logger.warn("Instagram managed-account webhook subscription succeeded but inbound match check was unavailable");
+    }
+    logger.info(
+      "Instagram verified managed-account token and webhook subscription reconciled; "
+      + "historical_signed_inbound_account_match=" + inboundMatch
+    );
   } catch (error) {
     const diagnostic = instagramOAuthFailureDiagnostic(
       new InstagramOAuthFlowError(stage, error)

@@ -55,6 +55,8 @@ export interface InstagramOAuthStatus {
   accountId?: string;
   scopes?: readonly string[];
   accessExpiresAt?: string;
+  /** Optional one-call provider check. A stored expiration date alone does not prove validity. */
+  providerValidation?: "valid" | "expired" | "reauthorization_required" | "identity_mismatch" | "unmapped" | "provider_rejected" | "provider_unavailable";
 }
 
 export interface InstagramOAuthController {
@@ -67,7 +69,7 @@ export interface InstagramOAuthController {
     scopes: readonly string[];
     accessExpiresAt: string;
   }>;
-  status(accountId?: string): Promise<InstagramOAuthStatus>;
+  status(accountId?: string, validateLive?: boolean): Promise<InstagramOAuthStatus>;
 }
 
 export class InstagramOAuthRequestError extends Error {
@@ -518,7 +520,7 @@ export class InstagramOAuthService implements InstagramOAuthController {
     };
   }
 
-  async status(accountId?: string): Promise<InstagramOAuthStatus> {
+  async status(accountId?: string, validateLive = false): Promise<InstagramOAuthStatus> {
     let credential = accountId === undefined
       ? await this.#store.latest("instagram")
       : undefined;
@@ -537,7 +539,7 @@ export class InstagramOAuthService implements InstagramOAuthController {
       "instagram",
       credential.accountId
     );
-    return {
+    const status: InstagramOAuthStatus = {
       authorized: true,
       accountId: aliases[0] ?? credential.accountId,
       scopes: credential.scopes,
@@ -545,5 +547,34 @@ export class InstagramOAuthService implements InstagramOAuthController {
         ? {}
         : { accessExpiresAt: credential.accessExpiresAt.toISOString() })
     };
+    if (!validateLive) return status;
+
+    // Read-only Graph validation. Do not alter a credential, silently refresh
+    // it, emit a token, or present its stored expiry as proof of authorization.
+    if (credential.accessExpiresAt === undefined
+      || credential.accessExpiresAt.getTime() <= this.#now().getTime()) {
+      return { ...status, providerValidation: "expired" };
+    }
+    const expectedProfessionalId = accountId ?? aliases[0];
+    if (expectedProfessionalId === undefined) {
+      return { ...status, providerValidation: "unmapped" };
+    }
+    try {
+      const actualId = await this.#client.resolveProfessionalAccountId(credential.accessToken);
+      return {
+        ...status,
+        providerValidation: actualId === expectedProfessionalId ? "valid" : "identity_mismatch"
+      };
+    } catch (error) {
+      if (error instanceof InstagramOAuthRequestError) {
+        return {
+          ...status,
+          providerValidation: error.providerCode === "190"
+            ? "reauthorization_required"
+            : error.retryable ? "provider_unavailable" : "provider_rejected"
+        };
+      }
+      return { ...status, providerValidation: "provider_unavailable" };
+    }
   }
 }

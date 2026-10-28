@@ -276,6 +276,32 @@ describe("Meta normalizer", () => {
     );
   });
 
+  it("makes WhatsApp interactive selections readable while keeping source data", () => {
+    const messages = [
+      { id: "wamid-1", from: "639120000000", type: "interactive", timestamp: "1790000000",
+        interactive: { type: "button_reply", button_reply: { id: "book", title: "Book an appointment" } } },
+      { id: "wamid-2", from: "639120000000", type: "interactive", timestamp: "1790000001",
+        interactive: { type: "list_reply", list_reply: { id: "biab", title: "BIAB", description: "Builder gel" } } },
+      { id: "wamid-3", from: "639120000000", type: "button", timestamp: "1790000002",
+        button: { payload: "confirm", text: "Confirm" } }
+    ];
+    const events = normalizeMetaEnvelope({
+      object: "whatsapp_business_account",
+      entry: [{ id: "business-1", changes: [{ field: "messages", value: {
+        metadata: { phone_number_id: "phone-1" }, messages
+      } }] }]
+    });
+    expect(events.map((event) => event.content[0])).toEqual([
+      { kind: "text", text: "Book an appointment" },
+      { kind: "text", text: "BIAB" },
+      { kind: "text", text: "Confirm" }
+    ]);
+    expect(events.every((event) => event.content[1]?.kind === "structured")).toBe(true);
+    expect(events.map((event) => event.eventType)).toEqual([
+      "message.received", "message.received", "message.received"
+    ]);
+  });
+
   it("normalizes WhatsApp media IDs without downloading before the webhook ACK", () => {
     const [event] = normalizeMetaEnvelope({
       object: "whatsapp_business_account",

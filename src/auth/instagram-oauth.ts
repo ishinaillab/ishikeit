@@ -342,6 +342,7 @@ export class InstagramOAuthClient implements InstagramOAuthClientLike {
     try {
       response = await this.#fetch(url, {
         ...init,
+        redirect: "error",
         headers: {
           accept: "application/json",
           ...(init.headers ?? {})

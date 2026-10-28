@@ -3,6 +3,7 @@ import { normalizeHandoffReason, type EventHandlingResult } from "../domain/proc
 import type { BrainClient } from "../brain/types.js";
 import type { StoredInboundEvent } from "../persistence/inbound.js";
 import type { MetaHandoffReader } from "../persistence/meta-handoff.js";
+import { whatsappConsentIntent, type WhatsAppConsentReader } from "../persistence/whatsapp-consent.js";
 import { ProcessingFailure } from "./failure.js";
 import type { EventHandler } from "./registry.js";
 import { standardMetaReplyEligibility } from "../dispatch/meta-customer-window.js";
@@ -10,7 +11,8 @@ import { standardMetaReplyEligibility } from "../dispatch/meta-customer-window.j
 export class MessageReceivedHandler implements EventHandler {
   constructor(
     private readonly brain: BrainClient,
-    private readonly metaHandoffs?: MetaHandoffReader
+    private readonly metaHandoffs?: MetaHandoffReader,
+    private readonly whatsappConsents?: WhatsAppConsentReader
   ) {}
 
   canHandle(stored: StoredInboundEvent): boolean {
@@ -33,6 +35,46 @@ export class MessageReceivedHandler implements EventHandler {
     }
     if (event.identityId === undefined) {
       throw new ProcessingFailure("Inbound message has no reply identity", { retryable: false });
+    }
+
+    // User-authored WhatsApp opt-in / STOP are deterministic, audited service
+    // controls. Never have a language model infer or promise consent.
+    const onlyPart = event.content.length === 1 ? event.content[0] : undefined;
+    const intent = event.provider === "meta" && event.channel === "whatsapp"
+      && onlyPart?.kind === "text" ? whatsappConsentIntent(onlyPart.text) : null;
+    if (intent !== null) {
+      if (this.whatsappConsents === undefined) {
+        // Consent collection is not configured; do not falsely confirm an opt-in.
+        return { actions: [], outcome: "ignored" };
+      }
+      if (intent === "opt_in"
+        && !await this.whatsappConsents.hasActiveConsent(
+          event.accountId, event.identityId, "appointment_updates"
+        )) {
+        return { actions: [], outcome: "ignored" };
+      }
+      const text = intent === "opt_in"
+        ? "You're opted in to Ishi Nail Lab WhatsApp appointment updates. Reply STOP anytime to unsubscribe."
+        : "You've unsubscribed from Ishi Nail Lab WhatsApp appointment updates. We won't send those updates unless you opt in again.";
+      return {
+        actions: [{
+          schemaVersion: 1,
+          idempotencyKey: `${stored.id}:reply:0`,
+          provider: "meta",
+          capability: "messaging",
+          operation: "message.send",
+          orderingKey: stored.partitionKey,
+          target: {
+            channel: "whatsapp", accountId: event.accountId,
+            recipientId: event.identityId
+          },
+          body: {
+            part: { kind: "text", text },
+            ...(event.occurredAt === undefined ? {} : { customerMessageAt: event.occurredAt })
+          }
+        }],
+        outcome: "handled"
+      };
     }
 
     const reply = await this.brain.respond({

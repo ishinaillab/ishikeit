@@ -2581,3 +2581,9 @@ Official Hostinger help confirms hPanel Websites → Dashboard → Backups → *
 - Meta WhatsApp inbound customer `interactive.button_reply`, `interactive.list_reply` and legacy `button` events now carry their user-visible selected button/list title as a provider-neutral text content part, while retaining the original structured Meta payload. This makes an actual customer button tap readable to the existing WordPress AI Bridge without fabricating a new message or re-sending prior content.
 - The change does **not** create outbound marketing, install templates, send prompts, change WhatsApp account config or bypass the 24-hour standard response guard. No TikTok functionality was changed.
 - Regression tests cover all three reply formats and preserve durable webhook deduplication by `wamid`.
+
+## Meta precise message read receipts (2026-10-28)
+
+- Instagram `messaging_seen` / `read.mid` and any supported `read.mids` payload now persist exact per-message `delivery.read` events for account-isolated correlation with published actions. Duplicate callback retries deduplicate by message ID and webhook watermark. Messenger `read.watermark` without a specific message ID remains an aggregate event and is **not** falsely linked to an outbound message.
+- App-level subscriptions seen in Meta DevTools: Page `messages` only, Instagram `messages`, `standby`, `messaging_handover`, and WhatsApp `messages`. Subscribing to additional Page `message_deliveries`, `message_reads` or Instagram `messaging_seen` needs review of app/account permissions and an explicit Meta webhook-subscription change; this code change does not alter provider subscriptions.
+- Scope remains only Messenger, Instagram and WhatsApp. No TikTok approval/activation change.

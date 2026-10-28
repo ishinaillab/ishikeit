@@ -12,7 +12,12 @@ export const MESSENGER_PAGE_WEBHOOK_FIELDS = [
 ] as const;
 
 export class MessengerPageSubscriptionError extends Error {
-  constructor(readonly stage: string, readonly status?: number) {
+  constructor(
+    readonly stage: string,
+    readonly status?: number,
+    readonly graphCode?: number,
+    readonly graphSubcode?: number
+  ) {
     super(`Messenger Page webhook ${stage} failed${status === undefined ? "" : ` (HTTP ${status})`}`);
     this.name = "MessengerPageSubscriptionError";
   }
@@ -139,7 +144,25 @@ export class MessengerPageSubscriptionClient {
       // operational log messages.
       throw new MessengerPageSubscriptionError(stage + "_unavailable");
     }
-    if (!response.ok) throw new MessengerPageSubscriptionError(stage, response.status);
+    if (!response.ok) {
+      // Numeric Graph codes help distinguish revoked tokens (190) from
+      // missing permissions (200) and malformed requests (100). Never
+      // include the provider's message, trace IDs, Page ID or access token.
+      let graphCode: number | undefined;
+      let graphSubcode: number | undefined;
+      try {
+        const error = object(object(await response.json()).error);
+        if (typeof error.code === "number" && Number.isSafeInteger(error.code)) {
+          graphCode = error.code;
+        }
+        if (typeof error.error_subcode === "number" && Number.isSafeInteger(error.error_subcode)) {
+          graphSubcode = error.error_subcode;
+        }
+      } catch {
+        // Preserve only the HTTP status if Meta did not return valid JSON.
+      }
+      throw new MessengerPageSubscriptionError(stage, response.status, graphCode, graphSubcode);
+    }
     try {
       return object(await response.json());
     } catch {

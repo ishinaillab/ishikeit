@@ -3,12 +3,16 @@ import type { CanonicalEvent, IngressIdentity } from "../domain/events.js";
 import type { ContentPart } from "../domain/content.js";
 
 function isoFromMillis(value: unknown): string | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? new Date(value).toISOString() : undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const timestamp = new Date(value);
+  return Number.isFinite(timestamp.getTime()) ? timestamp.toISOString() : undefined;
 }
 
 function isoFromSeconds(value: unknown): string | undefined {
-  if (typeof value !== "string" || !/^\d+$/.test(value)) return undefined;
-  return new Date(Number(value) * 1000).toISOString();
+  if (typeof value !== "string" || !/^\d{1,13}$/u.test(value)) return undefined;
+  const seconds = Number(value);
+  if (!Number.isSafeInteger(seconds)) return undefined;
+  return isoFromMillis(seconds * 1000);
 }
 
 function hash(parts: unknown[]): string {

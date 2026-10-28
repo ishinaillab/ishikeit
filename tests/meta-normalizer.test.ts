@@ -363,6 +363,51 @@ describe("Meta normalizer", () => {
       .toBe(metaIngressIdentity(retried!).deduplicationKey);
   });
 
+  it("does not reject valid Messenger messages beside an invalid timestamp", () => {
+    const events = normalizeMetaEnvelope({
+      object: "page",
+      entry: [{
+        id: "page-1",
+        messaging: [{
+          sender: { id: "psid-bad" },
+          timestamp: 1e30,
+          message: { mid: "mid-bad-time", text: "old" }
+        }, {
+          sender: { id: "psid-good" },
+          timestamp: 1793192400000,
+          message: { mid: "mid-good-time", text: "new" }
+        }]
+      }]
+    });
+    expect(events).toHaveLength(2);
+    expect(events[0]?.providerMessageId).toBe("mid-bad-time");
+    expect(events[0]?.occurredAt).toBeUndefined();
+    expect(events[1]?.providerMessageId).toBe("mid-good-time");
+    expect(events[1]?.occurredAt).toBe("2026-10-28T13:00:00.000Z");
+  });
+
+  it("handles malformed WhatsApp epoch seconds without dropping adjacent valid messages", () => {
+    const events = normalizeMetaEnvelope({
+      object: "whatsapp_business_account",
+      entry: [{
+        id: "waba-1",
+        changes: [{ field: "messages", value: {
+          metadata: { phone_number_id: "phone-1" },
+          messages: [{
+            id: "wamid-bad", from: "639000000000", type: "text",
+            timestamp: "9999999999999999999999", text: { body: "bad timestamp" }
+          }, {
+            id: "wamid-good", from: "639000000000", type: "text",
+            timestamp: "1793192400", text: { body: "valid timestamp" }
+          }]
+        } }]
+      }]
+    });
+    expect(events).toHaveLength(2);
+    expect(events[0]?.occurredAt).toBeUndefined();
+    expect(events[1]?.occurredAt).toBe("2026-10-28T13:00:00.000Z");
+  });
+
   it("normalizes WhatsApp media IDs without downloading before the webhook ACK", () => {
     const [event] = normalizeMetaEnvelope({
       object: "whatsapp_business_account",

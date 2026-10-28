@@ -2587,3 +2587,9 @@ Official Hostinger help confirms hPanel Websites → Dashboard → Backups → *
 - Instagram `messaging_seen` / `read.mid` and any supported `read.mids` payload now persist exact per-message `delivery.read` events for account-isolated correlation with published actions. Duplicate callback retries deduplicate by message ID and webhook watermark. Messenger `read.watermark` without a specific message ID remains an aggregate event and is **not** falsely linked to an outbound message.
 - App-level subscriptions seen in Meta DevTools: Page `messages` only, Instagram `messages`, `standby`, `messaging_handover`, and WhatsApp `messages`. Subscribing to additional Page `message_deliveries`, `message_reads` or Instagram `messaging_seen` needs review of app/account permissions and an explicit Meta webhook-subscription change; this code change does not alter provider subscriptions.
 - Scope remains only Messenger, Instagram and WhatsApp. No TikTok approval/activation change.
+
+## Meta human-handoff final dispatch guard (2026-10-28)
+
+- Messenger, Instagram and WhatsApp `message.send` actions now query the durable Meta handoff block at the **final outbound dispatch boundary**, using the same hashed conversation ordering key used at inbound ingest. A reply queued earlier cannot be dispatched after an AI-to-human handoff is recorded. A blocked send is a permanent no-send disposition; the system does not retry or replay it later.
+- The earlier pre-AI suppression and the 24h customer-service-window gate are unchanged. Non-Meta providers, explicit WhatsApp template actions and native Meta Handover Protocol ownership are not implicitly authorized or modified.
+- Tests cover both an active handoff (no provider request) and a normal eligible conversation. Production's private `meta_handoff_blocks` table was created and verified with RLS and no anon/authenticated reads before this change.

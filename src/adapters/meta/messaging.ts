@@ -4,6 +4,7 @@ import { DispatchFailure } from "../../dispatch/failure.js";
 import type { ActionEnvelope, ActionResult } from "../../domain/actions.js";
 import { messageSendBodySchema } from "../../domain/actions.js";
 import { MetaSender } from "../../channels/meta-send.js";
+import type { MetaHandoffReader } from "../../persistence/meta-handoff.js";
 import { metaOutboundPayloadSchema } from "../../domain/outbound.js";
 import { standardMetaReplyEligibility } from "../../dispatch/meta-customer-window.js";
 
@@ -18,7 +19,10 @@ export class MetaMessagingAdapter implements ActionAdapter {
   readonly capability = "messaging";
   readonly operation = "message.send";
 
-  constructor(private readonly sender: MetaSender) {}
+  constructor(
+    private readonly sender: MetaSender,
+    private readonly metaHandoffs?: MetaHandoffReader
+  ) {}
 
   async execute(action: ActionEnvelope): Promise<ActionResult> {
     const target = targetSchema.safeParse(action.target);
@@ -30,6 +34,12 @@ export class MetaMessagingAdapter implements ActionAdapter {
     const eligibility = standardMetaReplyEligibility(body.data.customerMessageAt);
     if (eligibility !== "eligible") {
       throw new DispatchFailure(`Meta standard reply is not eligible: ${eligibility}`, { retryable: false });
+    }
+
+    // A queued AI reply must never leave after a human has taken over
+    // the conversation, even if the reply was generated before handoff.
+    if (this.metaHandoffs !== undefined && await this.metaHandoffs.isActive(action.orderingKey)) {
+      throw new DispatchFailure("Meta conversation is under human handoff", { retryable: false });
     }
 
     const payload = metaOutboundPayloadSchema.parse({

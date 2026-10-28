@@ -471,7 +471,7 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
     instagramGraphHost: env.META_INSTAGRAM_GRAPH_HOST,
     requestTimeoutMs: env.META_OUTBOUND_REQUEST_TIMEOUT_MS
   });
-  dispatcher.register(new MetaMessagingAdapter(metaSender));
+  dispatcher.register(new MetaMessagingAdapter(metaSender, metaHandoffs));
   if (env.META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED && env.META_WHATSAPP_ACCESS_TOKEN !== undefined) {
     dispatcher.register(new WhatsAppTemplateAdapter(metaSender));
   }

@@ -2593,3 +2593,10 @@ Official Hostinger help confirms hPanel Websites → Dashboard → Backups → *
 - Messenger, Instagram and WhatsApp `message.send` actions now query the durable Meta handoff block at the **final outbound dispatch boundary**, using the same hashed conversation ordering key used at inbound ingest. A reply queued earlier cannot be dispatched after an AI-to-human handoff is recorded. A blocked send is a permanent no-send disposition; the system does not retry or replay it later.
 - The earlier pre-AI suppression and the 24h customer-service-window gate are unchanged. Non-Meta providers, explicit WhatsApp template actions and native Meta Handover Protocol ownership are not implicitly authorized or modified.
 - Tests cover both an active handoff (no provider request) and a normal eligible conversation. Production's private `meta_handoff_blocks` table was created and verified with RLS and no anon/authenticated reads before this change.
+
+## Meta Messenger/Instagram postbacks as guarded customer turns (2026-10-28)
+
+- A real user-initiated Messenger/Instagram `postback` webhook now normalizes the visible button title to a provider-neutral text content part while keeping the full structured `meta.postback` payload for future deterministic routing. Canonical event remains `message.postback`, not a fabricated ordinary DM. Retries deduplicate against the original callback.
+- `MessageReceivedHandler` accepts only Meta Messenger/Instagram postbacks (not unrelated providers). The standard 24h response-window check, private durable AI-to-human handoff block, idempotent outbox and send-time policy remain mandatory. AI-requested human handoff from a postback is now persisted atomically as for a customer DM.
+- Note: app-level Page `messaging_postbacks` and Instagram `messaging_postbacks` subscriptions are not yet confirmed; this change prepares safe support but does not change Meta app permissions or subscriptions. Do not claim live postbacks unless a fresh tester interaction is observed end-to-end.
+- TikTok Messaging API remains parked pending approval; this PR contains no TikTok work.

@@ -48,7 +48,7 @@ describe("Messenger verified Page webhook subscriptions", () => {
     const [postUrl, postInit] = fetchImpl.mock.calls[2]!;
     if (typeof postUrl !== "string") throw new Error("Expected string Graph URL");
     expect(postUrl).toContain(`/v26.0/${accountId}/subscribed_apps`);
-    expect(new URL(postUrl).searchParams.has("access_token")).toBe(false);
+    expect(new URL(postUrl).searchParams.toString()).toBe("");
     expect(postInit?.method).toBe("POST");
     expect(postInit?.redirect).toBe("error");
     expect(new Headers(postInit?.headers).get("authorization")).toBe("Bearer page-access");

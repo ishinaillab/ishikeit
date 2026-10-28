@@ -2751,3 +2751,9 @@ Official Hostinger help confirms hPanel Websites → Dashboard → Backups → *
 
 - Resume Facebook Messenger, Instagram and WhatsApp work from [Verified Meta Messaging Production Continuation](META_MESSAGING_VERIFIED_CONTINUATION_2026-10-29.md). It reconciles current main/Hostinger/Supabase, PRs #134–#136, native ownership, WhatsApp STOP tombstones, fresh real WhatsApp delivery/read evidence, and explicit external authorization gates.
 - TikTok Business Messaging remains **ON HOLD** pending separate provider API approval; use the previously saved TikTok checkpoint when it is actually approved. Do not merge its pending development into Meta work.
+
+## New-chat Meta messaging handoff reverified — 2026-10-29 00:45 PHT
+
+- Before resuming **Facebook Messenger, Instagram, WhatsApp** development, read [META_MESSAGING_VERIFIED_CONTINUATION_2026-10-29.md](META_MESSAGING_VERIFIED_CONTINUATION_2026-10-29.md), especially its **New-chat transition: refreshed live evidence** section. It updates production source revision to the completed Hostinger **PR #137** documentation checkpoint, includes exact live health, private Supabase aggregate queue/handoff/consent status, Meta App Review and webhook readback, and remaining engineering/owner-controlled steps.
+- **TikTok Messaging stays on hold** pending separate API product approval; its own saved checkpoint remains untouched. Do not resume TikTok source work from this Meta continuation request.
+- This change is documentation-only and intentionally makes no new Meta webhook, OAuth, messaging, database, Hostinger environment or TikTok mutations. Refresh live state and current `main` before acting in the next chat.

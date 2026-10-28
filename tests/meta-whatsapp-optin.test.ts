@@ -63,8 +63,7 @@ describe("Explicit WhatsApp appointment opt-in", () => {
         return Promise.resolve({ rowCount: 1, rows: [{ id: "created" }] });
       });
       const tx = { query } as unknown as SqlExecutor;
-      const db = { transaction: (work: (x: SqlExecutor) => Promise<unknown>) => work(tx) }
-        as unknown as PostgresDatabase;
+      const db = { transaction: (work: (x: SqlExecutor) => Promise<unknown>) => work(tx) } as unknown as PostgresDatabase;
       const store = new PostgresWhatsAppConsentStore(db, Buffer.alloc(32, 21).toString("base64"));
       const inbound = new PostgresInboundStore(db, store);
       const event = eventFor(WHATSAPP_APPOINTMENT_OPT_IN_PHRASE);

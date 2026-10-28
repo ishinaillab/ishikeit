@@ -96,6 +96,7 @@ export class InstagramOAuthRequestError extends Error {
 }
 
 export type InstagramOAuthFlowStage =
+  | "credential_lookup"
   | "short_token_exchange"
   | "long_token_exchange"
   | "account_resolution"
@@ -205,7 +206,9 @@ export function instagramOAuthFailureDiagnostic(error: unknown): string {
     `class=${cause instanceof Error ? cause.name : typeof cause}`
   ];
   if (request?.status !== undefined) parts.push(`status=${request.status}`);
-  if (request?.providerCode !== undefined) parts.push(`provider_code=${request.providerCode}`);
+  if (request?.providerCode !== undefined && /^[a-zA-Z0-9_.:-]{1,40}$/u.test(request.providerCode)) {
+    parts.push(`provider_code=${request.providerCode}`);
+  }
   if (request?.reason !== undefined) parts.push(`reason=${request.reason}`);
   if (request !== undefined) parts.push(`retryable=${request.retryable}`);
   return parts.join(" ");
@@ -342,6 +345,7 @@ export class InstagramOAuthClient implements InstagramOAuthClientLike {
     try {
       response = await this.#fetch(url, {
         ...init,
+        redirect: "error",
         headers: {
           accept: "application/json",
           ...(init.headers ?? {})

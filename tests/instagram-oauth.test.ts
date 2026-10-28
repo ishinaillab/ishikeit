@@ -17,6 +17,22 @@ function requestUrl(value: string | URL | Request): string {
 }
 
 describe("InstagramOAuthClient", () => {
+  it("emits bounded machine diagnostics without leaking arbitrary provider values", () => {
+    const diagnostic = instagramOAuthFailureDiagnostic(new InstagramOAuthFlowError(
+      "credential_lookup",
+      new InstagramOAuthRequestError("provider response", {
+        retryable: false,
+        status: 401,
+        providerCode: "unexpected code with spaces",
+        reason: "scope_or_permission_rejected"
+      })
+    ));
+    expect(diagnostic).toContain("stage=credential_lookup");
+    expect(diagnostic).toContain("status=401");
+    expect(diagnostic).not.toContain("unexpected code with spaces");
+    expect(diagnostic).not.toContain("provider_code=");
+  });
+
   it("exchanges a code and then obtains a long-lived token using current Instagram endpoints", async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -51,6 +67,7 @@ describe("InstagramOAuthClient", () => {
     const [exchangeUrl, exchangeInit] = fetchImpl.mock.calls[0]!;
     expect(exchangeUrl).toBe("https://api.instagram.com/oauth/access_token");
     expect(exchangeInit?.method).toBe("POST");
+    expect(exchangeInit?.redirect).toBe("error");
     expect(exchangeInit?.body).toBeInstanceOf(FormData);
     const form = exchangeInit?.body as FormData;
     expect(form.get("client_id")).toBe("123456789012345");

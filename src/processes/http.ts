@@ -51,7 +51,7 @@ import {
   TikTokBusinessWebhookClient,
   TikTokBusinessWebhookService
 } from "../messaging/tiktok-webhook-config.js";
-import { INSTAGRAM_WEBHOOK_FIELDS, InstagramOAuthClient, InstagramOAuthService } from "../auth/instagram-oauth.js";
+import { INSTAGRAM_WEBHOOK_FIELDS, InstagramOAuthClient, InstagramOAuthService, InstagramOAuthFlowError, InstagramOAuthRequestError, instagramOAuthFailureDiagnostic, type InstagramOAuthFlowStage } from "../auth/instagram-oauth.js";
 import { InstagramAccessTokenManager, InstagramAccessTokenRouter } from "../auth/instagram-token-manager.js";
 import { PostgresInstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 
@@ -299,32 +299,43 @@ async function reconcileInstagramOAuthAccounts(): Promise<void> {
   const credentials = await oauthStore.list("instagram");
 
   for (const credential of credentials) {
+    let stage: InstagramOAuthFlowStage = "credential_lookup";
     try {
+      // Never use a stale snapshot when the account has been revoked or its
+      // credential disappeared between listing and token resolution.
       const accessToken = instagramAccessTokenManager === undefined
         ? credential.accessToken
-        : await instagramAccessTokenManager.getAccessToken(credential.accountId)
-          ?? credential.accessToken;
+        : await instagramAccessTokenManager.getAccessToken(credential.accountId);
+      if (accessToken === undefined) {
+        throw new InstagramOAuthRequestError(
+          "Instagram credential is no longer available",
+          { retryable: false, reason: "credential_not_authorized" }
+        );
+      }
+      stage = "account_resolution";
       const professionalAccountId = await instagramOAuthClient
         .resolveProfessionalAccountId(accessToken);
+      stage = "credential_persistence";
       await oauthStore.putAccountAlias(
         "instagram",
         professionalAccountId,
         credential.accountId,
         "instagram_professional_account"
       );
+      stage = "webhook_subscription";
       await instagramOAuthClient.ensureWebhookSubscription(
         accessToken,
         INSTAGRAM_WEBHOOK_FIELDS
       );
-      logger.info(
-        { professionalAccountId },
-        "Instagram OAuth account routing and webhook subscription reconciled"
-      );
+      logger.info("Instagram OAuth account routing and webhook subscription reconciled");
     } catch (error) {
-      logger.warn(
-        { err: error, credentialAccountId: credential.accountId },
-        "Instagram OAuth account routing or webhook subscription reconciliation failed"
+      // Hostinger exposes log messages but not structured details. Emit only
+      // allowlisted machine diagnostics, never token-bearing URLs, API error
+      // bodies or account identifiers.
+      const diagnostic = instagramOAuthFailureDiagnostic(
+        new InstagramOAuthFlowError(stage, error)
       );
+      logger.warn("Instagram OAuth account routing or webhook subscription reconciliation failed: " + diagnostic);
     }
   }
 }

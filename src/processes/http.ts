@@ -362,12 +362,17 @@ async function reconcileInstagramManagedAccount(): Promise<void> {
       env.META_INSTAGRAM_ACCESS_TOKEN,
       INSTAGRAM_WEBHOOK_FIELDS
     );
-    const matchesInbound = await instagramManagedAccountMatchesInbound(
-      db, professionalAccountId
-    );
+    let inboundMatch = "unavailable";
+    try {
+      inboundMatch = String(await instagramManagedAccountMatchesInbound(
+        db, professionalAccountId
+      ));
+    } catch {
+      logger.warn("Instagram managed-account webhook subscription succeeded but inbound match check was unavailable");
+    }
     logger.info(
       "Instagram verified managed-account token and webhook subscription reconciled; "
-      + "historical_signed_inbound_account_match=" + matchesInbound
+      + "historical_signed_inbound_account_match=" + inboundMatch
     );
   } catch (error) {
     const diagnostic = instagramOAuthFailureDiagnostic(

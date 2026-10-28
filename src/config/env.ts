@@ -32,6 +32,7 @@ const schema = z.object({
   VIDEO_INTERPRETER_POLL_INTERVAL_MS: z.coerce.number().int().min(250).max(10000).default(2000),
 
   META_APP_ID: z.string().min(1).default("1042452472116584"),
+  LATEPOINT_BOOKING_WEBHOOK_SECRET: z.string().min(32).max(256).optional(),
   META_APP_SECRET: z.string().min(1).optional(),
   META_WEBHOOK_VERIFY_TOKEN: z.string().min(16).optional(),
   META_GRAPH_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default("v26.0"),

@@ -129,6 +129,21 @@ export class PostgresInboundEventRepository implements InboundEventProcessingSto
          WHERE id = $1::uuid AND processed_at IS NULL`,
         [id, disposition.outcome, handoffReason]
       );
+      if (result.rowCount === 1 && handoffReason !== null) {
+        // Atomically persist the human handoff with the inbound disposition.
+        // A retried, already-processed event cannot reopen a released block.
+        await tx.query(
+          `INSERT INTO public.meta_handoff_blocks (partition_key,reason)
+           SELECT partition_key,$2 FROM inbound_events
+           WHERE id=$1::uuid AND provider='meta'
+             AND channel IN ('messenger','instagram','whatsapp')
+             AND event_type='message.received'
+             AND normalized_payload->>'identityId' IS NOT NULL
+           ON CONFLICT (partition_key) DO UPDATE
+             SET reason=EXCLUDED.reason,opened_at=now(),released_at=NULL`,
+          [id, handoffReason]
+        );
+      }
       if (result.rowCount !== 1) {
         const existing = await tx.query<{ processed_at: Date | null } & pg.QueryResultRow>(
           "SELECT processed_at FROM inbound_events WHERE id = $1::uuid",

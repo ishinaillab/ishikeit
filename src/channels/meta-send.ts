@@ -92,12 +92,26 @@ function whatsappMessageId(result: Record<string, unknown>): string | undefined 
 function validatePart(payload: MetaOutboundPayload): void {
   const part = payload.message;
   if (payload.quickReplies !== undefined) {
-    if (payload.channel === "whatsapp" || part.kind !== "text"
+    if (part.kind !== "text"
       || !quickReplyChoicesSchema.safeParse(payload.quickReplies).success) {
       throw new MetaSendFailure(
-        "Quick replies require a valid Messenger or Instagram text message",
+        "Quick replies require valid text message choices",
         { retryable: false }
       );
+    }
+    if (payload.channel === "whatsapp") {
+      const distinctTitles = new Set(payload.quickReplies.map(
+        (reply) => reply.title.toLocaleLowerCase("en")
+      ));
+      if (payload.quickReplies.length > 3
+        || part.text.length > 1024
+        || distinctTitles.size !== payload.quickReplies.length
+        || payload.quickReplies.some((reply) => reply.payload.length > 256)) {
+        throw new MetaSendFailure(
+          "WhatsApp reply buttons exceed limits or contain duplicate titles",
+          { retryable: false }
+        );
+      }
     }
   }
   if (part.kind === "structured") {
@@ -193,7 +207,22 @@ export class MetaSender implements MetaMessageSender {
       };
       if (payload.replyTo !== undefined) base.context = { message_id: payload.replyTo };
       if (payload.message.kind === "text") {
-        body = { ...base, type: "text", text: { preview_url: false, body: payload.message.text } };
+        body = payload.quickReplies === undefined
+          ? { ...base, type: "text", text: { preview_url: false, body: payload.message.text } }
+          : {
+              ...base,
+              type: "interactive",
+              interactive: {
+                type: "button",
+                body: { text: payload.message.text },
+                action: {
+                  buttons: payload.quickReplies.map((choice) => ({
+                    type: "reply",
+                    reply: { id: choice.payload, title: choice.title }
+                  }))
+                }
+              }
+            };
       } else if (payload.message.kind !== "structured") {
         const media = whatsappMedia(payload.message);
         body = { ...base, type: media.type, [media.type]: media.value };

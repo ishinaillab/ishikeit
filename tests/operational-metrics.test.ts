@@ -24,7 +24,9 @@ describe("PostgresOperationalMetrics", () => {
         rows: [{
           topic: "action.dispatch",
           pending: "0",
-          oldest_pending_ms: null
+          oldest_pending_ms: null,
+          dead_letter_total: "11",
+          dead_letter_window: "0"
         }]
       })
       .mockResolvedValueOnce({
@@ -85,6 +87,13 @@ describe("PostgresOperationalMetrics", () => {
       ]
     });
     expect(snapshot.attempts.published).toBe(3);
+    expect(snapshot.queue).toEqual([{
+      topic: "action.dispatch",
+      pending: 0,
+      oldestPendingMs: null,
+      deadLetterTotal: 11,
+      deadLettersInWindow: 0
+    }]);
     expect(snapshot.delivery.byChannel).toEqual([
       { channel: "whatsapp", status: "delivered", count: 4 },
       { channel: "whatsapp", status: "read", count: 2 }
@@ -94,6 +103,8 @@ describe("PostgresOperationalMetrics", () => {
       { channel: "messenger", status: "unconfirmed", count: 3 }
     ]);
     expect(query).toHaveBeenCalledTimes(6);
+    expect(String(query.mock.calls[1]?.[0])).toContain("dead_lettered_at >= now()");
+    expect(query.mock.calls[1]?.[1]).toEqual([60]);
     const reconciliationQuery = String(query.mock.calls[5]?.[0]);
     expect(reconciliationQuery).toContain("ie.account_id = sent.account_id");
     expect(reconciliationQuery).toContain("ie.provider_message_id = sent.provider_message_id");

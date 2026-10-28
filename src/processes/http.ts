@@ -19,7 +19,8 @@ import { PostgresOperationalMetrics } from "../observability/operational-metrics
 import { runtimeBuildIdentity } from "../observability/build-identity.js";
 import {
   instagramManagedAccountMatchesInbound,
-  messengerManagedPageMatchesInbound
+  messengerManagedPageMatchesInbound,
+  messengerRecentSignedPageId
 } from "../observability/meta-account-coverage.js";
 import {
   MessengerPageSubscriptionClient,
@@ -402,8 +403,14 @@ async function reconcileMessengerManagedPage(): Promise<void> {
       graphApiVersion: env.META_GRAPH_API_VERSION,
       requestTimeoutMs: env.META_OUTBOUND_REQUEST_TIMEOUT_MS
     });
+    const recentPageId = await messengerRecentSignedPageId(db);
+    if (recentPageId === undefined) {
+      logger.warn("Messenger Page webhook field reconciliation skipped: no unique recent signed Page identity");
+      return;
+    }
     const result = await client.reconcile(
       env.META_MESSENGER_ACCESS_TOKEN,
+      recentPageId,
       (pageId) => messengerManagedPageMatchesInbound(db, pageId)
     );
     logger.info(

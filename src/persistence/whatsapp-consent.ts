@@ -4,6 +4,26 @@ import type { PostgresDatabase, SqlExecutor } from "./postgres.js";
 
 export type WhatsAppConsentPurpose = "appointment_updates";
 
+export const WHATSAPP_APPOINTMENT_UPDATES_OPT_IN =
+  "I agree to receive Ishi Nail Lab WhatsApp appointment updates" as const;
+
+export type WhatsAppConsentIntent = "opt_in" | "opt_out" | null;
+
+/** Exact customer-authored phrase only; generic greetings/yes are never opt-ins. */
+export function whatsappConsentIntent(message: string): WhatsAppConsentIntent {
+  const normalized = message.trim().replace(/\\s+/gu, " ").toLowerCase();
+  if (normalized === WHATSAPP_APPOINTMENT_UPDATES_OPT_IN.toLowerCase()) {
+    return "opt_in";
+  }
+  if (normalized === "stop" || normalized === "unsubscribe"
+    || normalized === "stop reminders") {
+    return "opt_out";
+  }
+  return null;
+}
+
+
+
 export interface WhatsAppConsentReader {
   hasActiveConsent(accountId: string, recipientId: string, purpose: WhatsAppConsentPurpose): Promise<boolean>;
 }

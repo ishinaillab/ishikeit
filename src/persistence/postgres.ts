@@ -23,6 +23,7 @@ interface ReadinessRow extends pg.QueryResultRow {
   meta_handoff_blocks: boolean;
   meta_native_routing_ownership: boolean;
   meta_whatsapp_opt_ins: boolean;
+  meta_whatsapp_opt_outs: boolean;
 }
 
 export class PostgresDatabase {
@@ -47,6 +48,7 @@ export class PostgresDatabase {
            to_regclass('public.meta_handoff_blocks') IS NOT NULL AS meta_handoff_blocks,
            to_regclass('public.meta_native_routing_ownership') IS NOT NULL AS meta_native_routing_ownership,
            to_regclass('public.meta_whatsapp_template_opt_ins') IS NOT NULL AS meta_whatsapp_opt_ins,
+           to_regclass('public.meta_whatsapp_template_opt_outs') IS NOT NULL AS meta_whatsapp_opt_outs,
            EXISTS (
              SELECT 1
              FROM information_schema.columns
@@ -103,7 +105,8 @@ export class PostgresDatabase {
         && row.handoff_reason === true
         && row.meta_handoff_blocks === true
         && row.meta_native_routing_ownership === true
-        && row.meta_whatsapp_opt_ins === true;
+        && row.meta_whatsapp_opt_ins === true
+        && row.meta_whatsapp_opt_outs === true;
     } catch {
       return false;
     }

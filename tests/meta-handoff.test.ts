@@ -21,24 +21,40 @@ describe("Meta durable handoff store", () => {
       [metaConversationPartitionKey("whatsapp", "phone-1", "639100000000")]
     );
   });
-  it("does not overwrite an active AI-requested human handoff with native standby", async () => {
-    const query = vi.fn().mockResolvedValue({ rowCount: 0 });
+  it("writes native ownership into a separate table without overwriting an active human handoff", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
     const store = new PostgresMetaHandoffStore({ query } as unknown as PostgresDatabase);
     const key = "a".repeat(64);
-    await store.blockNativeRouting(key);
+    const occurredAt = "2026-10-28T11:00:00.000Z";
+    await store.blockNativeRouting(key, occurredAt);
     const sql = String(query.mock.calls[0]?.[0]);
-    expect(sql).toContain("ON CONFLICT(partition_key)");
-    expect(sql).toContain("meta_handoff_blocks.released_at IS NOT NULL");
-    expect(sql).toContain("meta_handoff_blocks.reason='native_thread_control_other_app'");
-    expect(query).toHaveBeenCalledWith(expect.any(String), [key]);
+    expect(sql).toContain("meta_native_routing_ownership");
+    expect(sql).not.toContain("INSERT INTO public.meta_handoff_blocks");
+    expect(sql).toContain("provider_event_at < EXCLUDED.provider_event_at");
+    expect(sql).toContain("EXCLUDED.owner_state='other_app'");
+    expect(query).toHaveBeenCalledWith(expect.any(String), [key, "other_app", new Date(occurredAt)]);
   });
-  it("releases ONLY native routing blocks and not human handoffs", async () => {
+
+  it("updates native ownership to this app only when a newer event allows it", async () => {
     const query = vi.fn().mockResolvedValue({ rowCount: 1 });
     const store = new PostgresMetaHandoffStore({ query } as unknown as PostgresDatabase);
     const key = "b".repeat(64);
-    await store.releaseNativeRouting(key);
-    expect(String(query.mock.calls[0]?.[0])).toContain("reason='native_thread_control_other_app'");
-    expect(query).toHaveBeenCalledWith(expect.any(String), [key]);
+    const occurredAt = "2026-10-28T11:02:00.000Z";
+    await store.releaseNativeRouting(key, occurredAt);
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("provider_event_at < EXCLUDED.provider_event_at");
+    expect(sql).toContain("EXCLUDED.owner_state='other_app'");
+    expect(query).toHaveBeenCalledWith(expect.any(String), [key, "this_app", new Date(occurredAt)]);
+  });
+
+  it("checks BOTH human handoff and independent native owner state", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ active: false }] });
+    const store = new PostgresMetaHandoffStore({ query } as unknown as PostgresDatabase);
+    await expect(store.isActive("c".repeat(64))).resolves.toBe(false);
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("public.meta_handoff_blocks");
+    expect(sql).toContain("public.meta_native_routing_ownership");
+    expect(sql).toContain("owner_state='other_app'");
   });
 
   it("prevents operator human-release from releasing native Meta ownership blocks", async () => {

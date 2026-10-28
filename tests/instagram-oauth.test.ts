@@ -148,8 +148,12 @@ describe("InstagramOAuthClient", () => {
     const url = new URL(requestUrl(request));
     expect(url.origin + url.pathname)
       .toBe("https://graph.instagram.com/v26.0/me/subscribed_apps");
+    expect(INSTAGRAM_WEBHOOK_FIELDS).toEqual([
+      "messages", "standby", "messaging_handover",
+      "messaging_seen", "messaging_postbacks"
+    ]);
     expect(url.searchParams.get("subscribed_fields"))
-      .toBe(INSTAGRAM_WEBHOOK_FIELDS.join(","));
+      .toBe("messages,standby,messaging_handover,messaging_seen,messaging_postbacks");
     expect(url.searchParams.has("access_token")).toBe(false);
     expect(init?.method).toBe("POST");
     expect(new Headers(init?.headers).get("authorization"))

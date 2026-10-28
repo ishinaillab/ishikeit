@@ -2639,3 +2639,8 @@ Official Hostinger help confirms hPanel Websites → Dashboard → Backups → *
 - Fixed a subtle Messenger/Instagram handover authorization gap: the authenticated `/ops/meta/handoff/release` operation can now release **only** AI-requested human handoffs. It may **not** clear `native_thread_control_other_app` blocks owned by Meta Handover Protocol. Only the signed native `handover.pass` event identifying Ishikeit's app as the new owner may release that native block.
 - Enforced with an atomic reason-qualified SQL update and an explicit regression test; unknown/released/native blocked conversations return `not_active` without reopening AI replies. No migration or environment mutation required.
 - All changes confined to Meta Messenger/Instagram/WhatsApp work. TikTok messaging approval wait remains unchanged.
+
+## Instagram App Review evidence revalidation (2026-10-28)
+
+- Refreshed `docs/meta-instagram-app-review.md` to remove the obsolete assertion that Instagram routing is OAuth-only and that a previously valid OAuth token is currently accepted. Verified production instead uses exact managed Professional-account ownership validation and matching historical signed inbound account ID. The separate tester OAuth grant now returns Graph code 190 (HTTP 400) during account-resolution despite the stored expiry being in the future.
+- Meta App Review remains `NO_SUBMISSION`. Do not report Advanced Access approval or send non-role customer DMs without Meta approval. Real reviewer screencast and updated owner consent remain prerequisites; preserve existing credentials and avoid automatic replay. TikTok work is paused separately.

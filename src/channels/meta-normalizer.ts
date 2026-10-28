@@ -94,6 +94,26 @@ function whatsappContent(message: Record<string, unknown>): ContentPart[] {
   } else if (kind === "document") {
     const part = mediaPart("document", message.document);
     if (part !== undefined) content.push(part);
+  } else if (kind === "interactive" || kind === "button") {
+    // A customer tapping an interactive control is a genuine inbound message.
+    // Pass the visible selection text to the brain while retaining the exact
+    // original structured payload for future button/list workflow routing.
+    const raw = message[kind];
+    if (raw !== undefined && typeof raw === "object" && raw !== null) {
+      const details = raw as Record<string, unknown>;
+      const reply = kind === "interactive"
+        ? details.button_reply ?? details.list_reply
+        : details;
+      const choice = reply !== null && typeof reply === "object"
+        ? reply as Record<string, unknown>
+        : {};
+      const candidate = kind === "button" ? choice.text : choice.title;
+      if (typeof candidate === "string" && candidate.trim().length > 0
+        && candidate.length <= 2048) {
+        content.push({ kind: "text", text: candidate.trim() });
+      }
+      content.push({ kind: "structured", format: `meta.whatsapp.${kind}`, data: raw });
+    }
   } else if (kind !== undefined && kind !== "text") {
     const value = message[kind];
     if (value !== undefined) content.push({ kind: "structured", format: `meta.whatsapp.${kind}`, data: value });

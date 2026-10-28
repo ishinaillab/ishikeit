@@ -39,7 +39,7 @@ interface EventRow extends pg.QueryResultRow {
 export class PostgresInboundStore implements InboundStore {
   constructor(
     private readonly db: PostgresDatabase,
-    private readonly whatsappConsents?: Pick<PostgresWhatsAppConsentStore, "revokeInTransaction" | "grantInTransaction">
+    private readonly whatsappConsents?: Pick<PostgresWhatsAppConsentStore, "revokeInTransaction"> & Partial<Pick<PostgresWhatsAppConsentStore, "grantInTransaction">>
   ) {}
 
   async ingest(event: CanonicalEvent, identity: IngressIdentity, rawBodyHash: string): Promise<"created"|"duplicate"> {
@@ -80,7 +80,7 @@ export class PostgresInboundStore implements InboundStore {
       // Consent is granted only by a fresh, explicit, purpose-specific
       // customer-authored WhatsApp message from a signed Meta webhook.
       if (isWhatsAppAppointmentOptIn(event)
-        && this.whatsappConsents !== undefined
+        && this.whatsappConsents?.grantInTransaction !== undefined
         && event.identityId !== undefined
         && event.occurredAt !== undefined) {
         await this.whatsappConsents.grantInTransaction(

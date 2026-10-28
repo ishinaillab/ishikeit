@@ -2627,3 +2627,9 @@ Official Hostinger help confirms hPanel Websites → Dashboard → Backups → *
 - Reuses the private, RLS-protected `meta_handoff_blocks` table with a separate reason `native_thread_control_other_app`. Native ownership changes **cannot overwrite or automatically release** an active AI-requested human handoff. Customer IDs and message bodies are not stored; the state is keyed by the existing SHA-256 conversation partition. The pre-AI and pre-outbound checks already respect this block.
 - Provider callbacks are not fabricated, replayed or manually dispatched. This code does not subscribe new Meta webhook topics. The Instagram `standby` and `messaging_handover` subscriptions exist, while Page `messaging_handovers`/standby subscription still requires verification/authorization before Messenger native ownership can be exercised.
 - Tests cover standby, takeover, exact-app pass, unknown/other owners, invalid identity/provider and preservation of manual human handoffs. Verify CI and live readiness before closure. TikTok remains untouched pending Business Messaging API approval.
+
+## Meta shared Graph failure privacy fix (2026-10-28)
+
+- Messenger, Instagram and WhatsApp standard outbound failures no longer copy provider-supplied Graph error descriptions to durable outbox error reasons and operational logs. Errors contain sanitized HTTP status and numeric Graph codes/subcodes while preserving retry and Retry-After handling.
+- Test simulates private customer text and an access-token marker in the Graph response and confirms neither is present in the exception message. Explicit WhatsApp template sender already sanitized provider errors.
+- This replacement branch is based on latest main after PR #117 became conflict-dirty following parallel Meta work. Scope excludes TikTok and all provider permissions.

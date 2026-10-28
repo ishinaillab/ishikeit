@@ -19,6 +19,8 @@ interface QueueRow extends pg.QueryResultRow {
   topic: string;
   pending: string;
   oldest_pending_ms: number | null;
+  dead_letter_total: string;
+  dead_letter_window: string;
 }
 
 interface AttemptRow extends pg.QueryResultRow {
@@ -85,6 +87,8 @@ export interface OperationalMetricsSnapshot {
     topic: string;
     pending: number;
     oldestPendingMs: number | null;
+    deadLetterTotal: number;
+    deadLettersInWindow: number;
   }>;
   attempts: {
     published: number;
@@ -147,10 +151,15 @@ export class PostgresOperationalMetrics implements OperationalMetricsReader {
            )::bigint AS pending,
            max(extract(epoch FROM (now() - created_at)) * 1000)
              FILTER (WHERE published_at IS NULL AND dead_lettered_at IS NULL)
-             AS oldest_pending_ms
+             AS oldest_pending_ms,
+           count(*) FILTER (WHERE dead_lettered_at IS NOT NULL)::bigint AS dead_letter_total,
+           count(*) FILTER (
+             WHERE dead_lettered_at >= now() - make_interval(mins => $1)
+           )::bigint AS dead_letter_window
          FROM outbox
          GROUP BY topic
-         ORDER BY topic`
+         ORDER BY topic`,
+        [windowMinutes]
       ),
       this.db.query<AttemptRow>(
         `SELECT
@@ -297,7 +306,9 @@ export class PostgresOperationalMetrics implements OperationalMetricsReader {
       queue: queue.rows.map((row) => ({
         topic: row.topic,
         pending: Number(row.pending),
-        oldestPendingMs: nullableNumber(row.oldest_pending_ms)
+        oldestPendingMs: nullableNumber(row.oldest_pending_ms),
+        deadLetterTotal: Number(row.dead_letter_total),
+        deadLettersInWindow: Number(row.dead_letter_window)
       })),
       attempts: {
         published: outcomeCount("published"),

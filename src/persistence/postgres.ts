@@ -21,6 +21,7 @@ interface ReadinessRow extends pg.QueryResultRow {
   processing_outcome: boolean;
   handoff_reason: boolean;
   meta_handoff_blocks: boolean;
+  meta_whatsapp_opt_ins: boolean;
 }
 
 export class PostgresDatabase {
@@ -43,6 +44,7 @@ export class PostgresDatabase {
            to_regclass('public.outbox') IS NOT NULL AS outbox,
            to_regclass('public.outbox_attempts') IS NOT NULL AS outbox_attempts,
            to_regclass('public.meta_handoff_blocks') IS NOT NULL AS meta_handoff_blocks,
+           to_regclass('public.meta_whatsapp_template_opt_ins') IS NOT NULL AS meta_whatsapp_opt_ins,
            EXISTS (
              SELECT 1
              FROM information_schema.columns
@@ -97,7 +99,8 @@ export class PostgresDatabase {
         && row.partition_key === true
         && row.processing_outcome === true
         && row.handoff_reason === true
-        && row.meta_handoff_blocks === true;
+        && row.meta_handoff_blocks === true
+        && row.meta_whatsapp_opt_ins === true;
     } catch {
       return false;
     }

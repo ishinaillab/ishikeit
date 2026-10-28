@@ -43,6 +43,7 @@ const schema = z.object({
   META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED: booleanFromEnv.default(false),
   META_WHATSAPP_TEMPLATE_PHONE_NUMBER_ID: z.string().regex(/^\d{5,32}$/).optional(),
   META_WHATSAPP_APPROVED_TEMPLATE_KEYS: z.string().max(4096).default(""),
+  META_WHATSAPP_CONSENT_HASH_KEY_B64: z.string().min(40).max(64).optional(),
   META_INSTAGRAM_GRAPH_HOST: z.enum(["graph.instagram.com", "graph.facebook.com"]).default("graph.instagram.com"),
   META_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   META_INSTAGRAM_OAUTH_APP_ID: z.string().regex(/^\d+$/).optional(),
@@ -300,7 +301,8 @@ const schema = z.object({
   if (value.META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED) {
     for (const key of [
       "META_WHATSAPP_ACCESS_TOKEN",
-      "META_WHATSAPP_TEMPLATE_PHONE_NUMBER_ID"
+      "META_WHATSAPP_TEMPLATE_PHONE_NUMBER_ID",
+      "META_WHATSAPP_CONSENT_HASH_KEY_B64"
     ] as const) {
       if (value[key] === undefined) {
         ctx.addIssue({
@@ -382,6 +384,14 @@ export function loadEnvironment(input: NodeJS.ProcessEnv = process.env): Environ
       !/^[a-z0-9_]{1,512}@[A-Za-z]{2,3}(?:[_-][A-Za-z]{2,4})?$/u.test(key))
     || new Set(approvedWhatsAppTemplateKeys).size !== approvedWhatsAppTemplateKeys.length) {
     throw new Error("META_WHATSAPP_APPROVED_TEMPLATE_KEYS requires unique name@language pairs (maximum 32)");
+  }
+
+  if (parsed.META_WHATSAPP_CONSENT_HASH_KEY_B64 !== undefined) {
+    const key = Buffer.from(parsed.META_WHATSAPP_CONSENT_HASH_KEY_B64, "base64");
+    if (key.length !== 32 || key.toString("base64").replace(/=+$/u, "")
+      !== parsed.META_WHATSAPP_CONSENT_HASH_KEY_B64.replace(/=+$/u, "")) {
+      throw new Error("META_WHATSAPP_CONSENT_HASH_KEY_B64 must encode exactly 32 bytes");
+    }
   }
 
   if (parsed.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined) {

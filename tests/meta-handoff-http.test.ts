@@ -1,7 +1,6 @@
 import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 import { buildServer } from "../src/http/server.js";
-import type { InboundStore } from "../src/persistence/inbound.js";
 
 describe("Meta operational handoff release", () => {
   it("requires an operational bearer token and rejects malformed input", async () => {
@@ -9,7 +8,7 @@ describe("Meta operational handoff release", () => {
     const server = buildServer({
       logger: pino({ level: "silent" }),
       ready: () => Promise.resolve(true),
-      inbound: { ingest: vi.fn() } as InboundStore,
+      inbound: { ingest: vi.fn() },
       appSecret: "secret",
       verifyToken: "verify-token",
       opsMetricsToken: "x".repeat(32),

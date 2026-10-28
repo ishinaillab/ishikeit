@@ -150,6 +150,59 @@ describe("MessageReceivedHandler", () => {
     }
   });
 
+  it("creates stable ordered, individually eligible Meta replies from long AI text", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-28T11:00:00.000Z"));
+    try {
+      const text = "Nail service details. ".repeat(95);
+      const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({
+        handoff: false, parts: [{ kind: "text", text }]
+      });
+      const handler = new MessageReceivedHandler({ respond });
+      const event = {
+        ...stored.event, provider: "meta", channel: "instagram",
+        accountId: "ig-1", identityId: "ig-customer",
+        occurredAt: "2026-10-28T10:59:00.000Z"
+      };
+      const result = await handler.handle({ ...stored, event });
+      expect(result.outcome).toBe("handled");
+      expect(result.actions.length).toBeGreaterThan(1);
+      expect(result.actions.map((a) => a.idempotencyKey)).toEqual(
+        result.actions.map((_, index) => stored.id + ":reply:" + index)
+      );
+      expect(result.actions.every((a) => a.orderingKey === stored.partitionKey)).toBe(true);
+      expect(result.actions.every((a) => a.body.customerMessageAt === event.occurredAt)).toBe(true);
+      expect(result.actions.map((a) => a.body.part.kind === "text" ? a.body.part.text : "").join("")).toBe(text);
+      const repeated = await handler.handle({ ...stored, event });
+      expect(repeated.actions).toEqual(result.actions);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("hands off an excessively long Meta AI reply without sending partial chunks", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-28T11:00:00.000Z"));
+    try {
+      const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({
+        handoff: false, parts: [{ kind: "text", text: "A".repeat(9600) }]
+      });
+      const handler = new MessageReceivedHandler({ respond });
+      const result = await handler.handle({
+        ...stored,
+        event: {
+          ...stored.event, provider: "meta", channel: "instagram",
+          occurredAt: "2026-10-28T10:59:00.000Z"
+        }
+      });
+      expect(result).toEqual({
+        outcome: "handoff", handoffReason: "reply_too_long", actions: []
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("records a human handoff with a durable reason and no outbound action", async () => {
     const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({
       handoff: true,

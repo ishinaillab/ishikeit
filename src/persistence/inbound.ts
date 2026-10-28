@@ -5,7 +5,7 @@ import { normalizeHandoffReason, type ProcessingDisposition } from "../domain/pr
 import { canonicalEventSchema, type CanonicalEvent, type IngressIdentity } from "../domain/events.js";
 import { enqueueAction, INBOUND_ACCEPTED_TOPIC } from "./outbox.js";
 import type { PostgresDatabase } from "./postgres.js";
-import type { PostgresWhatsAppConsentStore } from "./whatsapp-consent.js";
+import { whatsappConsentIntent, type PostgresWhatsAppConsentStore } from "./whatsapp-consent.js";
 
 export interface InboundStore {
   ingest(event: CanonicalEvent, identity: IngressIdentity, rawBodyHash: string): Promise<"created"|"duplicate">;
@@ -37,7 +37,7 @@ interface EventRow extends pg.QueryResultRow {
 export class PostgresInboundStore implements InboundStore {
   constructor(
     private readonly db: PostgresDatabase,
-    private readonly whatsappConsents?: Pick<PostgresWhatsAppConsentStore, "revokeInTransaction">
+    private readonly whatsappConsents?: Pick<PostgresWhatsAppConsentStore, "revokeInTransaction" | "grantInTransaction">
   ) {}
 
   async ingest(event: CanonicalEvent, identity: IngressIdentity, rawBodyHash: string): Promise<"created"|"duplicate"> {
@@ -71,14 +71,22 @@ export class PostgresInboundStore implements InboundStore {
       if (inserted.rowCount !== 1) return "duplicate";
       // A verified WhatsApp customer STOP must immediately revoke prior
       // template opt-in in the same transaction, before the webhook ACK.
-      const optOut = event.provider === "meta"
+      const verifiedWhatsAppCustomer = event.provider === "meta"
         && event.channel === "whatsapp"
         && event.eventType === "message.received"
-        && event.identityId !== undefined
-        && event.content.some((part) =>
-          part.kind === "text" && /^(?:stop|unsubscribe|stop reminders)$/iu.test(part.text.trim()));
-      if (optOut && this.whatsappConsents !== undefined && event.identityId !== undefined) {
-        await this.whatsappConsents.revokeInTransaction(tx, event.accountId, event.identityId);
+        && event.identityId !== undefined;
+      if (verifiedWhatsAppCustomer && this.whatsappConsents !== undefined
+        && event.identityId !== undefined) {
+        const optOut = event.content.some((part) =>
+          part.kind === "text" && whatsappConsentIntent(part.text) === "opt_out");
+        const onlyPart = event.content.length === 1 ? event.content[0] : undefined;
+        const optIn = onlyPart?.kind === "text"
+          && whatsappConsentIntent(onlyPart.text) === "opt_in";
+        if (optOut) {
+          await this.whatsappConsents.revokeInTransaction(tx, event.accountId, event.identityId);
+        } else if (optIn) {
+          await this.whatsappConsents.grantInTransaction(tx, event.accountId, event.identityId, id);
+        }
       }
       await tx.query(
         "INSERT INTO outbox (id,topic,partition_key,payload) VALUES ($1,$2,$3,$4::jsonb)",

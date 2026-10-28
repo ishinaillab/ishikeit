@@ -75,3 +75,7 @@ This section supersedes earlier **source/deployment SHA statements** above but d
 ### Handoff semantics
 
 This document and `docs/CONTINUATION.md` are the **durable source of project context** available to a new conversation. Conversation memory is not an independent substitute for rereading live repository and production evidence. Updates after this snapshot must be read back instead of assuming this snapshot remains current.
+
+## Verified later provider actions (October 29, 2026)
+
+The previous unchecked provider subscription/template items in this document are historical. **They were subsequently changed with explicit owner approval:** Messenger `page` app webhook fields added: `message_deliveries`, `message_reads`, `messaging_postbacks`, `messaging_handovers`; Instagram fields added: `messaging_seen`, `messaging_postbacks`. Both are enabled per Meta provider readback. WhatsApp template `ishi_appointment_reminder_v1` `en_US` submitted as `UTILITY`, provider ID `1674861800945394`, still **PENDING** on last check. No proactive template sending enabled and no customer-originated postback, public non-role message, or template sends were fabricated. Details, exact field inventory and release gates are in the newer appended entry of `docs/CONTINUATION.md`. All other existing safety holds continue.

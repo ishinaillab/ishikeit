@@ -51,6 +51,12 @@ export class PostgresWhatsAppConsentStore implements WhatsAppConsentReader {
          SELECT 1 FROM public.meta_whatsapp_template_opt_ins
          WHERE recipient_key=$1 AND purpose=$2
            AND consented_at<=now() AND revoked_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM public.meta_whatsapp_template_opt_outs AS stopped
+             WHERE stopped.recipient_key=meta_whatsapp_template_opt_ins.recipient_key
+               AND stopped.purpose=meta_whatsapp_template_opt_ins.purpose
+               AND stopped.opted_out_at >= meta_whatsapp_template_opt_ins.consented_at
+           )
        ) AS active`,
       [key, purpose]
     );
@@ -73,30 +79,61 @@ export class PostgresWhatsAppConsentStore implements WhatsAppConsentReader {
     await tx.query(
       `INSERT INTO public.meta_whatsapp_template_opt_ins
        (recipient_key,purpose,source_event_id,consented_at,revoked_at)
-       VALUES ($1,'appointment_updates',$2::uuid,$3,NULL)
+       SELECT $1,'appointment_updates',$2::uuid,LEAST($3::timestamptz,now()),NULL
+       WHERE NOT EXISTS (
+         SELECT 1 FROM public.meta_whatsapp_template_opt_outs
+         WHERE recipient_key=$1 AND purpose='appointment_updates'
+           AND opted_out_at >= LEAST($3::timestamptz,now())
+       )
        ON CONFLICT(recipient_key,purpose) DO UPDATE SET
          source_event_id=EXCLUDED.source_event_id,
          consented_at=EXCLUDED.consented_at,
          revoked_at=NULL
        WHERE EXCLUDED.consented_at >
          GREATEST(meta_whatsapp_template_opt_ins.consented_at,
-           COALESCE(meta_whatsapp_template_opt_ins.revoked_at, meta_whatsapp_template_opt_ins.consented_at))`,
+           COALESCE(meta_whatsapp_template_opt_ins.revoked_at, meta_whatsapp_template_opt_ins.consented_at))
+         AND NOT EXISTS (
+           SELECT 1 FROM public.meta_whatsapp_template_opt_outs
+           WHERE recipient_key=EXCLUDED.recipient_key
+             AND purpose=EXCLUDED.purpose
+             AND opted_out_at >= EXCLUDED.consented_at
+         )`,
       [key, sourceEventId, occurredAt]
     );
   }
 
-  /** Idempotent opt-out; only operate on a verified, signed customer message. */
+  /**
+   * Persist a STOP tombstone even when the customer has never opted in.
+   * This blocks a delayed old opt-in webhook from creating new consent.
+   * The source event is the exact signed customer STOP, not inferred intent.
+   */
   async revokeInTransaction(
     tx: SqlExecutor,
     accountId: string,
-    recipientId: string
+    recipientId: string,
+    sourceEventId: string,
+    occurredAt: Date
   ): Promise<void> {
+    if (!Number.isFinite(occurredAt.getTime())) throw new Error("Invalid STOP timestamp");
     const key = this.recipientKey(accountId, recipientId);
     await tx.query(
+      `INSERT INTO public.meta_whatsapp_template_opt_outs
+         (recipient_key,purpose,source_event_id,opted_out_at)
+       VALUES ($1,'appointment_updates',$2::uuid,GREATEST($3::timestamptz,now()))
+       ON CONFLICT(recipient_key,purpose) DO UPDATE SET
+         opted_out_at=GREATEST(
+           meta_whatsapp_template_opt_outs.opted_out_at,EXCLUDED.opted_out_at),
+         source_event_id=CASE
+           WHEN EXCLUDED.opted_out_at >= meta_whatsapp_template_opt_outs.opted_out_at
+             THEN EXCLUDED.source_event_id
+           ELSE meta_whatsapp_template_opt_outs.source_event_id END`,
+      [key, sourceEventId, occurredAt]
+    );
+    await tx.query(
       `UPDATE public.meta_whatsapp_template_opt_ins
-       SET revoked_at=now()
-       WHERE recipient_key=$1 AND revoked_at IS NULL`,
-      [key]
+       SET revoked_at=GREATEST(now(),consented_at,$2::timestamptz)
+       WHERE recipient_key=$1 AND purpose='appointment_updates' AND revoked_at IS NULL`,
+      [key, occurredAt]
     );
   }
 }

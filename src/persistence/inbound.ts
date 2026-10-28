@@ -75,7 +75,10 @@ export class PostgresInboundStore implements InboundStore {
       // template opt-in in the same transaction, before the webhook ACK.
       const optOut = isWhatsAppTemplateOptOut(event);
       if (optOut && this.whatsappConsents !== undefined && event.identityId !== undefined) {
-        await this.whatsappConsents.revokeInTransaction(tx, event.accountId, event.identityId);
+        await this.whatsappConsents.revokeInTransaction(
+          tx, event.accountId, event.identityId, id,
+          new Date(event.occurredAt ?? event.receivedAt)
+        );
       }
       // Consent is granted only by a fresh, explicit, purpose-specific
       // customer-authored WhatsApp message from a signed Meta webhook.

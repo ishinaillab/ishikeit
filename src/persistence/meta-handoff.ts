@@ -11,7 +11,7 @@ export interface MetaRoutingControl {
   releaseNativeRouting(partitionKey: string): Promise<void>;
 }
 
-export interface MetaHandoffControl extends MetaHandoffReader, MetaRoutingControl {
+export interface MetaHandoffControl extends MetaHandoffReader {
   release(channel: "messenger" | "instagram" | "whatsapp", accountId: string, identityId: string): Promise<boolean>;
 }
 
@@ -23,7 +23,7 @@ interface ActiveRow extends pg.QueryResultRow {
  * Explicit human handoff blocks AI replies until an authenticated operator
  * releases the exact conversation. Only hashed partition keys are stored.
  */
-export class PostgresMetaHandoffStore implements MetaHandoffControl {
+export class PostgresMetaHandoffStore implements MetaHandoffControl, MetaRoutingControl {
   constructor(private readonly db: PostgresDatabase) {}
 
   async isActive(partitionKey: string): Promise<boolean> {

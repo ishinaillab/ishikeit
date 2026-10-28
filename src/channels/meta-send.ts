@@ -96,6 +96,7 @@ function validatePart(payload: MetaOutboundPayload): void {
     if (payload.channel !== "whatsapp"
       || part.kind !== "text"
       || payload.quickReplies !== undefined
+      || part.text.length > 1024
       || !interactiveListSchema.safeParse(payload.interactiveList).success) {
       throw new MetaSendFailure(
         "Interactive lists require a valid WhatsApp text message with exclusive list choices",

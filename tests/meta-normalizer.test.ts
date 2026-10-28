@@ -363,6 +363,64 @@ describe("Meta normalizer", () => {
       .toBe(metaIngressIdentity(retried!).deduplicationKey);
   });
 
+  it("preserves Instagram postback selection as a customer-initiated messaging event", () => {
+    const envelope = {
+      object: "instagram",
+      entry: [{ id: "ig-business-1", messaging: [{
+        sender: { id: "ig-customer-1" },
+        recipient: { id: "ig-business-1" },
+        timestamp: 1793192400000,
+        postback: { title: "Builder gel", payload: "service_biab" }
+      }] }]
+    };
+    const [event] = normalizeMetaEnvelope(envelope, "2026-10-28T13:00:02.000Z");
+    const [redelivery] = normalizeMetaEnvelope(envelope, "2026-10-28T13:00:07.000Z");
+    expect(event).toMatchObject({
+      channel: "instagram",
+      accountId: "ig-business-1",
+      capability: "messaging",
+      eventType: "message.postback",
+      identityId: "ig-customer-1",
+      occurredAt: "2026-10-28T13:00:00.000Z",
+      content: [
+        { kind: "text", text: "Builder gel" },
+        { kind: "structured", format: "meta.postback", data: { payload: "service_biab" } }
+      ]
+    });
+    expect(metaIngressIdentity(event!).deduplicationKey)
+      .toBe(metaIngressIdentity(redelivery!).deduplicationKey);
+  });
+
+  it("keeps Meta delivery failures message-specific and deduplicated without sending a reply", () => {
+    const envelope = {
+      object: "whatsapp_business_account",
+      entry: [{ id: "wa-business-1", changes: [{
+        field: "messages",
+        value: {
+          metadata: { phone_number_id: "123456789012" },
+          statuses: [{
+            id: "wamid-outbound-1", recipient_id: "639123456789",
+            timestamp: "1793192400", status: "failed",
+            errors: [{ code: 131026, title: "Message undeliverable" }]
+          }]
+        }
+      }] }]
+    };
+    const [event] = normalizeMetaEnvelope(envelope);
+    const [redelivery] = normalizeMetaEnvelope(envelope, "2026-10-28T13:01:00.000Z");
+    expect(event).toMatchObject({
+      channel: "whatsapp",
+      accountId: "123456789012",
+      eventType: "delivery.failed",
+      capability: "messaging",
+      providerMessageId: "wamid-outbound-1",
+      identityId: "639123456789",
+      content: []
+    });
+    expect(metaIngressIdentity(event!).deduplicationKey)
+      .toBe(metaIngressIdentity(redelivery!).deduplicationKey);
+  });
+
   it("does not reject valid Messenger messages beside an invalid timestamp", () => {
     const events = normalizeMetaEnvelope({
       object: "page",

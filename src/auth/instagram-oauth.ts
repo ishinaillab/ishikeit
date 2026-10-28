@@ -14,7 +14,11 @@ export const INSTAGRAM_REVIEW_SCOPES = [
 export const INSTAGRAM_WEBHOOK_FIELDS = [
   "messages",
   "standby",
-  "messaging_handover"
+  "messaging_handover",
+  // Keep the professional-account subscription in sync with the app-level
+  // webhook fields approved and enabled by the owner on 2026-10-29.
+  "messaging_seen",
+  "messaging_postbacks"
 ] as const;
 
 interface InstagramOAuthClientOptions {

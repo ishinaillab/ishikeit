@@ -238,7 +238,7 @@ export class MetaSender implements MetaMessageSender {
         : undefined;
       const isTransient = graphError?.is_transient === true || response.status === 429 || response.status >= 500;
       const retryAfter = retryAfterMs(response.headers.get("retry-after"));
-      throw new MetaSendFailure(graphError?.message ?? `Meta request failed with HTTP ${response.status}`, {
+      // Provider error descriptions may contain customer PII or credentials.\n      throw new MetaSendFailure(`Meta provider rejected the message request (HTTP ${response.status})`, {
         retryable: isTransient,
         status: response.status,
         ...(graphError?.code === undefined ? {} : { graphCode: graphError.code }),

@@ -439,6 +439,9 @@ const server = buildServer({
   metaHandoffs,
   appSecret: env.META_APP_SECRET,
   verifyToken: env.META_WEBHOOK_VERIFY_TOKEN,
+  ...(env.LATEPOINT_BOOKING_WEBHOOK_SECRET === undefined
+    ? {}
+    : { latePointWebhook: { secret: env.LATEPOINT_BOOKING_WEBHOOK_SECRET } }),
   ...(telegram === undefined ? {} : { telegram }),
   ...(tiktok === undefined ? {} : { tiktok }),
   ...(tiktokBusinessWebhookService === undefined

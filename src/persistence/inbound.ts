@@ -6,6 +6,7 @@ import { canonicalEventSchema, type CanonicalEvent, type IngressIdentity } from 
 import { enqueueAction, INBOUND_ACCEPTED_TOPIC } from "./outbox.js";
 import type { PostgresDatabase } from "./postgres.js";
 import type { PostgresWhatsAppConsentStore } from "./whatsapp-consent.js";
+import { isWhatsAppTemplateOptOut } from "../domain/meta-whatsapp-optout.js";
 
 export interface InboundStore {
   ingest(event: CanonicalEvent, identity: IngressIdentity, rawBodyHash: string): Promise<"created"|"duplicate">;
@@ -71,12 +72,7 @@ export class PostgresInboundStore implements InboundStore {
       if (inserted.rowCount !== 1) return "duplicate";
       // A verified WhatsApp customer STOP must immediately revoke prior
       // template opt-in in the same transaction, before the webhook ACK.
-      const optOut = event.provider === "meta"
-        && event.channel === "whatsapp"
-        && event.eventType === "message.received"
-        && event.identityId !== undefined
-        && event.content.some((part) =>
-          part.kind === "text" && /^(?:stop|unsubscribe|stop reminders)$/iu.test(part.text.trim()));
+      const optOut = isWhatsAppTemplateOptOut(event);
       if (optOut && this.whatsappConsents !== undefined && event.identityId !== undefined) {
         await this.whatsappConsents.revokeInTransaction(tx, event.accountId, event.identityId);
       }

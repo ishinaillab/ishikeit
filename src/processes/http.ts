@@ -20,6 +20,7 @@ import { runtimeBuildIdentity } from "../observability/build-identity.js";
 import { instagramManagedAccountMatchesInbound } from "../observability/meta-account-coverage.js";
 import { PostgresInboundEventRepository, PostgresInboundStore } from "../persistence/inbound.js";
 import { PostgresMetaHandoffStore } from "../persistence/meta-handoff.js";
+import { PostgresWhatsAppConsentStore } from "../persistence/whatsapp-consent.js";
 import { PostgresOutboxStore } from "../persistence/outbox.js";
 import { PostgresDatabase } from "../persistence/postgres.js";
 import { MessageReceivedHandler } from "../processing/message-handler.js";
@@ -66,6 +67,9 @@ if (env.DATABASE_URL === undefined || env.META_APP_SECRET === undefined || env.M
 
 const db = new PostgresDatabase(env.DATABASE_URL);
 const metaHandoffs = new PostgresMetaHandoffStore(db);
+const whatsappConsents = env.META_WHATSAPP_CONSENT_HASH_KEY_B64 === undefined
+  ? undefined
+  : new PostgresWhatsAppConsentStore(db, env.META_WHATSAPP_CONSENT_HASH_KEY_B64);
 const queue = new PostgresOutboxStore(db);
 const telegram = env.TELEGRAM_BOT_TOKEN === undefined || env.TELEGRAM_WEBHOOK_SECRET === undefined
   ? undefined
@@ -391,7 +395,7 @@ const server = buildServer({
     && (oauthStore === undefined || await oauthStore.ready())
     && (instagramDataLifecycle === undefined || await instagramDataLifecycle.ready())
     && await tiktokAuthorizationReady(),
-  inbound: new PostgresInboundStore(db),
+  inbound: new PostgresInboundStore(db, whatsappConsents),
   metaHandoffs,
   appSecret: env.META_APP_SECRET,
   verifyToken: env.META_WEBHOOK_VERIFY_TOKEN,
@@ -497,11 +501,12 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
   dispatcher.register(new MetaMessagingAdapter(metaSender, metaHandoffs));
   if (env.META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED
     && env.META_WHATSAPP_ACCESS_TOKEN !== undefined
-    && env.META_WHATSAPP_TEMPLATE_PHONE_NUMBER_ID !== undefined) {
+    && env.META_WHATSAPP_TEMPLATE_PHONE_NUMBER_ID !== undefined
+    && whatsappConsents !== undefined) {
     dispatcher.register(new WhatsAppTemplateAdapter(metaSender, {
       phoneNumberId: env.META_WHATSAPP_TEMPLATE_PHONE_NUMBER_ID,
       approvedTemplateKeys: env.META_WHATSAPP_APPROVED_TEMPLATE_KEYS_EFFECTIVE
-    }));
+    }, whatsappConsents));
   }
   if (env.TELEGRAM_BOT_TOKEN !== undefined) {
     dispatcher.register(new TelegramMessagingAdapter(new TelegramSender({

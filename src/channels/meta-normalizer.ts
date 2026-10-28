@@ -284,6 +284,40 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
           if (messageIds.length > 0) continue;
         }
 
+        // Instagram messaging_seen can identify an exact message via read.mid.
+        // Preserve this ID for outbound receipt correlation. Messenger watermark-
+        // only reads remain aggregate because they name no individual message.
+        if (item.read !== undefined && typeof item.read === "object" && item.read !== null) {
+          const read = item.read as Record<string, unknown>;
+          const ids = [
+            ...(typeof read.mid === "string" ? [read.mid] : []),
+            ...(Array.isArray(read.mids)
+              ? read.mids.filter((id): id is string => typeof id === "string")
+              : [])
+          ];
+          const distinctIds = [...new Set(ids.filter((id) => id.length > 0 && id.length <= 2048))];
+          const watermark = typeof read.watermark === "number" && Number.isFinite(read.watermark)
+            ? String(read.watermark)
+            : occurredAt ?? "";
+          for (const messageId of distinctIds.slice(0, 100)) {
+            events.push(makeEvent({
+              provider: "meta",
+              channel,
+              capability: "messaging",
+              accountId,
+              eventType: "delivery.read",
+              providerEventId: `read:${messageId}:${watermark}`,
+              providerMessageId: messageId,
+              ...(senderId === undefined ? {} : { identityId: senderId }),
+              ...(occurredAt === undefined ? {} : { occurredAt }),
+              receivedAt,
+              content: [],
+              data: { read }
+            }));
+          }
+          if (distinctIds.length > 0) continue;
+        }
+
         const eventType = item.postback !== undefined
           ? "message.postback"
           : item.reaction !== undefined

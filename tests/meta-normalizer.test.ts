@@ -302,6 +302,40 @@ describe("Meta normalizer", () => {
     ]);
   });
 
+  it("correlates Instagram message-specific seen receipts and deduplicates retries", () => {
+    const webhook = {
+      object: "instagram",
+      entry: [{ id: "ig-1", messaging: [{
+        sender: { id: "igsid-1" },
+        timestamp: 1790000000000,
+        read: { mid: "mid-outbound-1" }
+      }] }]
+    };
+    const [event] = normalizeMetaEnvelope(webhook);
+    const [retry] = normalizeMetaEnvelope(webhook, "2026-10-01T00:00:00.000Z");
+    expect(event).toMatchObject({
+      channel: "instagram",
+      accountId: "ig-1",
+      eventType: "delivery.read",
+      providerMessageId: "mid-outbound-1"
+    });
+    expect(metaIngressIdentity(event!).deduplicationKey)
+      .toBe(metaIngressIdentity(retry!).deduplicationKey);
+  });
+
+  it("preserves Messenger watermark-only reads without fabricating a message ID", () => {
+    const [event] = normalizeMetaEnvelope({
+      object: "page",
+      entry: [{ id: "page-1", messaging: [{
+        sender: { id: "psid-1" },
+        timestamp: 1790000000000,
+        read: { watermark: 1790000000000 }
+      }] }]
+    });
+    expect(event).toMatchObject({ eventType: "delivery.read", channel: "messenger" });
+    expect(event?.providerMessageId).toBeUndefined();
+  });
+
   it("normalizes WhatsApp media IDs without downloading before the webhook ACK", () => {
     const [event] = normalizeMetaEnvelope({
       object: "whatsapp_business_account",

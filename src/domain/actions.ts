@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { contentPartSchema } from "./content.js";
+import { quickReplyChoicesSchema } from "./quick-replies.js";
 
 const identifierSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 
@@ -20,7 +21,8 @@ export type ActionEnvelope = z.infer<typeof actionEnvelopeSchema>;
 export const messageSendBodySchema = z.object({
   part: contentPartSchema,
   replyTo: z.string().min(1).max(2048).optional(),
-  customerMessageAt: z.string().datetime({ offset: true }).optional()
+  customerMessageAt: z.string().datetime({ offset: true }).optional(),
+  quickReplies: quickReplyChoicesSchema.optional()
 }).strict();
 
 export type MessageSendBody = z.infer<typeof messageSendBodySchema>;

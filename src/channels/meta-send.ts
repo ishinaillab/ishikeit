@@ -1,4 +1,5 @@
 import type { ContentPart } from "../domain/content.js";
+import { quickReplyChoicesSchema } from "../domain/quick-replies.js";
 import type { MetaOutboundPayload, MetaSendResult } from "../domain/outbound.js";
 import { DispatchFailure } from "../dispatch/failure.js";
 import { AccessTokenError } from "../auth/token-provider.js";
@@ -90,6 +91,15 @@ function whatsappMessageId(result: Record<string, unknown>): string | undefined 
 
 function validatePart(payload: MetaOutboundPayload): void {
   const part = payload.message;
+  if (payload.quickReplies !== undefined) {
+    if (payload.channel === "whatsapp" || part.kind !== "text"
+      || !quickReplyChoicesSchema.safeParse(payload.quickReplies).success) {
+      throw new MetaSendFailure(
+        "Quick replies require a valid Messenger or Instagram text message",
+        { retryable: false }
+      );
+    }
+  }
   if (part.kind === "structured") {
     throw new MetaSendFailure("Structured content is not supported by the Meta messaging adapter", { retryable: false });
   }
@@ -192,7 +202,16 @@ export class MetaSender implements MetaMessageSender {
       }
     } else {
       const message = payload.message.kind === "text"
-        ? { text: payload.message.text }
+        ? {
+            text: payload.message.text,
+            ...(payload.quickReplies === undefined ? {} : {
+              quick_replies: payload.quickReplies.map((choice) => ({
+                content_type: "text",
+                title: choice.title,
+                payload: choice.payload
+              }))
+            })
+          }
         : payload.message.kind !== "structured"
           ? {
               attachment: {

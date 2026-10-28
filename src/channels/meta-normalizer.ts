@@ -234,6 +234,36 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
           continue;
         }
 
+        // Messenger delivery events can acknowledge multiple message IDs in one
+        // webhook. Preserve each ID separately for precise outbound correlation.
+        if (item.delivery !== undefined && typeof item.delivery === "object" && item.delivery !== null) {
+          const delivery = item.delivery as Record<string, unknown>;
+          const messageIds = Array.isArray(delivery.mids)
+            ? [...new Set(delivery.mids.filter((id): id is string =>
+                typeof id === "string" && id.length > 0 && id.length <= 2048))]
+            : [];
+          const watermark = typeof delivery.watermark === "number" && Number.isFinite(delivery.watermark)
+            ? String(delivery.watermark)
+            : occurredAt ?? "";
+          for (const messageId of messageIds.slice(0, 100)) {
+            events.push(makeEvent({
+              provider: "meta",
+              channel,
+              capability: "messaging",
+              accountId,
+              eventType: "delivery.delivered",
+              providerEventId: `delivery:${messageId}:${watermark}`,
+              providerMessageId: messageId,
+              ...(senderId === undefined ? {} : { identityId: senderId }),
+              ...(occurredAt === undefined ? {} : { occurredAt }),
+              receivedAt,
+              content: [],
+              data: { delivery }
+            }));
+          }
+          if (messageIds.length > 0) continue;
+        }
+
         const eventType = item.postback !== undefined
           ? "message.postback"
           : item.reaction !== undefined

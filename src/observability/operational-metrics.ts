@@ -39,6 +39,12 @@ interface DeliveryRow extends pg.QueryResultRow {
   count: string;
 }
 
+interface OutboundLifecycleRow extends pg.QueryResultRow {
+  channel: string;
+  status: string;
+  count: string;
+}
+
 interface HandoffRow extends pg.QueryResultRow {
   reason: string;
   count: string;
@@ -66,6 +72,7 @@ export interface OperationalMetricsSnapshot {
   };
   delivery: {
     byChannel: Array<{ channel: string; status: string; count: number }>;
+    outboundLifecycle: Array<{ channel: string; status: string; count: number }>;
   };
   handoffs: {
     total: number;
@@ -109,7 +116,7 @@ export class PostgresOperationalMetrics implements OperationalMetricsReader {
   constructor(private readonly db: PostgresDatabase) {}
 
   async snapshot(windowMinutes: number): Promise<OperationalMetricsSnapshot> {
-    const [inbound, queue, attempts, handoffs, delivery] = await Promise.all([
+    const [inbound, queue, attempts, handoffs, delivery, outboundLifecycle] = await Promise.all([
       this.db.query<InboundSummaryRow>(
         `SELECT
            count(*)::bigint AS received_count,
@@ -179,6 +186,49 @@ export class PostgresOperationalMetrics implements OperationalMetricsReader {
          GROUP BY channel,event_type
          ORDER BY channel,event_type`,
         [windowMinutes]
+      ),
+      // Correlate provider-accepted outbound actions with receipt message IDs
+      // on the exact channel and account. Do not equate Graph HTTP 200
+      // with a recipient delivery confirmation.
+      this.db.query<OutboundLifecycleRow>(
+        `WITH sent AS (
+           SELECT o.payload->'target'->>'channel' AS channel,
+                  o.payload->'target'->>'accountId' AS account_id,
+                  o.payload->'delivery'->>'providerResourceId' AS provider_message_id
+           FROM outbox AS o
+           WHERE o.topic = 'action.dispatch'
+             AND o.published_at >= now() - make_interval(mins => $1)
+             AND o.payload->>'provider' = 'meta'
+             AND o.payload->>'capability' = 'messaging'
+             AND o.payload->>'operation' IN ('message.send','message.template.send')
+             AND o.payload->'target'->>'channel' IN ('messenger','instagram','whatsapp')
+             AND o.payload->'delivery'->>'providerResourceId' IS NOT NULL
+         )
+         SELECT sent.channel,
+                COALESCE(receipt.event_type, 'delivery.unconfirmed') AS status,
+                count(*)::bigint AS count
+         FROM sent
+         LEFT JOIN LATERAL (
+           SELECT ie.event_type
+           FROM inbound_events AS ie
+           WHERE ie.provider = 'meta'
+             AND ie.channel = sent.channel
+             AND ie.account_id = sent.account_id
+             AND ie.provider_message_id = sent.provider_message_id
+             AND ie.event_type IN ('delivery.sent','delivery.delivered','delivery.read','delivery.failed')
+           ORDER BY COALESCE(ie.occurred_at,ie.received_at) DESC,
+                    ie.received_at DESC,
+                    CASE ie.event_type
+                      WHEN 'delivery.failed' THEN 4
+                      WHEN 'delivery.read' THEN 3
+                      WHEN 'delivery.delivered' THEN 2
+                      WHEN 'delivery.sent' THEN 1
+                      ELSE 0 END DESC
+           LIMIT 1
+         ) AS receipt ON true
+         GROUP BY sent.channel,COALESCE(receipt.event_type, 'delivery.unconfirmed')
+         ORDER BY sent.channel,status`,
+        [windowMinutes]
       )
     ]);
 
@@ -232,6 +282,11 @@ export class PostgresOperationalMetrics implements OperationalMetricsReader {
         byChannel: delivery.rows.map((row) => ({
           channel: row.channel,
           status: row.event_type.slice("delivery.".length),
+          count: Number(row.count)
+        })),
+        outboundLifecycle: outboundLifecycle.rows.map((row) => ({
+          channel: row.channel,
+          status: row.status.startsWith("delivery.") ? row.status.slice(9) : row.status,
           count: Number(row.count)
         }))
       },

@@ -41,7 +41,7 @@ describe("lossless Meta AI reply segmentation", () => {
   });
 
   it("keeps existing media and exact response-part order", () => {
-    const media = { kind: "image" as const, source: { kind: "url", value: "https://example.org/a.png" } };
+    const media = { kind: "image" as const, source: { kind: "url" as const, value: "https://example.org/a.png" } };
     const parts = [{ kind: "text" as const, text: "a".repeat(1100) }, media];
     const result = splitMetaReplyParts(parts, "instagram");
     expect(result).toHaveLength(3);

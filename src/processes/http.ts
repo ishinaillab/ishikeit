@@ -328,8 +328,11 @@ async function reconcileInstagramOAuthAccounts(): Promise<void> {
 }
 
 async function reconcileInstagramManagedAccount(): Promise<void> {
+  // Do not reconcile a legacy App Dashboard token while durable OAuth is active.
+  // Only explicitly consented Professional accounts should receive messages.
   if (
-    instagramAccessTokenRouter === undefined
+    instagramOAuthConfigured
+    || instagramAccessTokenRouter === undefined
     || instagramOAuthClient === undefined
     || env.META_INSTAGRAM_ACCESS_TOKEN === undefined
   ) {

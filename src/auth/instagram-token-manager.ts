@@ -35,9 +35,10 @@ export class InstagramAccessTokenRouter implements AccountAccessTokenProvider {
   }
 
   async getAccessToken(accountId: string): Promise<string | undefined> {
+    // When durable OAuth is configured, an unmapped/revoked account must
+    // never silently inherit a legacy App Dashboard token.
     if (this.#oauthProvider !== undefined) {
-      const oauthToken = await this.#oauthProvider.getAccessToken(accountId);
-      if (oauthToken !== undefined) return oauthToken;
+      return this.#oauthProvider.getAccessToken(accountId);
     }
 
     if (this.#managedAccessToken === undefined) return undefined;

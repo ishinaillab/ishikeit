@@ -220,6 +220,60 @@ describe("InstagramOAuthClient", () => {
     });
   });
 
+  it("classifies OAuth code 190 using numeric subcode without exposing token or provider message", async () => {
+    for (const providerSubcode of [460, 463]) {
+      const token = "synthetic-private-ig-access-token";
+      const client = new InstagramOAuthClient({
+        appId: "123456789012345",
+        appSecret: "instagram-secret-123456",
+        fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+          new Response(JSON.stringify({
+            error: {
+              message: "Error validating access token: sensitive session details",
+              type: "OAuthException", code: 190, error_subcode: providerSubcode
+            }
+          }), { status: 400 })
+        )
+      });
+      let failure: unknown;
+      try {
+        await client.resolveProfessionalAccountId(token);
+      } catch (error) { failure = error; }
+      expect(failure).toMatchObject({
+        status: 400, providerCode: "190", providerSubcode,
+        reason: "reauthorization_required", retryable: false
+      });
+      const diagnostic = instagramOAuthFailureDiagnostic(
+        new InstagramOAuthFlowError("account_resolution", failure)
+      );
+      expect(diagnostic).toContain("provider_code=190");
+      expect(diagnostic).toContain(`provider_subcode=${providerSubcode}`);
+      expect(diagnostic).toContain("reason=reauthorization_required");
+      expect(diagnostic).not.toContain(token);
+      expect(diagnostic).not.toContain("sensitive session details");
+      expect(diagnostic).not.toContain("instagram-secret-123456");
+    }
+  });
+
+  it("ignores nonnumeric error subcodes instead of echoing untrusted provider content", async () => {
+    const client = new InstagramOAuthClient({
+      appId: "123456789012345",
+      appSecret: "instagram-secret-123456",
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(JSON.stringify({
+          error: {message: "session invalid", code: 190, error_subcode: "secret-bearing-text"}
+        }), { status: 400 })
+      )
+    });
+    let failure: unknown;
+    try { await client.resolveProfessionalAccountId("test-token"); }
+    catch (error) { failure = error; }
+    expect(failure).toMatchObject({ providerCode: "190", reason: "reauthorization_required" });
+    const diagnostic = instagramOAuthFailureDiagnostic(new InstagramOAuthFlowError("account_resolution", failure));
+    expect(diagnostic).not.toContain("secret-bearing-text");
+    expect(diagnostic).not.toContain("provider_subcode=");
+  });
+
   it("classifies provider rejection reasons without exposing credentials", async () => {
     const client = new InstagramOAuthClient({
       appId: "123456789012345",

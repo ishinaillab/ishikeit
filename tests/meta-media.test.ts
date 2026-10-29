@@ -32,10 +32,11 @@ function requestUrl(input: RequestInfo | URL): string {
   return input.url;
 }
 
-function resolver(fetchImpl: typeof fetch, maxBytes = 1024) {
+function resolver(fetchImpl: typeof fetch, maxBytes = 1024, graphProofAppSecret?: string) {
   return new MetaMediaResolver({
     graphApiVersion: "v26.0",
     whatsappAccessToken: "wa-token",
+    graphProofAppSecret,
     maxBytes,
     fetchImpl
   });
@@ -178,6 +179,27 @@ describe("MetaMediaResolver", () => {
       .toBe("https://lookaside.fbsbx.com/whatsapp_business/attachments/file");
     expect(fetchImpl.mock.calls[1]?.[1]?.headers)
       .toEqual({ authorization: "Bearer wa-token" });
+  });
+
+  it("signs only the WhatsApp Graph media metadata request, never the CDN download", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        url: "https://lookaside.fbsbx.com/whatsapp_business/attachments/file",
+        mime_type: "application/pdf",
+        file_size: "4"
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }));
+
+    await resolver(fetchImpl, 1024, "matching-app-secret").resolve(event, {
+      kind: "document",
+      source: { kind: "provider", value: "media-1" }
+    });
+    const metadataUrl = new URL(requestUrl(fetchImpl.mock.calls[0]![0]));
+    const downloadUrl = new URL(requestUrl(fetchImpl.mock.calls[1]![0]));
+    expect(metadataUrl.searchParams.get("phone_number_id")).toBe("phone-1");
+    expect(metadataUrl.searchParams.get("appsecret_proof")).toMatch(/^[a-f0-9]{64}$/);
+    expect(downloadUrl.searchParams.has("appsecret_proof")).toBe(false);
+    expect(fetchImpl.mock.calls[1]![1]?.headers).toEqual({ authorization: "Bearer wa-token" });
   });
 
   it.each([

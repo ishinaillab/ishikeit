@@ -4,6 +4,7 @@ import { interactiveListSchema } from "../domain/interactive-lists.js";
 import type { MetaOutboundPayload, MetaSendResult } from "../domain/outbound.js";
 import { DispatchFailure } from "../dispatch/failure.js";
 import { AccessTokenError } from "../auth/token-provider.js";
+import { withMetaGraphProof } from "./meta-graph-proof.js";
 import type { AccountAccessTokenProvider } from "../auth/instagram-token-manager.js";
 
 interface GraphErrorBody {
@@ -27,6 +28,7 @@ export interface MetaSenderOptions {
   instagramAccessToken?: string | undefined;
   instagramAccessTokenProvider?: AccountAccessTokenProvider | undefined;
   whatsappAccessToken?: string | undefined;
+  graphProofAppSecret?: string | undefined;
   instagramGraphHost: "graph.instagram.com" | "graph.facebook.com";
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -179,6 +181,7 @@ export class MetaSender implements MetaMessageSender {
   readonly #instagramAccessToken: string | undefined;
   readonly #instagramAccessTokenProvider: AccountAccessTokenProvider | undefined;
   readonly #whatsappAccessToken: string | undefined;
+  readonly #graphProofAppSecret: string | undefined;
   readonly #instagramGraphHost: "graph.instagram.com" | "graph.facebook.com";
   readonly #requestTimeoutMs: number;
   readonly #fetch: typeof fetch;
@@ -189,6 +192,7 @@ export class MetaSender implements MetaMessageSender {
     this.#instagramAccessToken = options.instagramAccessToken;
     this.#instagramAccessTokenProvider = options.instagramAccessTokenProvider;
     this.#whatsappAccessToken = options.whatsappAccessToken;
+    this.#graphProofAppSecret = options.graphProofAppSecret;
     this.#instagramGraphHost = options.instagramGraphHost;
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
     this.#fetch = options.fetchImpl ?? fetch;
@@ -285,9 +289,10 @@ export class MetaSender implements MetaMessageSender {
       };
     }
 
+    const requestUrl = this.#graphUrl(url, token, payload.channel);
     let response: Response;
     try {
-      response = await this.#fetch(url, {
+      response = await this.#fetch(requestUrl, {
         method: "POST",
         redirect: "error",
         headers: {
@@ -362,9 +367,10 @@ export class MetaSender implements MetaMessageSender {
       }
     };
     const url = `https://graph.facebook.com/${this.#graphApiVersion}/${encodeURIComponent(input.accountId)}/messages`;
+    const requestUrl = this.#graphUrl(url, this.#whatsappAccessToken, "whatsapp");
     let response: Response;
     try {
-      response = await this.#fetch(url, {
+      response = await this.#fetch(requestUrl, {
         method: "POST",
         redirect: "error",
         headers: {
@@ -395,6 +401,13 @@ export class MetaSender implements MetaMessageSender {
     }
     const providerMessageId = whatsappMessageId(result);
     return providerMessageId === undefined ? {} : { providerMessageId };
+  }
+
+  #graphUrl(url: string, token: string, channel: "messenger" | "instagram" | "whatsapp"): string {
+    // Instagram Login is a distinct Meta product/app: never sign its token
+    // with the Facebook app's secret even if its Graph host is facebook.com.
+    if (this.#graphProofAppSecret === undefined || channel === "instagram") return url;
+    return withMetaGraphProof(new URL(url), token, this.#graphProofAppSecret).toString();
   }
 
   async #instagramToken(accountId: string): Promise<string | undefined> {

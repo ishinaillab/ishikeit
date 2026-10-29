@@ -31,6 +31,8 @@ import { PostgresInboundEventRepository, PostgresInboundStore } from "../persist
 import { PostgresMetaHandoffStore } from "../persistence/meta-handoff.js";
 import { PostgresWhatsAppConsentStore } from "../persistence/whatsapp-consent.js";
 import { PostgresOutboxStore } from "../persistence/outbox.js";
+import { PostgresLatePointReminderPlanStore } from "../persistence/latepoint-reminder-plans.js";
+import { LatePointReminderClock } from "../workers/latepoint-reminder-clock.js";
 import { PostgresDatabase } from "../persistence/postgres.js";
 import { MessageReceivedHandler } from "../processing/message-handler.js";
 import { MetaRoutingOwnershipHandler } from "../processing/meta-routing-ownership-handler.js";
@@ -80,6 +82,8 @@ const whatsappConsents = env.META_WHATSAPP_CONSENT_HASH_KEY_B64 === undefined
   ? undefined
   : new PostgresWhatsAppConsentStore(db, env.META_WHATSAPP_CONSENT_HASH_KEY_B64);
 const queue = new PostgresOutboxStore(db);
+const latePointReminderPlans = new PostgresLatePointReminderPlanStore(db);
+const latePointReminderClock = new LatePointReminderClock(latePointReminderPlans, logger);
 const telegram = env.TELEGRAM_BOT_TOKEN === undefined || env.TELEGRAM_WEBHOOK_SECRET === undefined
   ? undefined
   : {
@@ -436,7 +440,7 @@ const server = buildServer({
     && (oauthStore === undefined || await oauthStore.ready())
     && (instagramDataLifecycle === undefined || await instagramDataLifecycle.ready())
     && await tiktokAuthorizationReady(),
-  inbound: new PostgresInboundStore(db, whatsappConsents),
+  inbound: new PostgresInboundStore(db, whatsappConsents, latePointReminderPlans),
   metaHandoffs,
   appSecret: env.META_APP_SECRET,
   verifyToken: env.META_WEBHOOK_VERIFY_TOKEN,
@@ -664,6 +668,7 @@ async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   logger.info({ signal }, "shutdown requested");
+  await latePointReminderClock.stop();
   if (processorWorker !== undefined) await processorWorker.stop();
   if (outboundWorker !== undefined) await outboundWorker.stop();
   await server.close();
@@ -689,6 +694,9 @@ async function main(): Promise<void> {
       throw new Error("TikTok Business Account activation requires a usable durable OAuth credential");
     }
     await server.listen({ host: env.HTTP_HOST, port: env.HTTP_PORT_EFFECTIVE });
+    // This clock suppresses deadlines only; no outbound template sender is involved.
+    latePointReminderClock.start();
+    logger.info("non-sending LatePoint deadline reconciliation enabled");
     if (processorWorker !== undefined) {
       processorWorker.start();
       logger.info("inbound AI processor enabled");
@@ -703,7 +711,8 @@ async function main(): Promise<void> {
     }
   } catch (error) {
     logger.fatal({ err: error }, "HTTP process failed");
-    if (processorWorker !== undefined) await processorWorker.stop();
+    await latePointReminderClock.stop();
+  if (processorWorker !== undefined) await processorWorker.stop();
     if (outboundWorker !== undefined) await outboundWorker.stop();
     await db.close();
     process.exitCode = 1;

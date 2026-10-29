@@ -24,6 +24,8 @@ interface ReadinessRow extends pg.QueryResultRow {
   meta_native_routing_ownership: boolean;
   meta_whatsapp_opt_ins: boolean;
   meta_whatsapp_opt_outs: boolean;
+  latepoint_booking_states: boolean;
+  latepoint_reminder_slots: boolean;
 }
 
 export class PostgresDatabase {
@@ -49,6 +51,8 @@ export class PostgresDatabase {
            to_regclass('public.meta_native_routing_ownership') IS NOT NULL AS meta_native_routing_ownership,
            to_regclass('public.meta_whatsapp_template_opt_ins') IS NOT NULL AS meta_whatsapp_opt_ins,
            to_regclass('public.meta_whatsapp_template_opt_outs') IS NOT NULL AS meta_whatsapp_opt_outs,
+           to_regclass('public.latepoint_booking_states') IS NOT NULL AS latepoint_booking_states,
+           to_regclass('public.latepoint_reminder_slots') IS NOT NULL AS latepoint_reminder_slots,
            EXISTS (
              SELECT 1
              FROM information_schema.columns
@@ -106,7 +110,9 @@ export class PostgresDatabase {
         && row.meta_handoff_blocks === true
         && row.meta_native_routing_ownership === true
         && row.meta_whatsapp_opt_ins === true
-        && row.meta_whatsapp_opt_outs === true;
+        && row.meta_whatsapp_opt_outs === true
+        && row.latepoint_booking_states === true
+        && row.latepoint_reminder_slots === true;
     } catch {
       return false;
     }

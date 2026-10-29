@@ -51,6 +51,29 @@ describe("MessageReceivedHandler", () => {
     expect(respond).not.toHaveBeenCalled();
   });
 
+  it("ignores Instagram edit and receipt callbacks even if the handler is called directly", async () => {
+    const respond = vi.fn<BrainClient["respond"]>();
+    const handler = new MessageReceivedHandler({ respond });
+    for (const eventType of ["message.edited", "message.echo", "delivery.read", "unknown"]) {
+      const event = {
+        ...stored,
+        event: {
+          ...stored.event,
+          provider: "meta",
+          channel: "instagram",
+          accountId: "ig-business",
+          identityId: "ig-customer",
+          eventType,
+          occurredAt: new Date().toISOString(),
+          data: { message_edit: {mid: "original-1", num_edit: 1, text: "corrected"} }
+        }
+      };
+      expect(handler.canHandle(event)).toBe(false);
+      expect(await handler.handle(event)).toEqual({actions: [], outcome: "ignored"});
+    }
+    expect(respond).not.toHaveBeenCalled();
+  });
+
   it("creates provider-neutral ordered actions and records a handled outcome", async () => {
     const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({
       handoff: false,

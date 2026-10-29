@@ -1,6 +1,6 @@
 import type pg from "pg";
 import type { CredentialCipher, EncryptedCredentialValue } from "./credential-cipher.js";
-import type { PostgresDatabase } from "../persistence/postgres.js";
+import type { PostgresDatabase, SqlExecutor } from "../persistence/postgres.js";
 
 export interface OAuthCredential {
   provider: string;

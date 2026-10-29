@@ -47,6 +47,11 @@ export class MessageReceivedHandler implements EventHandler {
 
   async handle(stored: StoredInboundEvent): Promise<EventHandlingResult> {
     const event = stored.event;
+    // Defense in depth: a direct handler invocation must never turn an edit,
+    // delivery, echo or unknown callback into a customer AI reply.
+    if (!this.canHandle(stored)) {
+      return { actions: [], outcome: "ignored" };
+    }
     if (isInstagramSelfMessage(stored)) {
       return { actions: [], outcome: "ignored" };
     }

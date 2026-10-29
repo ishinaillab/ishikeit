@@ -137,6 +137,53 @@ describe("Meta normalizer", () => {
     expect(event?.data).toEqual({ message: { mid: "customer-1", text: "How much is BIAB?" } });
   });
 
+  it("tracks Instagram edits by original message ID and revision without treating them as new messages", () => {
+    const payload = (revision: number, text: string, timestamp = 1790000000000) => ({
+      object: "instagram",
+      entry: [{id: "ig-studio", messaging: [{
+        sender: {id: "ig-customer"}, recipient: {id: "ig-studio"}, timestamp,
+        message_edit: {mid: "ig-original-mid-1", text, num_edit: revision}
+      }]}]
+    });
+    const first = normalizeMetaEnvelope(payload(1, "Corrected text"))[0]!;
+    const redelivery = normalizeMetaEnvelope(
+      payload(1, "Corrected text", 1790000001000), "2026-10-01T00:00:00.000Z"
+    )[0]!;
+    const secondEdit = normalizeMetaEnvelope(payload(2, "Corrected again"))[0]!;
+
+    expect(first).toMatchObject({
+      provider: "meta", channel: "instagram", accountId: "ig-studio",
+      capability: "messaging", eventType: "message.edited",
+      providerMessageId: "ig-original-mid-1",
+      providerEventId: "edit:ig-original-mid-1:1",
+      identityId: "ig-customer",
+      content: [{kind: "structured", format: "meta.message_edit",
+        data: {mid: "ig-original-mid-1", text: "Corrected text", num_edit: 1}}]
+    });
+    expect(metaIngressIdentity(first).deduplicationKey)
+      .toBe(metaIngressIdentity(redelivery).deduplicationKey);
+    expect(metaIngressIdentity(first).deduplicationKey)
+      .not.toBe(metaIngressIdentity(secondEdit).deduplicationKey);
+    expect(first.eventType).not.toBe("message.received");
+  });
+
+  it("preserves incomplete Instagram edit metadata without inventing a message ID or replying", () => {
+    const webhook = {
+      object: "instagram",
+      entry: [{id: "ig-studio", messaging: [{
+        sender: {id: "ig-customer"}, timestamp: 1790000000000,
+        message_edit: {text: "an edited text with no original ID"}
+      }]}]
+    };
+    const first = normalizeMetaEnvelope(webhook)[0]!;
+    const retry = normalizeMetaEnvelope(webhook, "2026-10-01T00:00:00.000Z")[0]!;
+    expect(first.eventType).toBe("message.edited");
+    expect(first.providerMessageId).toBeUndefined();
+    expect(first.providerEventId).toBeUndefined();
+    expect(metaIngressIdentity(first).deduplicationKey)
+      .toBe(metaIngressIdentity(retry).deduplicationKey);
+  });
+
   it("normalizes WhatsApp messages using the receiving phone-number account", () => {
     const [event] = normalizeMetaEnvelope({
       object: "whatsapp_business_account",

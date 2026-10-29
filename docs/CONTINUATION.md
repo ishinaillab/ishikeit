@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## 2026-10-30 — Instagram message-edit webhook normalization (verification gated)
+
+- Official Meta [Instagram webhook examples](https://developers.facebook.com/documentation/instagram-platform/webhooks/examples) document `message_edit` with `mid`, `text`, and `num_edit`. The production normalizer previously fell through to a generic `unknown` event, losing canonical original-message and revision correlation.
+- A narrow code correction classifies authenticated Instagram edits as non-reply `message.edited`, preserves the original provider message ID, retains source edit metadata as structured content and data, and keys revisions as `edit:<mid>:<num_edit>` when both bounded fields are valid. Without a usable revision ID, full-event hashing remains the fallback rather than inventing an ID.
+- Direct invocations of the message handler now fail closed on events it cannot handle, so an edit, delivery receipt or echo cannot accidentally generate an AI reply. Unit tests cover edit deduplication, distinct revisions, incomplete metadata and AI non-dispatch. No new webhook subscriptions, test deliveries, customer sends or historic replay.
+- Source-level tests, GitHub CI, Hostinger exact deployment SHA and live/ready endpoints remain release gates. Existing Meta App Review #169, old tester OAuth #176, WhatsApp template/consent, signer proof and security-toggle holds are unchanged.
+
 ## October 30, 2026: latest verified restart checkpoint
 
 Read [ISHIKEIT_CONTINUATION_2026-10-30.md](./ISHIKEIT_CONTINUATION_2026-10-30.md) before older notes. Baseline Hostinger deployment: 4678312bf47821ad13933445d31e708897887d3b (PR #183). Current open issues #176 (legacy Instagram OAuth) and #169 (intentional App Review hold). Live and ready endpoints HTTP 200. Recheck this snapshot in a new chat; it contains the full continuation prompt and current owner holds.

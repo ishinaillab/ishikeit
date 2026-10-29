@@ -44,9 +44,13 @@ describe("MetaSender", () => {
   });
 
   it("adds appsecret_proof to Messenger and WhatsApp Graph requests when explicitly enabled", async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
-      JSON.stringify({ message_id: "m-1" }), { status: 200 }
-    ));
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ message_id: "m-1" }), { status: 200 }
+      ))
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ messages: [{ id: "wamid.1" }] }), { status: 200 }
+      ));
     const sender = new MetaSender({
       graphApiVersion: "v26.0",
       messengerAccessToken: "page-token",
@@ -212,6 +216,50 @@ describe("MetaSender", () => {
         filename: "file.pdf"
       }
     });
+  });
+
+
+  it("quarantines successful HTTP responses missing a provider message ID instead of recording success", async () => {
+    const cases: Array<{ payload: MetaOutboundPayload; body: unknown; status: number }> = [
+      { payload: base, body: { recipient_id: "user-1" }, status: 200 },
+      { payload: base, body: { message_id: "  " }, status: 200 },
+      { payload: { ...base, channel: "instagram", accountId: "ig-1" }, body: {}, status: 200 },
+      { payload: { ...base, channel: "whatsapp", accountId: "phone-1", recipientId: "639000000000" },
+        body: { message_id: "wrong-channel-shape" }, status: 200 },
+      { payload: { ...base, channel: "whatsapp", accountId: "phone-1", recipientId: "639000000000" },
+        body: { messages: [{ id: "" }] }, status: 202 }
+    ];
+    for (const testCase of cases) {
+      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+        JSON.stringify(testCase.body), { status: testCase.status }
+      ));
+      await expect(makeSender(fetchImpl).send(testCase.payload)).rejects.toMatchObject({
+        retryable: true,
+        ambiguous: true,
+        status: testCase.status,
+        message: "Meta provider response missing a valid message ID"
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("quarantines a 2xx WhatsApp template response with no accepted message ID", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ messages: [{ message_status: "accepted" }] }), { status: 200 }
+    ));
+    await expect(makeSender(fetchImpl).sendWhatsAppTemplate({
+      accountId: "phone-1",
+      recipientId: "639000000000",
+      templateName: "approved_name",
+      languageCode: "en_US",
+      bodyParameters: []
+    })).rejects.toMatchObject({
+      retryable: true,
+      ambiguous: true,
+      status: 200,
+      message: "WhatsApp template response missing a valid message ID"
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("classifies throttling as retryable and honors Retry-After", async () => {

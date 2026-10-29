@@ -267,6 +267,39 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
           continue;
         }
 
+        // Meta's Instagram message_edit webhook refers to an existing message.
+        // Persist the revision for UI/audit correlation, never as a new
+        // customer-originated message that would trigger the AI reply handler.
+        if (channel === "instagram" && typeof item.message_edit === "object"
+          && item.message_edit !== null && !Array.isArray(item.message_edit)) {
+          const edit = item.message_edit as Record<string, unknown>;
+          const mid = typeof edit.mid === "string" && edit.mid.length > 0
+            && edit.mid.length <= 2048 ? edit.mid : undefined;
+          const revision = typeof edit.num_edit === "number"
+            && Number.isSafeInteger(edit.num_edit) && edit.num_edit >= 0
+            ? edit.num_edit : undefined;
+          // A reliable revision is part of the provider event identity.
+          // Without both fields, fall back to the full-payload content hash
+          // rather than accidentally deduplicating separate edits.
+          const providerEventId = mid !== undefined && revision !== undefined
+            ? `edit:${mid}:${revision}` : undefined;
+          events.push(makeEvent({
+            provider: "meta",
+            channel,
+            capability: "messaging",
+            accountId,
+            eventType: "message.edited",
+            ...(providerEventId === undefined ? {} : { providerEventId }),
+            ...(mid === undefined ? {} : { providerMessageId: mid }),
+            ...(senderId === undefined ? {} : { identityId: senderId }),
+            ...(occurredAt === undefined ? {} : { occurredAt }),
+            receivedAt,
+            content: [{ kind: "structured", format: "meta.message_edit", data: edit }],
+            data: { message_edit: edit }
+          }));
+          continue;
+        }
+
         if (message !== undefined) {
           const mid = typeof message.mid === "string" ? message.mid : undefined;
           const echo = message.is_echo === true;

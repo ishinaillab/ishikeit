@@ -11,9 +11,9 @@ function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status });
 }
 
-function client(fetchImpl: typeof fetch): MessengerPageSubscriptionClient {
+function client(fetchImpl: typeof fetch, graphProofAppSecret?: string): MessengerPageSubscriptionClient {
   return new MessengerPageSubscriptionClient({
-    appId, graphApiVersion: "v26.0", fetchImpl
+    appId, graphApiVersion: "v26.0", graphProofAppSecret, fetchImpl
   });
 }
 
@@ -64,6 +64,28 @@ describe("Messenger verified Page webhook subscriptions", () => {
     expect(params.get("subscribed_fields")?.split(",")).toEqual(
       ["messages", "message_echoes", ...MESSENGER_PAGE_WEBHOOK_FIELDS.filter((f) => f !== "messages")]
     );
+  });
+
+  it("signs verified Page subscription GET and POST requests when enabled", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ data: [{
+        id: appId, subscribed_fields: ["messages"]
+      }] }))
+      .mockResolvedValueOnce(json({ success: true }))
+      .mockResolvedValueOnce(json({ data: [{
+        id: appId, subscribed_fields: [...MESSENGER_PAGE_WEBHOOK_FIELDS]
+      }] }));
+    await expect(client(fetchImpl, "matching-app-secret")
+      .reconcile("page-access", pageId, knownPage)).resolves.toEqual({ changed: true });
+
+    for (const [url, init] of fetchImpl.mock.calls) {
+      const graphUrl = new URL(url as string);
+      expect(graphUrl.origin).toBe("https://graph.facebook.com");
+      expect(graphUrl.searchParams.get("appsecret_proof")).toMatch(/^[a-f0-9]{64}$/);
+      expect(graphUrl.toString()).not.toContain("page-access");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer page-access");
+      expect(init?.redirect).toBe("error");
+    }
   });
 
   it("refuses Page access if its ID is not previously associated with signed inbound events", async () => {

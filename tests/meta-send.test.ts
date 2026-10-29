@@ -43,6 +43,74 @@ describe("MetaSender", () => {
     });
   });
 
+  it("adds appsecret_proof to Messenger and WhatsApp Graph requests when explicitly enabled", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ message_id: "m-1" }), { status: 200 }
+    ));
+    const sender = new MetaSender({
+      graphApiVersion: "v26.0",
+      messengerAccessToken: "page-token",
+      whatsappAccessToken: "wa-token",
+      graphProofAppSecret: "matching-app-secret",
+      instagramGraphHost: "graph.instagram.com",
+      fetchImpl
+    });
+
+    await sender.send(base);
+    await sender.send({ ...base, channel: "whatsapp", accountId: "phone-1" });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const messenger = new URL(fetchImpl.mock.calls[0]![0] as string);
+    const whatsapp = new URL(fetchImpl.mock.calls[1]![0] as string);
+    expect(messenger.origin).toBe("https://graph.facebook.com");
+    expect(whatsapp.origin).toBe("https://graph.facebook.com");
+    expect(messenger.searchParams.get("appsecret_proof")).toMatch(/^[a-f0-9]{64}$/);
+    expect(whatsapp.searchParams.get("appsecret_proof")).toMatch(/^[a-f0-9]{64}$/);
+    expect(messenger.searchParams.get("appsecret_proof"))
+      .not.toBe(whatsapp.searchParams.get("appsecret_proof"));
+    expect(messenger.toString()).not.toContain("page-token");
+    expect(whatsapp.toString()).not.toContain("wa-token");
+    expect(new Headers(fetchImpl.mock.calls[0]![1]?.headers).get("authorization"))
+      .toBe("Bearer page-token");
+  });
+
+  it("signs approved-template Graph calls without changing the template payload", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ messages: [{ id: "wamid.1" }] }), { status: 200 }
+    ));
+    const sender = new MetaSender({
+      graphApiVersion: "v26.0",
+      whatsappAccessToken: "wa-token",
+      graphProofAppSecret: "matching-app-secret",
+      instagramGraphHost: "graph.instagram.com",
+      fetchImpl
+    });
+    await sender.sendWhatsAppTemplate({
+      accountId: "phone-1", recipientId: "639000000000",
+      templateName: "approved_name", languageCode: "en_US", bodyParameters: []
+    });
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(new URL(url as string).searchParams.get("appsecret_proof")).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.parse(bodyAsString(init?.body))).toMatchObject({
+      type: "template", template: { name: "approved_name", language: { code: "en_US" } }
+    });
+  });
+
+  it("never applies the Facebook app proof to Instagram Login credentials", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ id: "ig-1" }), { status: 200 }
+    ));
+    const sender = new MetaSender({
+      graphApiVersion: "v26.0",
+      instagramAccessToken: "instagram-product-token",
+      graphProofAppSecret: "facebook-app-secret",
+      instagramGraphHost: "graph.facebook.com",
+      fetchImpl
+    });
+    await sender.send({ ...base, channel: "instagram", accountId: "ig-1" });
+    expect(new URL(fetchImpl.mock.calls[0]![0] as string).searchParams.has("appsecret_proof"))
+      .toBe(false);
+  });
+
   it("sends Messenger image attachments by URL", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
       JSON.stringify({ message_id: "m-image" }), { status: 200 }

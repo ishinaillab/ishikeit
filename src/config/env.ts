@@ -34,6 +34,7 @@ const schema = z.object({
   META_APP_ID: z.string().min(1).default("1042452472116584"),
   LATEPOINT_BOOKING_WEBHOOK_SECRET: z.string().min(32).max(256).optional(),
   META_APP_SECRET: z.string().min(1).optional(),
+  META_GRAPH_PROOF_ENABLED: booleanFromEnv.default(false),
   META_WEBHOOK_VERIFY_TOKEN: z.string().min(16).optional(),
   META_GRAPH_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default("v26.0"),
   ACTION_DISPATCH_ENABLED: booleanFromEnv.default(false),
@@ -76,6 +77,14 @@ const schema = z.object({
   TIKTOK_MARKETING_OAUTH_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
 }).superRefine((value, ctx) => {
+  if (value.META_GRAPH_PROOF_ENABLED && value.META_APP_SECRET === undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["META_APP_SECRET"],
+      message: "META_GRAPH_PROOF_ENABLED requires the matching Meta app secret"
+    });
+  }
+
   if ((value.TELEGRAM_BOT_TOKEN === undefined) !== (value.TELEGRAM_WEBHOOK_SECRET === undefined)) {
     ctx.addIssue({
       code: "custom",

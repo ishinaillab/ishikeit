@@ -308,19 +308,24 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
           // never customer-originated requests for an automated reply.
           const selfOriginated = channel === "instagram"
             && (item.is_self === true || message.is_self === true);
-          const providerEventId = mid === undefined ? undefined : "message:" + mid;
+          // A deleted Instagram message is a tombstone notification, not a
+          // fresh customer turn. Keep its original ID for UI/audit correlation,
+          // but never expose any text/attachment content to AI processing.
+          const deleted = channel === "instagram" && message.is_deleted === true;
+          const providerEventId = mid === undefined ? undefined
+            : (deleted ? "delete:" : "message:") + mid;
           events.push(makeEvent({
             provider: "meta",
             channel,
             capability: "messaging",
             accountId,
-            eventType: echo ? "message.echo" : selfOriginated ? "message.self" : "message.received",
+            eventType: deleted ? "message.deleted" : echo ? "message.echo" : selfOriginated ? "message.self" : "message.received",
             ...(providerEventId === undefined ? {} : { providerEventId }),
             ...(mid === undefined ? {} : { providerMessageId: mid }),
             ...((echo ? recipientId : senderId) === undefined ? {} : { identityId: echo ? recipientId! : senderId! }),
             ...(occurredAt === undefined ? {} : { occurredAt }),
             receivedAt,
-            content: messengerContent(message),
+            content: deleted ? [] : messengerContent(message),
             data: { message, ...(selfOriginated ? { selfOriginated: true } : {}) }
           }));
           continue;

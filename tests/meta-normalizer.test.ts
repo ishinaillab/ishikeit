@@ -185,6 +185,52 @@ describe("Meta normalizer", () => {
     expect(events[2]?.content).toEqual([{kind: "text", text: "Price?"}]);
   });
 
+  it("preserves Instagram reaction original-message ID without triggering a new reply", () => {
+    const webhook = (action: "react" | "unreact", timestamp = 1790000000000, sender = "ig-customer") => ({
+      object: "instagram",
+      entry: [{id: "ig-business", messaging: [{
+        sender: {id: sender}, recipient: {id: "ig-business"}, timestamp,
+        reaction: {mid: "original-message-mid-1", action,
+          ...(action === "react" ? {reaction: "love", emoji: "❤️"} : {})}
+      }]}]
+    });
+    const first = normalizeMetaEnvelope(webhook("react"))[0]!;
+    const duplicate = normalizeMetaEnvelope(webhook("react"), "2026-10-30T00:00:00.000Z")[0]!;
+    const undo = normalizeMetaEnvelope(webhook("unreact", 1790000001000))[0]!;
+    const anotherPerson = normalizeMetaEnvelope(webhook("react", 1790000000000, "other-customer"))[0]!;
+
+    expect(first).toMatchObject({
+      provider: "meta", channel: "instagram", accountId: "ig-business",
+      capability: "messaging", eventType: "message.reaction",
+      providerMessageId: "original-message-mid-1", identityId: "ig-customer",
+      content: [{kind: "structured", format: "meta.reaction",
+        data: {mid: "original-message-mid-1", action: "react", reaction: "love"}}]
+    });
+    expect(first.providerEventId).toBeUndefined();
+    expect(metaIngressIdentity(first).deduplicationKey)
+      .toBe(metaIngressIdentity(duplicate).deduplicationKey);
+    expect(metaIngressIdentity(first).deduplicationKey)
+      .not.toBe(metaIngressIdentity(undo).deduplicationKey);
+    expect(metaIngressIdentity(first).deduplicationKey)
+      .not.toBe(metaIngressIdentity(anotherPerson).deduplicationKey);
+    expect(first.content.filter(part => part.kind === "text")).toEqual([]);
+  });
+
+  it("fails closed on missing or invalid Instagram reaction message IDs without inventing one", () => {
+    for (const mid of [undefined, "", "x".repeat(2049), 123]) {
+      const event = normalizeMetaEnvelope({
+        object: "instagram",
+        entry: [{id: "ig-business", messaging: [{
+          sender: {id: "ig-customer"}, timestamp: 1790000000000,
+          reaction: {mid, action: "react", reaction: "love"}
+        }]}]
+      })[0]!;
+      expect(event.eventType).toBe("message.reaction");
+      expect(event.providerMessageId).toBeUndefined();
+      expect(event.providerEventId).toBeUndefined();
+    }
+  });
+
   it("tracks Instagram edits by original message ID and revision without treating them as new messages", () => {
     const payload = (revision: number, text: string, timestamp = 1790000000000) => ({
       object: "instagram",

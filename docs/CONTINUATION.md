@@ -1,5 +1,14 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Read-only Meta token-app and signed Graph proof preflight
+
+- App main baseline prior to PR: 223df3000eb9a64b26fc904925fa9a59bc58abe2, durable operator reconciliation successfully deployed. Operator preflight implemented in separate branch feat/meta-graph-proof-readonly-preflight-20261029, using only the existing OPS_METRICS_TOKEN auth.
+- Strict two-stage, HTTPS graph.facebook.com, timeout-limited read-only validation per configured Messenger and WhatsApp token: Meta /debug_token checks originating app and validity; after both pass, appsecret_proof-signed GET /me checks proof compatibility. No token, URL, HMAC, provider identity or raw error leaks into operator output.
+- Existing META_GRAPH_PROOF_ENABLED stays default OFF; Meta global Require App Secret stays OFF; no user/customer sends, subscription writes, token refresh or Instagram Login proof substitution. No Hostinger env replacement.
+- Local lint, TypeScript, all 450 tests across 64 suites and build passed. Need GitHub CI, Hostinger exact revision, then authenticated private operator preflight on production tokens; a successful mocked test cannot close token ownership issue #158.
+- Remaining Meta App Review NO_SUBMISSION and WhatsApp appointment template PENDING/0 opt-ins unchanged. See docs/META_GRAPH_PROOF_READONLY_PREFLIGHT_2026-10-29.md.
+
+
 ## 2026-10-29 — Meta unknown-outcome operator reconciliation (#159 continuation)
 
 - Implemented separate operator-only, **non-sending** GET and POST reconciliation routes, backed by private RLS-protected `public.meta_outbound_reconciliations` with exact Supabase migration `20261029092718_meta_outbound_unknown_reconciliations` (ishikeit-db PR #13). Migration applied and table RLS/client grants verified before app release.

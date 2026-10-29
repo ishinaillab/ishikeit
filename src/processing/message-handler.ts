@@ -28,6 +28,22 @@ function isInstagramSelfMessage(stored: StoredInboundEvent): boolean {
     && !Array.isArray(message) && (message as Record<string, unknown>).is_self === true;
 }
 
+
+/**
+ * Historic Instagram delete callbacks could be saved as message.received
+ * before normalization distinguished tombstones. Never answer those records.
+ */
+function isInstagramDeletedMessage(stored: StoredInboundEvent): boolean {
+  const event = stored.event;
+  if (event.provider !== "meta" || event.channel !== "instagram") return false;
+  if (typeof event.data !== "object" || event.data === null || Array.isArray(event.data)) {
+    return false;
+  }
+  const message = (event.data as Record<string, unknown>).message;
+  return typeof message === "object" && message !== null
+    && !Array.isArray(message) && (message as Record<string, unknown>).is_deleted === true;
+}
+
 export class MessageReceivedHandler implements EventHandler {
   constructor(
     private readonly brain: BrainClient,
@@ -38,6 +54,7 @@ export class MessageReceivedHandler implements EventHandler {
   canHandle(stored: StoredInboundEvent): boolean {
     const event = stored.event;
     return !isInstagramSelfMessage(stored)
+      && !isInstagramDeletedMessage(stored)
       && event.capability === "messaging"
       && (event.eventType === "message.received"
         || (event.provider === "meta"

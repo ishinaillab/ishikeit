@@ -14,6 +14,7 @@ import { verifyTikTokSignature } from "../security/tiktok.js";
 import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
 import type { MetaUnknownReconciler } from "../persistence/meta-unknown-reconciliation.js";
+import type { MetaGraphPreflightReader } from "../security/meta-graph-preflight.js";
 import type { BuildIdentity } from "../observability/build-identity.js";
 import { verifyBearerAuthorization } from "../security/bearer.js";
 import type { TikTokOAuthController } from "../auth/tiktok-oauth.js";
@@ -94,6 +95,7 @@ export interface ServerDeps {
   buildIdentity?: BuildIdentity;
   metrics?: OperationalMetricsReader;
   metaUnknown?: MetaUnknownReconciler;
+  metaGraphPreflight?: MetaGraphPreflightReader;
   metaHandoffs?: MetaHandoffControl;
   opsMetricsToken?: string;
   runtimeState?: {
@@ -196,6 +198,9 @@ export function buildServer(deps: ServerDeps) {
     });
   }
 
+  if (deps.metaGraphPreflight !== undefined && deps.opsMetricsToken === undefined) {
+    throw new Error("Meta Graph proof preflight requires a bearer token");
+  }
   if (deps.metaUnknown !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("Meta unknown-outcome reconciliation requires an operational bearer token");
   }
@@ -274,6 +279,23 @@ export function buildServer(deps: ServerDeps) {
         return { status: released ? "released" : "not_active" };
       } catch {
         return reply.code(503).send({ status: "handoff_unavailable" });
+      }
+    });
+  }
+
+  if (deps.metaGraphPreflight !== undefined && deps.opsMetricsToken !== undefined) {
+    const preflight = deps.metaGraphPreflight;
+    const token = deps.opsMetricsToken;
+    server.get("/ops/meta/graph-proof-preflight", async (req, reply) => {
+      reply.header("cache-control", "private, no-store");
+      if (!verifyBearerAuthorization(req.headers.authorization, token)) {
+        return reply.header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401).send({ status: "unauthorized" });
+      }
+      try {
+        return { status: "ok", ...await preflight.probe() };
+      } catch {
+        return reply.code(503).send({ status: "preflight_unavailable" });
       }
     });
   }

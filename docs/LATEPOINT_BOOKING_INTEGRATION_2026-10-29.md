@@ -41,3 +41,12 @@ The following queries were executed on the *real Ishi Nail Lab WordPress databas
 - Production existing Meta webhooks remain independent and unaffected when the new route is disabled.
 - Does not add WordPress customers to Supabase, invent consent, change LatePoint Pro Features, enable WhatsApp templates, or create native LatePoint workflows.
 - Never set the Hostinger Node env variable using the full-replacement API response because all currently sensitive values are masked as `********`.
+
+
+## 2026-10-29 production follow-up — WordPress bridge physically installed
+
+- **Actual installation complete:** the Official Hostinger MCP verified account `u328762438`, WordPress installation `30956320` and root `ishinaillab.com`. Generated an authenticated Hostinger TUS upload URL, and the authorized Ishi Local Agent uploaded `ishi-latepoint-booking-bridge.php` with POST HTTP 201 and PATCH HTTP 204. Before transfer, a plugin placeholder directory was created through AI Engine; the final PHP matches this repository's source after newline normalization.
+- WordPress lists `Ishi LatePoint Booking Bridge v0.1.0` **installed and active**. The PHP file did pass GitHub Actions PHP lint and the site was validated by Hostinger as healthy. No bridge-related PHP fatal errors were found in reviewed logs.
+- **Important separation:** *plugin active* does **not** mean *booking event delivery enabled*. `ISHI_LATEPOINT_BRIDGE_ENABLED` and `ISHI_LATEPOINT_BRIDGE_SECRET` have **not been configured**, and the Node app has no dedicated `LATEPOINT_BOOKING_WEBHOOK_SECRET`. Public unsigned POST to `/ishikeit/webhooks/latepoint` returns **HTTP 404** by design, and there are **0 bridge scheduled cron events**.
+- Both WordPress and Ishikeit `/health/live` and `/health/ready` responded HTTP 200 after installation, existing production outbox had 0 pending and 0 new dead letters, and the exact WhatsApp template remains **PENDING**.
+- **Next activation gate:** inject an independent HMAC secret into both WordPress's trusted server configuration and Hostinger Node's secure environment through a path that preserves all previously configured credentials. The official Hostinger API can upload files and manage apps, but its env variable writer *replaces all values* while its getter masks existing secrets. Do not use the dangerous read-and-replace approach. Only then test an authorized booking lifecycle event, with template sending still disabled. No premium LatePoint add-ons were changed.

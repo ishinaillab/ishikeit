@@ -97,6 +97,58 @@ describe("MetaMediaResolver", () => {
       .rejects.toMatchObject({ retryable: false });
   });
 
+  it("stops an oversized streamed download before buffering the whole response", async () => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(600));
+        controller.enqueue(new Uint8Array(500));
+      },
+      cancel
+    });
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(stream, { status: 200 })
+    );
+
+    await expect(resolver(fetchImpl).resolve(event, imagePart))
+      .rejects.toMatchObject({ retryable: false });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts multiple streamed chunks exactly at the configured byte limit", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(512).fill(1));
+        controller.enqueue(new Uint8Array(512).fill(2));
+        controller.close();
+      }
+    });
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(stream, { status: 200 })
+    );
+
+    const result = await resolver(fetchImpl).resolve(event, imagePart);
+    expect(result.bytes.byteLength).toBe(1024);
+    expect(result.bytes[0]).toBe(1);
+    expect(result.bytes[511]).toBe(1);
+    expect(result.bytes[512]).toBe(2);
+    expect(result.bytes[1023]).toBe(2);
+  });
+
+  it("classifies a broken media stream as retryable without exposing its error", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error("upstream connection secret"));
+      }
+    });
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(stream, { status: 200 })
+    );
+
+    await expect(resolver(fetchImpl).resolve(event, imagePart))
+      .rejects.toMatchObject({ retryable: true, message: "Meta media stream failed" });
+  });
+
   it("resolves WhatsApp provider media IDs through metadata then authenticated download", async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({

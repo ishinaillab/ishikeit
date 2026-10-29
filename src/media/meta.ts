@@ -2,10 +2,12 @@ import type { MediaContentPart } from "../domain/content.js";
 import type { CanonicalEvent } from "../domain/events.js";
 import type { MediaResolver, ResolvedMedia } from "./resolver.js";
 import { ProcessingFailure } from "../processing/failure.js";
+import { withMetaGraphProof } from "../channels/meta-graph-proof.js";
 
 interface MetaMediaResolverOptions {
   graphApiVersion: string;
   whatsappAccessToken?: string | undefined;
+  graphProofAppSecret?: string | undefined;
   maxBytes: number;
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -121,6 +123,7 @@ export class MetaMediaResolver implements MediaResolver {
   readonly provider = "meta";
   readonly #graphApiVersion: string;
   readonly #whatsappAccessToken: string | undefined;
+  readonly #graphProofAppSecret: string | undefined;
   readonly #maxBytes: number;
   readonly #requestTimeoutMs: number;
   readonly #fetch: typeof fetch;
@@ -128,6 +131,7 @@ export class MetaMediaResolver implements MediaResolver {
   constructor(options: MetaMediaResolverOptions) {
     this.#graphApiVersion = options.graphApiVersion;
     this.#whatsappAccessToken = options.whatsappAccessToken;
+    this.#graphProofAppSecret = options.graphProofAppSecret;
     this.#maxBytes = options.maxBytes;
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 15_000;
     this.#fetch = options.fetchImpl ?? fetch;
@@ -182,7 +186,10 @@ export class MetaMediaResolver implements MediaResolver {
   }
 
   async #json(url: URL, token: string): Promise<Record<string, unknown>> {
-    const response = await this.#request(url, token);
+    const requestUrl = this.#graphProofAppSecret === undefined
+      ? url
+      : withMetaGraphProof(url, token, this.#graphProofAppSecret);
+    const response = await this.#request(requestUrl, token);
     if (!response.ok) {
       throw new ProcessingFailure("Meta media metadata request failed with HTTP " + response.status, {
         retryable: response.status === 429 || response.status >= 500

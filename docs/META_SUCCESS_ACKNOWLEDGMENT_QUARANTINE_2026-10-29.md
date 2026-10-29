@@ -11,7 +11,7 @@ Meta's documented standard success responses include:
 
 ## Correction
 
-- MetaSender now accepts a success response only if the **correct channel-specific provider message ID** exists and is nonblank. WhatsApp requires `messages[0].id`; Messenger/Instagram accept nonblank `message_id` or `id` (existing supported Instagram shape). A Messenger `message_id` no longer incorrectly passes as a WhatsApp acknowledgment.
+- MetaSender now accepts a success response only if the **correct channel-specific provider message ID** exists and is nonblank. WhatsApp requires `messages[0].id`; Messenger requires nonblank `message_id`; Instagram accepts nonblank `message_id` or `id` (existing supported Instagram shape). A Messenger `message_id` no longer incorrectly passes as a WhatsApp acknowledgment.
 - HTTP 2xx but missing, empty, whitespace-only or wrong-shape ID throws a typed `MetaSendFailure` with `ambiguous=true`, `retryable=true`, the numeric HTTP status, and a fixed non-sensitive message. The existing durable armed send fence and outbox worker **quarantine** that outcome for manual reconciliation; they do not automatically retry or falsely mark an unattributable send as published. The response body and tokens are not logged.
 - No change to the standard 24-hour reply eligibility, customer opt-in, template allowlist, handoff ownership, provider credentials, Meta security settings or feature flags.
 - A valid `messages[0].id` means only that WhatsApp accepted a request; it **does not** establish delivery/read status. Delivery receipts remain tracked independently.

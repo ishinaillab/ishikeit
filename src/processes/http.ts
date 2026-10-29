@@ -446,6 +446,9 @@ const server = buildServer({
   inbound: new PostgresInboundStore(db, whatsappConsents, latePointReminderPlans),
   metaHandoffs,
   appSecret: env.META_APP_SECRET,
+  ...(env.META_INSTAGRAM_OAUTH_APP_SECRET === undefined
+    ? {}
+    : { instagramWebhookAppSecret: env.META_INSTAGRAM_OAUTH_APP_SECRET }),
   verifyToken: env.META_WEBHOOK_VERIFY_TOKEN,
   // Production verifier is pinned to the public-only WordPress signing key.
   // No Hostinger env replacement or HMAC downgrade is necessary.

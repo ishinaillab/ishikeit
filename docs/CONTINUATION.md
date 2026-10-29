@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## 2026-10-30 — Instagram reaction webhook message-ID correlation (release gated)
+
+- Meta's [Instagram webhook examples](https://developers.facebook.com/documentation/instagram-platform/webhooks/examples) show `reaction.mid` identifying the original message plus `action=react|unreact` and optional reaction/emoji. Ishikeit's existing normalization recognized `message.reaction` but omitted the canonical `providerMessageId`, limiting UI/audit linkage to the reacted-to message.
+- The narrowed change keeps reactions **non-reply** messaging events and preserves a validated, bounded original `reaction.mid` in `providerMessageId`; structured `meta.reaction` data is included for provider-neutral display. Full original item data is preserved. It deliberately does **not** assign a synthetic provider event ID because repeated reaction cycles on the same message must remain separate; the existing payload hash handles retry deduplication including actor/action/timestamp.
+- Tests check unchanged redelivery identity, distinct react and unreact events, isolation by reacting actor, rejection of malformed/missing mids and direct-handler AI non-dispatch. No customer messages, synthetic provider webhooks, subscriptions, credentials, DB schema changes, historical replays, App Review, security toggle or WhatsApp reminder sends.
+- GitHub CI, PostgreSQL tests, exact Hostinger commit and live health checks must pass before claiming deployed source correctness; no real organic reaction was sent by the assistant.
+
 ## 2026-10-30 — Instagram deletion webhook reply-safety correction (release gated)
 
 - Meta's current [Instagram webhook examples](https://developers.facebook.com/documentation/instagram-platform/webhooks/examples) specify `message.is_deleted=true` when an Instagram user deletes a message. Source review found that the existing normalizer classified this as `message.received`, potentially allowing an unwanted automated reply to a deleted message. This is a code-level risk; no live incident was established.

@@ -1,5 +1,14 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Meta-authorized Instagram webhook sample authenticated in production
+
+- Explicit owner approval for one Meta Developer Tool test on Ishikeit app 1042452472116584 topic `instagram` field `messages`; Meta MCP returned `success=true` / sample enqueued. One sample only, no further Meta sends authorized.
+- Hostinger production at 2026-10-29T14:43:48.755Z received the webhook; at 14:43:48.757Z logged `Instagram webhook signature verified` after raw-byte HMAC and Instagram envelope verification, and at 14:43:48.758Z logged completed HTTP request. Production deployment at that time was 75cf1b1d77ed81f7f80c888113849372bf7bc1c3 (PR #175).
+- Read-only Supabase showed 0 new Instagram inbound rows after the sample. This proves webhook HMAC acceptance but not a real customer-message persistence path. Hostinger's runtime-log connector exposes only timestamp/level/message and discarded structured signer metadata; the HMAC-accepted signing key for the sample is not retrospectively available.
+- Follow-up low-risk observability patch appends only `signer=meta_app|instagram_product|both` (one category) to the authenticated Instagram log **message string** to survive Hostinger normalization, plus regression test verifying both categories, no secrets. No credential or Meta setting changes, no customer sends, no second sample. Observe future organic events to distinguish signer.
+- Existing holds continue: Meta App Review #169 NOT submitted; don't rotate credentials, blanket enable Require App Secret, send WhatsApp reminders without approval/opt-in, or replay historical dead letters. Instagram legacy OAuth tester Graph 190 tracked in #176; separate managed account is healthy.
+
+
 ## 2026-10-29 — Instagram product signing credential boundary and Unified Login discovery
 
 - Confirmed owner-supplied Instagram product App ID 2316046942582053 differs from main Meta App 1042452472116584. Meta DevTools lists the main Ishikeit app and its instagram/page/WhatsApp webhook subscriptions; Instagram product ID is not independently managed as a separate Meta app through this MCP. Hostinger env has BOTH main and Instagram OAuth product secrets (masked; not read/altered).

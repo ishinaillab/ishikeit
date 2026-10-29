@@ -405,6 +405,8 @@ export interface InstagramOAuthServiceOptions {
   redirectUri: string;
   store: OAuthCredentialStore;
   client: InstagramOAuthClientLike;
+  /** When a live managed studio token exists, OAuth may authorize only that exact Professional account. */
+  expectedManagedAccountId?: () => Promise<string>;
   authorizationUrl?: string;
   scopes?: readonly string[];
   stateTtlSeconds?: number;
@@ -416,6 +418,7 @@ export class InstagramOAuthService implements InstagramOAuthController {
   readonly #redirectUri: string;
   readonly #store: OAuthCredentialStore;
   readonly #client: InstagramOAuthClientLike;
+  readonly #expectedManagedAccountId: (() => Promise<string>) | undefined;
   readonly #authorizationUrl: string;
   readonly #scopes: readonly string[];
   readonly #stateTtlSeconds: number;
@@ -426,6 +429,7 @@ export class InstagramOAuthService implements InstagramOAuthController {
     this.#redirectUri = options.redirectUri;
     this.#store = options.store;
     this.#client = options.client;
+    this.#expectedManagedAccountId = options.expectedManagedAccountId;
     this.#authorizationUrl = options.authorizationUrl ?? DEFAULT_AUTHORIZATION_URL;
     this.#scopes = options.scopes ?? INSTAGRAM_REVIEW_SCOPES;
     this.#stateTtlSeconds = options.stateTtlSeconds ?? 600;
@@ -487,6 +491,14 @@ export class InstagramOAuthService implements InstagramOAuthController {
       throw new InstagramOAuthFlowError("short_token_exchange", error);
     }
 
+    // Meta may return a valid login code with fewer permissions than requested.
+    // Never replace the working studio account with a grant unable to send DMs.
+    if (!INSTAGRAM_REVIEW_SCOPES.every((scope) => short.scopes.includes(scope))) {
+      throw new InstagramOAuthFlowError("short_token_exchange",
+        new InstagramOAuthRequestError("Instagram OAuth did not grant required messaging permissions",
+          { retryable: false, reason: "required_scopes_missing" }));
+    }
+
     let long: InstagramLongLivedTokenResult;
     try {
       long = await this.#client.exchangeLongLived(short.accessToken);
@@ -501,6 +513,23 @@ export class InstagramOAuthService implements InstagramOAuthController {
       );
     } catch (error) {
       throw new InstagramOAuthFlowError("account_resolution", error);
+    }
+
+    // For own-business migration, the previously verified managed token binds
+    // the account identity. Mismatched authorizations must have no durable writes
+    // and must not remap the production account or an unrelated tester alias.
+    if (this.#expectedManagedAccountId !== undefined) {
+      let expected: string;
+      try {
+        expected = await this.#expectedManagedAccountId();
+      } catch (error) {
+        throw new InstagramOAuthFlowError("account_resolution", error);
+      }
+      if (expected !== professionalAccountId) {
+        throw new InstagramOAuthFlowError("account_resolution",
+          new InstagramOAuthRequestError("Authorized Instagram account is not the managed studio account",
+            { retryable: false, reason: "managed_account_identity_mismatch" }));
+      }
     }
 
     const accessExpiresAt = new Date(

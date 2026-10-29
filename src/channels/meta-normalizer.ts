@@ -47,6 +47,10 @@ function messengerContent(message: Record<string, unknown>): ContentPart[] {
   }
 
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+  // Meta temporarily sent both "share" and "ig_post" for the same post.
+  // Keep the provider metadata for audit, but don't feed its caption to the
+  // conversational model twice.
+  const seenSharedPreviews = new Set<string>();
   for (const raw of attachments) {
     if (typeof raw !== "object" || raw === null) continue;
     const attachment = raw as Record<string, unknown>;
@@ -73,6 +77,32 @@ function messengerContent(message: Record<string, unknown>): ContentPart[] {
         ...(typeof payload.mime_type === "string" ? { mimeType: payload.mime_type } : {}),
         ...(typeof payload.name === "string" ? { filename: payload.name } : {})
       });
+    } else if (providerType === "sticker") {
+      // Since August 30, 2026, Messenger sends only "sticker", not the
+      // former duplicate "image" attachment. Treat the documented URL as
+      // image content, but preserve the sticker_id (which is not a media ID)
+      // in its original structured payload for UI and audit.
+      if (ref?.kind === "url") content.push({ kind: "image", source: ref });
+      content.push({ kind: "structured", format: "meta.attachment", data: attachment });
+    } else if (["post", "ig_post", "reel", "ig_reel", "share"].includes(providerType)) {
+      // The Apr 2026 Instagram post-share migration replaced "share" with
+      // "ig_post". This is social metadata, NOT a downloadable image/file.
+      // Pass a bounded visible title to conversation handling while keeping
+      // the original metadata (post ID, URL, title) untouched.
+      const title = typeof payload.title === "string" ? payload.title.trim() : "";
+      if (title.length > 0) {
+        const stableId = typeof payload.ig_post_media_id === "string"
+          ? payload.ig_post_media_id
+          : typeof payload.id === "string" ? payload.id
+          : typeof payload.url === "string" ? payload.url : title;
+        if (!seenSharedPreviews.has(stableId)) {
+          seenSharedPreviews.add(stableId);
+          const typeLabel = providerType === "reel" || providerType === "ig_reel"
+            ? "Shared reel" : providerType === "share" ? "Shared content" : "Shared post";
+          content.push({ kind: "text", text: typeLabel + ": " + title.slice(0, 1024) });
+        }
+      }
+      content.push({ kind: "structured", format: "meta.attachment", data: attachment });
     } else {
       content.push({ kind: "structured", format: "meta.attachment", data: attachment });
     }

@@ -1,5 +1,14 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Modern Meta sticker and Instagram post-share webhook normalization
+
+- Meta Jun 1, 2026 Messenger webhook reference requires recognizing type=sticker; after Aug 30, 2026 the dual image representation was retired. See https://developers.facebook.com/documentation/business-messaging/messenger-platform/webhooks/webhook-events/messages
+- Meta Apr 2026 replaces legacy share with ig_post for Instagram post shares, with metadata including media ID, URL and caption. https://developers.facebook.com/documentation/instagram-platform/webhooks/new
+- Current normalization change: sticker with URL becomes image plus preserved structured metadata (sticker_id alone is NOT treated as a media attachment ID). Modern ig_post, post, ig_reel, reel and legacy share expose bounded text titles for conversation handling, preserving exact structured metadata and avoiding a second duplicate title when share+ig_post both appear. No share link is interpreted as downloadable media.
+- Regression cases cover sticker URL and ID-only, Instagram title length, dual legacy/current post shares, and reel shares. No customer messages or provider tests were sent; require CI and deployment verification.
+- Continued hold: Instagram legacy OAuth code 190/subcode 0, no credential rotation or App Review, no historical message replay, and post-PR177 Instagram signer watch remains active.
+
+
 ## 2026-10-29 — Instagram legacy OAuth code 190 diagnostic update
 
 - Hostinger runtime still reports Meta Graph HTTP 400/code 190 during stored legacy Instagram OAuth account resolution, while managed Instagram token/fields reconciliation succeeds. Supabase aggregates: one stored Instagram OAuth credential with a future expiry, one alias, no explicit revocation. Future expiry does NOT override Meta rejection; do not silently replace or retire either credential.

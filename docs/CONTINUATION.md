@@ -1,5 +1,14 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — OWNER HOLD: Ishikeit Meta App Review / Advanced Access MUST NOT be submitted
+
+- The owner explicitly instructed: **do not submit Ishikeit for Meta review until a comprehensive implementation and live verification audit proves current Meta messaging conforms to Meta's latest official standards and best practices**. Do not treat Meta's `can_submit=true` as permission to submit. Even after tests pass, obtain a separate explicit owner authorization before any submission.
+- Hold issue: [#169](https://github.com/ishinaillab/ishikeit/issues/169). Scope and gated, source-backed matrix: `docs/META_APP_REVIEW_HOLD_AND_STANDARD_ACCESS_AUDIT_2026-10-29.md`.
+- Important source discovery: Meta's official Instagram App Review development scenarios say **Standard Access for a business owned/managed by the app owner does not require App Review**; external third-party businesses typically require Advanced Access and review. Ishikeit appears owned-business-only today, but confirm actual permission/feature/asset requirements before deciding whether ANY Instagram App Review is needed. The Instagram rule must not be generalized to Messenger and WhatsApp.
+- Current provider status: App Review `NO_SUBMISSION`, no requested privileges, unverified app contact email; Meta developer v26.0 latest/version no listed deprecations; app-level webhook subscriptions present. Unverified P0/P1 items include Meta-product-specific live signing app identity, actual Page/WhatsApp token issuer and signed Graph GET compatibility, fresh authorized Instagram/Messenger interaction/ownership canaries, older Instagram tester code 190, and WhatsApp proactive template PENDING with 0 opt-ins.
+- Preserve default-off `META_GRAPH_PROOF_ENABLED`, Meta-wide `Require App Secret` OFF, WhatsApp template dispatcher OFF, no unapproved customer sends, no historical dead-letter replay and no masked Hostinger secret replacements.
+
+
 ## 2026-10-29 — Verified Meta production gate checkpoint after PRs #166/#167
 
 - Ishikeit app functional deployment 0be6203b9bcad958527101a544880716dc0f583c, DB main 1b3cbef7ed838038cfb435953f239f34a931a835; Hostinger build completed, public health/live and ready HTTP 200, full local 450 tests/64 suites, CI passed.

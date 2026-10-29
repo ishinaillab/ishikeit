@@ -13,6 +13,7 @@ import { normalizeTikTokBusinessWebhook, tiktokBusinessIngressIdentity } from ".
 import { verifyTikTokSignature } from "../security/tiktok.js";
 import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
+import type { MetaUnknownReconciler } from "../persistence/meta-unknown-reconciliation.js";
 import type { BuildIdentity } from "../observability/build-identity.js";
 import { verifyBearerAuthorization } from "../security/bearer.js";
 import type { TikTokOAuthController } from "../auth/tiktok-oauth.js";
@@ -92,6 +93,7 @@ export interface ServerDeps {
   /** Compiled-source fingerprint supplied by the startup process, never credentials. */
   buildIdentity?: BuildIdentity;
   metrics?: OperationalMetricsReader;
+  metaUnknown?: MetaUnknownReconciler;
   metaHandoffs?: MetaHandoffControl;
   opsMetricsToken?: string;
   runtimeState?: {
@@ -194,6 +196,9 @@ export function buildServer(deps: ServerDeps) {
     });
   }
 
+  if (deps.metaUnknown !== undefined && deps.opsMetricsToken === undefined) {
+    throw new Error("Meta unknown-outcome reconciliation requires an operational bearer token");
+  }
   if (deps.metrics !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("operational metrics require a bearer token");
   }
@@ -271,6 +276,65 @@ export function buildServer(deps: ServerDeps) {
         return reply.code(503).send({ status: "handoff_unavailable" });
       }
     });
+  }
+
+  // Reconciliation is an operator-only, non-sending attestation ledger.
+  // No route here can requeue, release, delete, or send an outbound message.
+  if (deps.metaUnknown !== undefined && deps.opsMetricsToken !== undefined) {
+    const reconciliation = deps.metaUnknown;
+    const token = deps.opsMetricsToken;
+    const reviewSchema = z.object({
+      disposition: z.enum(["followup_required", "reviewed_do_not_resend"]),
+      evidence: z.enum(["provider_record", "manual_thread_review", "customer_confirmation"]),
+      operatorTag: z.string().min(3).max(48).regex(/^[A-Za-z0-9._-]+$/u)
+    }).strict();
+    const uuidSchema = z.string().uuid();
+
+    server.get<{ Querystring: { limit?: string } }>("/ops/meta/unknown-outcomes", async (req, reply) => {
+      reply.header("cache-control", "private, no-store");
+      if (!verifyBearerAuthorization(req.headers.authorization, token)) {
+        return reply.header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401).send({ status: "unauthorized" });
+      }
+      const rawLimit = req.query.limit ?? "25";
+      if (!/^[0-9]{1,2}$/u.test(rawLimit)) {
+        return reply.code(400).send({ status: "invalid_limit" });
+      }
+      const limit = Number(rawLimit);
+      if (limit < 1 || limit > 50) {
+        return reply.code(400).send({ status: "invalid_limit" });
+      }
+      try {
+        return { status: "ok", ...await reconciliation.list(limit) };
+      } catch {
+        return reply.code(503).send({ status: "reconciliation_unavailable" });
+      }
+    });
+
+    server.post<{ Params: { outboxId: string } }>(
+      "/ops/meta/unknown-outcomes/:outboxId/review", async (req, reply) => {
+        reply.header("cache-control", "private, no-store");
+        if (!verifyBearerAuthorization(req.headers.authorization, token)) {
+          return reply.header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+            .code(401).send({ status: "unauthorized" });
+        }
+        const id = uuidSchema.safeParse(req.params.outboxId);
+        const input = reviewSchema.safeParse(req.body);
+        if (!id.success || !input.success) {
+          return reply.code(400).send({ status: "invalid_review" });
+        }
+        try {
+          const state = await reconciliation.review({ outboxId: id.data, ...input.data });
+          return state === "not_found"
+            ? reply.code(404).send({ status: "not_found" })
+            : state === "conflict"
+              ? reply.code(409).send({ status: "conflict" })
+              : { status: state };
+        } catch {
+          return reply.code(503).send({ status: "reconciliation_unavailable" });
+        }
+      }
+    );
   }
 
   if (deps.metrics !== undefined && deps.opsMetricsToken !== undefined) {

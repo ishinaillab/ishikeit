@@ -74,12 +74,46 @@ function retryAfterMs(value: string | null): number | undefined {
   return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
 }
 
+const MAX_META_GRAPH_RESPONSE_BYTES = 64 * 1024;
+
+/**
+ * Meta Send API responses contain a small acknowledgment or error object.
+ * Bound memory before JSON parsing, even if Content-Length is missing or
+ * inaccurate. Empty/oversized success bodies are quarantined by the caller.
+ */
 async function readJson(response: Response): Promise<Record<string, unknown>> {
+  const body = response.body;
+  if (body === null) return {};
+  const lengthHeader = response.headers.get("content-length");
+  const declaredLength = lengthHeader === null ? undefined : Number(lengthHeader);
+  if (declaredLength !== undefined
+    && Number.isFinite(declaredLength)
+    && declaredLength > MAX_META_GRAPH_RESPONSE_BYTES) {
+    try { await body.cancel(); } catch { /* Ignore upstream cancellation failure. */ }
+    return {};
+  }
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
   try {
-    const parsed: unknown = await response.json();
-    return typeof parsed === "object" && parsed !== null ? parsed as Record<string, unknown> : {};
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      if (part.value === undefined) continue;
+      total += part.value.byteLength;
+      if (total > MAX_META_GRAPH_RESPONSE_BYTES) {
+        try { await reader.cancel(); } catch { /* Ignore cancellation failure. */ }
+        return {};
+      }
+      chunks.push(part.value);
+    }
+    const parsed: unknown = JSON.parse(Buffer.concat(chunks, total).toString("utf8"));
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown> : {};
   } catch {
     return {};
+  } finally {
+    reader.releaseLock();
   }
 }
 

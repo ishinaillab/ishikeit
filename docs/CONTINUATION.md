@@ -2917,3 +2917,12 @@ Read-only WordPress plugin inventory on 2026-10-29 shows **LatePoint 5.7.5**, **
 - All one-shot temporary WordPress PHP canary snippets (IDs 67, 68 and cleanup snippet 69) were deleted; all three auxiliary test options were deleted; the synthetic booking state was deleted by exact ID, which cascaded its two test slots. Signed inbound audit history is intentionally retained.
 - Final queue audit: 0 pending jobs, 0 new dead letters; WordPress bridge remains active with key status ready and event feature ON. No live customer booking events have yet arrived, and no approved WhatsApp template or purpose opt-ins exist. The exact Meta template is `PENDING`; no outbound reminder sender was enabled.
 - Both canonical GitHub main branches and Windows repos are synchronized to the merged app/DB revisions; the premerge uncommitted local draft files were preserved in `D:\\projects\\openai\\project-files\\code-snapshots\\ishikeit-scheduler-premerge-20261029` before synchronization.
+
+## 2026-10-29 Meta standards hardening — source-verified checkpoint
+
+- Implemented bounded streaming for Meta media downloads, replacing full-response buffering before size enforcement; oversized streams are cancelled, stream errors are classified retryable, and redirect/TLS/Bearer controls are preserved.
+- Removed untrusted Meta Graph error text from Instagram OAuth exceptions while retaining structured HTTP status, provider code and bounded diagnostic reason.
+- Added four targeted regression tests; local `npm run check` passed lint, typecheck, all tests and build. This is source-level evidence only until GitHub CI and deployment readback complete.
+- Full rationale, Meta official reference links, prioritized app-secret-proof / ambiguous-send retry / permission / WhatsApp consent follow-ups: `docs/META_STANDARDS_ENGINEERING_REVIEW_2026-10-29.md`. The two separate Deep Research reports are not present in this workspace and should be cross-checked when attached.
+- No live customer sends, consent changes, provider subscription edits, WordPress changes, database migrations or Hostinger environment replacements were made in this hardening patch.
+

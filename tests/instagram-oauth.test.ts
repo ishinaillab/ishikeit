@@ -33,6 +33,28 @@ describe("InstagramOAuthClient", () => {
     expect(diagnostic).not.toContain("provider_code=");
   });
 
+  it("never embeds untrusted Graph error descriptions in exception messages", async () => {
+    const secret = "sensitive-token-in-provider-error";
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({
+        error: { code: 190, message: "Invalid OAuth access token " + secret }
+      }), { status: 400 })
+    );
+    const client = new InstagramOAuthClient({
+      appId: "123456789012345",
+      appSecret: "instagram-secret-123456",
+      fetchImpl
+    });
+
+    const error = await client.resolveProfessionalAccountId("test-token")
+      .then(() => undefined, (reason: unknown) => reason);
+    expect(error).toBeInstanceOf(InstagramOAuthRequestError);
+    expect((error as InstagramOAuthRequestError).status).toBe(400);
+    expect((error as InstagramOAuthRequestError).providerCode).toBe("190");
+    expect((error as Error).message).not.toContain(secret);
+    expect(instagramOAuthFailureDiagnostic(error)).not.toContain(secret);
+  });
+
   it("exchanges a code and then obtains a long-lived token using current Instagram endpoints", async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({

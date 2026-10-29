@@ -370,7 +370,7 @@ export class InstagramOAuthClient implements InstagramOAuthClientLike {
     if (!response.ok) {
       const error = providerError(body);
       throw new InstagramOAuthRequestError(
-        `Instagram OAuth request was rejected: ${error.message.slice(0, 300)}`,
+        `Instagram OAuth request was rejected (HTTP ${response.status})`,
         {
           retryable: response.status === 429 || response.status >= 500,
           status: response.status,

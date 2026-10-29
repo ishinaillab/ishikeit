@@ -77,6 +77,46 @@ function safeFilename(value: string | undefined, url: URL, mimeType: string | un
     : basename;
 }
 
+/** Never buffer an untrusted media response before enforcing its byte limit. */
+async function readBoundedMedia(response: Response, maxBytes: number): Promise<Uint8Array> {
+  if (response.body === null) return new Uint8Array();
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      let next: ReadableStreamReadResult<Uint8Array>;
+      try {
+        next = await reader.read();
+      } catch (error) {
+        throw new ProcessingFailure("Meta media stream failed", { retryable: true, cause: error });
+      }
+      if (next.done) break;
+      if (next.value.byteLength > maxBytes - size) {
+        try {
+          await reader.cancel();
+        } catch {
+          // Cancellation is best-effort; the size violation remains permanent.
+        }
+        throw new ProcessingFailure("Inbound media exceeds the configured byte limit", { retryable: false });
+      }
+      chunks.push(next.value);
+      size += next.value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 export class MetaMediaResolver implements MediaResolver {
   readonly provider = "meta";
   readonly #graphApiVersion: string;
@@ -185,10 +225,7 @@ export class MetaMediaResolver implements MediaResolver {
         throw new ProcessingFailure("Inbound media exceeds the configured byte limit", { retryable: false });
       }
 
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength > this.#maxBytes) {
-        throw new ProcessingFailure("Inbound media exceeds the configured byte limit", { retryable: false });
-      }
+      const bytes = await readBoundedMedia(response, this.#maxBytes);
 
       const mimeType = part.mimeType
         ?? response.headers.get("content-type")?.split(";")[0]?.trim()

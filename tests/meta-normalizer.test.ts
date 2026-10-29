@@ -193,6 +193,94 @@ describe("Meta normalizer", () => {
     ]);
   });
 
+  it("treats the current Messenger sticker webhook type as visible media plus retained metadata", () => {
+    const event = normalizeMetaEnvelope({
+      object: "page",
+      entry: [{ id: "page-1", messaging: [{
+        sender: {id: "psid-1"}, timestamp: 1790000000000,
+        message: {mid: "sticker-1", attachments: [{
+          type: "sticker",
+          payload: {sticker_id: 369239263222822, url: "https://scontent.xx.fbcdn.net/sticker.png"}
+        }]}
+      }]}]
+    })[0];
+    expect(event?.content).toEqual([
+      {kind: "image", source: {kind: "url", value: "https://scontent.xx.fbcdn.net/sticker.png"}},
+      {kind: "structured", format: "meta.attachment", data: {
+        type: "sticker", payload: {sticker_id: 369239263222822, url: "https://scontent.xx.fbcdn.net/sticker.png"}
+      }}
+    ]);
+    expect(event?.eventType).toBe("message.received");
+  });
+
+  it("preserves ID-only stickers without incorrectly using sticker_id as a media attachment ID", () => {
+    const event = normalizeMetaEnvelope({
+      object: "page",
+      entry: [{id: "page-1", messaging: [{
+        sender: {id: "psid-1"}, timestamp: 1790000000000,
+        message: {mid: "sticker-2", attachments: [{type: "sticker", payload: {sticker_id: 3456789}}]}
+      }]}]
+    })[0];
+    expect(event?.content).toEqual([
+      {kind: "structured", format: "meta.attachment",
+        data: {type: "sticker", payload: {sticker_id: 3456789}}}
+    ]);
+  });
+
+  it("handles the post-migration ig_post webhook with readable bounded title and unchanged metadata", () => {
+    const largeTitle = "A".repeat(2000);
+    const event = normalizeMetaEnvelope({
+      object: "instagram",
+      entry: [{id: "ig-1", messaging: [{
+        sender: {id: "igsid-1"}, timestamp: 1790000000000,
+        message: {mid: "share-1", attachments: [
+          {type: "ig_post", payload: {ig_post_media_id: "media-1", title: largeTitle,
+            url: "https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=media-1"}}
+        ]}
+      }]}]
+    })[0];
+    expect(event?.content[0]).toEqual({kind: "text", text: "Shared post: " + "A".repeat(1024)});
+    expect(event?.content[1]).toMatchObject({
+      kind: "structured", format: "meta.attachment",
+      data: {type: "ig_post", payload: {ig_post_media_id: "media-1", title: largeTitle}}
+    });
+    expect(event?.content.filter((part) => part.kind === "image")).toHaveLength(0);
+  });
+
+  it("deduplicates title context when the legacy share and ig_post arrive together", () => {
+    const payload = {ig_post_media_id: "media-2", title: "A quiet nail design",
+      url: "https://lookaside.fbsbx.com/media-2"};
+    const event = normalizeMetaEnvelope({
+      object: "instagram",
+      entry: [{id: "ig-1", messaging: [{
+        sender: {id: "igsid-1"}, timestamp: 1790000000000,
+        message: {mid: "share-2", attachments: [
+          {type: "share", payload}, {type: "ig_post", payload}
+        ]}
+      }]}]
+    })[0];
+    expect(event?.content.filter((part) => part.kind === "text")).toEqual([
+      {kind: "text", text: "Shared content: A quiet nail design"}
+    ]);
+    expect(event?.content.filter((part) => part.kind === "structured")).toHaveLength(2);
+  });
+
+  it("preserves reel shares without misclassifying their links as media downloads", () => {
+    const event = normalizeMetaEnvelope({
+      object: "page",
+      entry: [{id: "page-1", messaging: [{
+        sender: {id: "psid-1"}, timestamp: 1790000000000,
+        message: {mid: "reel-1", attachments: [{
+          type: "ig_reel", payload: {id: "reel-media-1", title: "Manicure inspiration",
+            url: "https://facebook.com/reel/123"}
+        }]}
+      }]}]
+    })[0];
+    expect(event?.content[0]).toEqual({kind:"text", text:"Shared reel: Manicure inspiration"});
+    expect(event?.content[1]).toMatchObject({kind:"structured",format:"meta.attachment"});
+    expect(event?.content.filter((part) => part.kind === "video")).toHaveLength(0);
+  });
+
   it("normalizes Instagram standby messages as routing-only events", () => {
     const [event] = normalizeMetaEnvelope({
       object: "instagram",

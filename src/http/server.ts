@@ -36,7 +36,9 @@ import { instagramOAuthFailureDiagnostic, type InstagramOAuthController } from "
 import type { InstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 import { verifyMetaSignedRequest } from "../security/meta-signed-request.js";
 import {
+  assertLatePointPublicKey,
   normalizeLatePointBookingChange,
+  verifyLatePointAsymmetricWebhook,
   verifyLatePointWebhook
 } from "../appointments/latepoint-booking-ingress.js";
 
@@ -47,7 +49,7 @@ export interface ServerDeps {
   appSecret: string;
   verifyToken: string;
   /** Independently keyed, non-sending WordPress booking lifecycle ingress. */
-  latePointWebhook?: { secret: string };
+  latePointWebhook?: { secret?: string; publicKeyPem?: string };
   telegram?: {
     botId: string;
     webhookSecret: string;
@@ -135,10 +137,15 @@ export function buildServer(deps: ServerDeps) {
 
   // Default off. No endpoint is registered without a dedicated key.
   if (deps.latePointWebhook !== undefined) {
-    if (Buffer.byteLength(deps.latePointWebhook.secret, "utf8") < 32) {
+    const secret = deps.latePointWebhook.secret;
+    const publicKeyPem = deps.latePointWebhook.publicKeyPem;
+    if ((secret === undefined) === (publicKeyPem === undefined)) {
+      throw new Error("LatePoint webhook needs exactly one signing verifier");
+    }
+    if (secret !== undefined && Buffer.byteLength(secret, "utf8") < 32) {
       throw new Error("LatePoint webhook requires an independent 32-byte secret");
     }
-    const secret = deps.latePointWebhook.secret;
+    if (publicKeyPem !== undefined) assertLatePointPublicKey(publicKeyPem);
     server.register((scope, _opts, done) => {
       scope.removeContentTypeParser("application/json");
       scope.addContentTypeParser("application/json", {
@@ -151,9 +158,21 @@ export function buildServer(deps: ServerDeps) {
         }
         const timestamp = Array.isArray(req.headers["x-ishi-latepoint-timestamp"])
           ? undefined : req.headers["x-ishi-latepoint-timestamp"];
-        const signature = Array.isArray(req.headers["x-ishi-latepoint-signature-256"])
-          ? undefined : req.headers["x-ishi-latepoint-signature-256"];
-        if (!verifyLatePointWebhook(req.body, timestamp, signature, secret)) {
+        const signature = publicKeyPem !== undefined
+          ? req.headers["x-ishi-latepoint-signature-p256"]
+          : req.headers["x-ishi-latepoint-signature-256"];
+        const verified = (publicKeyPem !== undefined
+          ? verifyLatePointAsymmetricWebhook(
+              req.body, timestamp,
+              Array.isArray(signature) ? undefined : signature,
+              publicKeyPem
+            )
+          : verifyLatePointWebhook(
+              req.body, timestamp,
+              Array.isArray(signature) ? undefined : signature,
+              secret!
+            ));
+        if (!verified) {
           return reply.code(401).send({ status: "rejected" });
         }
         let snapshot;

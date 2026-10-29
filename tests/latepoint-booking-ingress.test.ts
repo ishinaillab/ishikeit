@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, generateKeyPairSync, sign } from "node:crypto";
 import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 import { buildServer } from "../src/http/server.js";
@@ -28,7 +28,7 @@ function signed(payload: string, time = timestamp, key = secret) {
   };
 }
 
-function harness(enabled = true) {
+function harness(enabled = true, publicKeyPem?: string) {
   const seen = new Set<string>();
   const ingest = vi.fn<InboundStore["ingest"]>().mockImplementation((_event, identity) => {
     if (seen.has(identity.deduplicationKey)) return Promise.resolve("duplicate");
@@ -41,7 +41,7 @@ function harness(enabled = true) {
     inbound: { ingest },
     appSecret: "meta-test-secret",
     verifyToken: "fake-verification-token",
-    ...(enabled ? { latePointWebhook: { secret } } : {})
+    ...(enabled ? { latePointWebhook: publicKeyPem === undefined ? { secret } : { publicKeyPem } } : {})
   });
   return { ingest, server, seen };
 }
@@ -197,6 +197,95 @@ describe("LatePoint signed booking lifecycle webhook (no WhatsApp dispatch)", ()
         payload
       });
       expect(r.statusCode).toBe(401);
+      expect(ingest).not.toHaveBeenCalled();
+    } finally { await server.close(); }
+  });
+});
+
+const keyPair = generateKeyPairSync("ec", {
+  namedCurve: "prime256v1",
+  publicKeyEncoding: { type: "spki", format: "pem" },
+  privateKeyEncoding: { type: "pkcs8", format: "pem" }
+});
+
+function signedP256(body: string, time: string = timestamp, key: string = keyPair.privateKey) {
+  const message = Buffer.concat([
+    Buffer.from("ishi-latepoint-booking-v2\n" + time + "\n", "utf8"),
+    Buffer.from(body)
+  ]);
+  return {
+    "content-type": "application/json",
+    "x-ishi-latepoint-timestamp": time,
+    "x-ishi-latepoint-signature-p256": sign("sha256", message, key).toString("base64url")
+  };
+}
+
+describe("LatePoint P-256 asymmetric production signature verifier", () => {
+  it("verifies an actual ECDSA signature and durable replay dedup without a shared secret", async () => {
+    const { server, ingest } = harness(true, keyPair.publicKey);
+    const raw = JSON.stringify(defaultChange);
+    try {
+      const a = await server.inject({
+        method: "POST", url: "/ishikeit/webhooks/latepoint",
+        headers: signedP256(raw), payload: raw
+      });
+      expect(a.statusCode).toBe(200);
+      expect(a.json()).toEqual({ status: "accepted" });
+      const b = await server.inject({
+        method: "POST", url: "/ishikeit/webhooks/latepoint",
+        headers: signedP256(raw), payload: raw
+      });
+      expect(b.statusCode).toBe(200);
+      expect(b.json()).toEqual({ status: "duplicate" });
+      expect(ingest).toHaveBeenCalledTimes(2);
+    } finally { await server.close(); }
+  });
+
+  it("rejects modified body, old timestamp, forged signer, malformed sig and HMAC fallback", async () => {
+    const { server, ingest } = harness(true, keyPair.publicKey);
+    const raw = JSON.stringify(defaultChange);
+    const another = generateKeyPairSync("ec", {
+      namedCurve: "prime256v1",
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" }
+    });
+    try {
+      const probes = [
+        { headers: signedP256(raw), payload: JSON.stringify({ ...defaultChange, status: "cancelled" }) },
+        { headers: signedP256(raw, String(Number(timestamp) - 600)), payload: raw },
+        { headers: signedP256(raw, timestamp, another.privateKey), payload: raw },
+        { headers: { ...signedP256(raw), "x-ishi-latepoint-signature-p256": "not-base64!" }, payload: raw },
+        { headers: signed(raw), payload: raw },
+        { headers: { "content-type": "application/json" }, payload: raw }
+      ];
+      for (const p of probes) {
+        const r = await server.inject({ method: "POST", url: "/ishikeit/webhooks/latepoint", ...p });
+        expect(r.statusCode).toBe(401);
+      }
+      expect(ingest).not.toHaveBeenCalled();
+    } finally { await server.close(); }
+  });
+
+  it("rejects wrong curve and invalid public keys at boot", () => {
+    const wrongCurve = generateKeyPairSync("ec", {
+      namedCurve: "secp384r1",
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" }
+    });
+    for (const publicKeyPem of [wrongCurve.publicKey, "invalid", ""]) {
+      expect(() => harness(true, publicKeyPem)).toThrow();
+    }
+  });
+
+  it("authenticates before JSON validation and never ingests a signed malformed payload", async () => {
+    const { server, ingest } = harness(true, keyPair.publicKey);
+    const invalid = JSON.stringify({ ...defaultChange, email: "test@example.invalid" });
+    try {
+      const r = await server.inject({
+        method: "POST", url: "/ishikeit/webhooks/latepoint",
+        headers: signedP256(invalid), payload: invalid
+      });
+      expect(r.statusCode).toBe(422);
       expect(ingest).not.toHaveBeenCalled();
     } finally { await server.close(); }
   });

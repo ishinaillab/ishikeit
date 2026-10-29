@@ -89,7 +89,7 @@ function whatsappMessageId(result: Record<string, unknown>): string | undefined 
   const first: unknown = messages[0];
   if (typeof first !== "object" || first === null) return undefined;
   const id = (first as Record<string, unknown>).id;
-  return typeof id === "string" ? id : undefined;
+  return typeof id === "string" && id.trim().length > 0 ? id : undefined;
 }
 
 function validatePart(payload: MetaOutboundPayload): void {
@@ -327,13 +327,24 @@ export class MetaSender implements MetaMessageSender {
       });
     }
 
-    const providerMessageId = typeof result.message_id === "string"
-      ? result.message_id
-      : typeof result.id === "string"
-        ? result.id
-        : whatsappMessageId(result);
-
-    return providerMessageId === undefined ? {} : { providerMessageId };
+    const providerMessageId = payload.channel === "whatsapp"
+      ? whatsappMessageId(result)
+      : typeof result.message_id === "string" && result.message_id.trim().length > 0
+        ? result.message_id
+        : typeof result.id === "string" && result.id.trim().length > 0
+          ? result.id
+          : undefined;
+    if (providerMessageId === undefined) {
+      // An HTTP 2xx POST response may still represent an accepted send.
+      // Without the documented provider message ID, do not publish a
+      // fabricated success and do not retry a potentially delivered message.
+      throw new MetaSendFailure("Meta provider response missing a valid message ID", {
+        retryable: true,
+        ambiguous: true,
+        status: response.status
+      });
+    }
+    return { providerMessageId };
   }
 
   /**
@@ -400,7 +411,14 @@ export class MetaSender implements MetaMessageSender {
       });
     }
     const providerMessageId = whatsappMessageId(result);
-    return providerMessageId === undefined ? {} : { providerMessageId };
+    if (providerMessageId === undefined) {
+      // Quarantine ambiguous template acceptance rather than resend or mark
+      // published without an ID that can match a future WhatsApp receipt.
+      throw new MetaSendFailure("WhatsApp template response missing a valid message ID", {
+        retryable: true, ambiguous: true, status: response.status
+      });
+    }
+    return { providerMessageId };
   }
 
   #graphUrl(url: string, token: string, channel: "messenger" | "instagram" | "whatsapp"): string {

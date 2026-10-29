@@ -1,5 +1,13 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Meta successful HTTP 2xx with no ID: quarantine, not false success
+
+- Real code defect: MetaSender previously returned an empty result on HTTP 200/202 send responses without a documented, nonblank provider message ID. Outbox would incorrectly mark a Meta POST published without a correlatable provider ID.
+- Fixed channel-specific success parsing in src/channels/meta-send.ts: Messenger/Instagram require message_id (or preexisting valid Instagram id), WhatsApp ordinary and template require messages[0].id. Missing/blank/wrong-shape IDs throw ambiguous retryable typed failures, which the existing durable Meta send fence dead-letters for manual reconciliation instead of replaying.
+- Source: docs/META_SUCCESS_ACKNOWLEDGMENT_QUARANTINE_2026-10-29.md, official Meta Messenger/Instagram/WhatsApp response contracts, tests/meta-send.test.ts. Local npm run check: **452 tests across 64 suites, lint/typecheck/build passed**. Never claim provider delivery from HTTP 2xx alone.
+- **OWNER HOLD #169 UNCHANGED: do not submit Meta App Review or Advanced Access without completion of full official-standards audit and explicit separate owner authorization.** Keep live Graph proof default OFF, Meta Require App Secret OFF, proactive WhatsApp reminders OFF, and historical dead letters unreplayed.
+
+
 ## 2026-10-29 — OWNER HOLD: Ishikeit Meta App Review / Advanced Access MUST NOT be submitted
 
 - The owner explicitly instructed: **do not submit Ishikeit for Meta review until a comprehensive implementation and live verification audit proves current Meta messaging conforms to Meta's latest official standards and best practices**. Do not treat Meta's `can_submit=true` as permission to submit. Even after tests pass, obtain a separate explicit owner authorization before any submission.

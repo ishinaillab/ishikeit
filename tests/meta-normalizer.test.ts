@@ -137,6 +137,54 @@ describe("Meta normalizer", () => {
     expect(event?.data).toEqual({ message: { mid: "customer-1", text: "How much is BIAB?" } });
   });
 
+  it("normalizes deleted Instagram messages as non-reply tombstones with original message correlation", () => {
+    const webhook = (timestamp = 1790000000000) => ({
+      object: "instagram",
+      entry: [{ id: "ig-business", messaging: [{
+        sender: { id: "ig-customer" }, recipient: { id: "ig-business" }, timestamp,
+        message: {
+          mid: "original-mid-1", is_deleted: true,
+          text: "text must never become reply input",
+          attachments: [{type: "image", payload: {url: "https://example.com/image.png"}}]
+        }
+      }] }]
+    });
+    const original = normalizeMetaEnvelope(webhook())[0]!;
+    const redelivery = normalizeMetaEnvelope(webhook(1790000005000))[0]!;
+    expect(original).toMatchObject({
+      channel: "instagram", capability: "messaging", accountId: "ig-business",
+      eventType: "message.deleted", providerMessageId: "original-mid-1",
+      providerEventId: "delete:original-mid-1", identityId: "ig-customer",
+      data: { message: { is_deleted: true, mid: "original-mid-1" } }
+    });
+    expect(original.content).toEqual([]);
+    expect(metaIngressIdentity(original).deduplicationKey)
+      .toBe(metaIngressIdentity(redelivery).deduplicationKey);
+    expect(original.eventType).not.toBe("message.received");
+  });
+
+  it("keeps Instagram deletion non-reply even with echo/self flags, while normal messages remain valid", () => {
+    const messages = [
+      {mid: "deleted-self", is_deleted: true, is_echo: true, is_self: true},
+      {mid: "deleted-missing-id", is_deleted: true},
+      {mid: "real-message", text: "Price?", is_deleted: false}
+    ];
+    const events = normalizeMetaEnvelope({
+      object: "instagram",
+      entry: [{id: "ig-business", messaging: messages.map((message) => ({
+        sender: {id: "ig-customer"}, recipient: {id: "ig-business"},
+        timestamp: 1790000000000, message
+      }))}]
+    });
+    expect(events.map(event => event.eventType)).toEqual([
+      "message.deleted", "message.deleted", "message.received"
+    ]);
+    expect(events[0]?.content).toEqual([]);
+    expect(events[1]?.content).toEqual([]);
+    expect(events[1]?.providerMessageId).toBe("deleted-missing-id");
+    expect(events[2]?.content).toEqual([{kind: "text", text: "Price?"}]);
+  });
+
   it("tracks Instagram edits by original message ID and revision without treating them as new messages", () => {
     const payload = (revision: number, text: string, timestamp = 1790000000000) => ({
       object: "instagram",

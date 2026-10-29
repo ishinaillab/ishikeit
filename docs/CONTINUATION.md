@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## 2026-10-30 — Instagram deletion webhook reply-safety correction (release gated)
+
+- Meta's current [Instagram webhook examples](https://developers.facebook.com/documentation/instagram-platform/webhooks/examples) specify `message.is_deleted=true` when an Instagram user deletes a message. Source review found that the existing normalizer classified this as `message.received`, potentially allowing an unwanted automated reply to a deleted message. This is a code-level risk; no live incident was established.
+- The correction produces a separate `message.deleted` tombstone event for Instagram, retaining the provider's original `mid` for UI/audit correlation and a `delete:<mid>` idempotency identity. It exposes no deleted text/attachments in normalized `content`; original provider metadata remains in `data` for existing audit/storage compatibility. Echo/self flags cannot reclassify a deletion as a customer turn. Messenger and normal Instagram messages remain unchanged.
+- A defense-in-depth guard also prevents *historically misclassified* `message.received` events with `data.message.is_deleted=true` from invoking the AI if encountered in normal processing; the change does not replay or edit stored history. Regression tests cover webhook deletion, redelivery deduplication, flag precedence and direct handler non-dispatch.
+- No additional Meta webhook test sends, customer messaging, subscription writes, credential rotations, Meta App Review submission, unapproved WhatsApp reminders, historical replays or global security-toggle changes. GitHub CI, exact Hostinger SHA and independent health verification must pass before closure.
+
 ## 2026-10-30 — Instagram message-edit webhook normalization (verification gated)
 
 - Official Meta [Instagram webhook examples](https://developers.facebook.com/documentation/instagram-platform/webhooks/examples) document `message_edit` with `mid`, `text`, and `num_edit`. The production normalizer previously fell through to a generic `unknown` event, losing canonical original-message and revision correlation.

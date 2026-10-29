@@ -4,7 +4,7 @@
 A Meta message POST can succeed before Ishikeit sees its HTTP response. No provider-side message idempotency key has been verified for this integration. The previous outbox could repeat a possibly accepted request after a timeout, crash or expired worker lease. Graph app-secret proof does not address duplicate sending.
 
 ## Paired implementation
-Database migration: ishinaillab/ishikeit-db PR #11, migration 20261029085132_meta_ambiguous_send_fence.sql.
+Database migration: ishinaillab/ishikeit-db PRs #11 and #12, migration 20261029090102_meta_ambiguous_send_fence.sql.
 
 - PostgresOutboxStore.prepareMetaSend atomically commits the send-start marker while the current live lease is held, only for the exact supported Meta messaging operations. OutboxWorker requires this fence before dispatch and never calls Meta if it cannot acquire it.
 - claimNext excludes all armed rows, including after lease expiry. It automatically quarantines expired armed rows into the existing durable dead-letter store with outcome code provider_outcome_unknown and the normal attempt audit, without replay.

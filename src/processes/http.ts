@@ -31,6 +31,7 @@ import { PostgresInboundEventRepository, PostgresInboundStore } from "../persist
 import { PostgresMetaHandoffStore } from "../persistence/meta-handoff.js";
 import { PostgresWhatsAppConsentStore } from "../persistence/whatsapp-consent.js";
 import { PostgresOutboxStore } from "../persistence/outbox.js";
+import { PostgresMetaUnknownReconciler } from "../persistence/meta-unknown-reconciliation.js";
 import { PostgresLatePointReminderPlanStore } from "../persistence/latepoint-reminder-plans.js";
 import { LatePointReminderClock } from "../workers/latepoint-reminder-clock.js";
 import { PostgresDatabase } from "../persistence/postgres.js";
@@ -524,6 +525,7 @@ const server = buildServer({
     ? {}
     : {
         metrics: new PostgresOperationalMetrics(db),
+        metaUnknown: new PostgresMetaUnknownReconciler(db),
         opsMetricsToken: env.OPS_METRICS_TOKEN
       }),
   runtimeState: {

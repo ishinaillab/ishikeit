@@ -66,6 +66,20 @@ export class OutboxWorker {
     }
 
     try {
+      const metaMessageSend = parsed.data.provider === "meta"
+        && parsed.data.capability === "messaging"
+        && (parsed.data.operation === "message.send" || parsed.data.operation === "message.template.send");
+      if (metaMessageSend) {
+        // Commit the durable fence before *any* provider HTTP call. A crashed
+        // worker cannot reclaim and repeat this POST after the lease expires.
+        if (this.#store.prepareMetaSend === undefined) {
+          throw new DispatchFailure("Meta send fence unavailable", { retryable: false });
+        }
+        if (!await this.#store.prepareMetaSend(job)) {
+          this.#logger.warn({ outboxId: job.id }, "Meta send fence not acquired; no provider call made");
+          return true;
+        }
+      }
       const result = await this.#dispatcher.dispatch(parsed.data);
       const completed = await this.#store.complete(job, result.providerResourceId, {
         provider: parsed.data.provider,
@@ -126,9 +140,24 @@ export class OutboxWorker {
           cause: error
         });
     const nextAttemptNumber = job.attemptCount + 1;
+    // Meta Send API POSTs have no demonstrated provider-side idempotency key.
+    // A lost HTTP response may follow a successful provider send. Preserve the
+    // outcome for manual reconciliation instead of repeating the same POST.
+    const metaMessageSend = provider === "meta"
+      && capability === "messaging"
+      && (operation === "message.send" || operation === "message.template.send");
+    // Retry a Meta POST only after an explicit, unambiguous 429 rejection.
+    // HTTP 5xx and other retryable provider errors may not conclusively rule
+    // out acceptance, so they must not repeat the POST automatically.
+    const definitelyRejectedThrottle = failure.status === 429 && !failure.ambiguous;
+    const unknownMetaOutcome = metaMessageSend
+      && (failure.ambiguous || (failure.retryable && !definitelyRejectedThrottle));
 
-    if (!failure.retryable || nextAttemptNumber >= this.#maxAttempts) {
-      await this.#store.deadLetter(job, this.#failureReason(failure), {
+    if (unknownMetaOutcome || !failure.retryable || nextAttemptNumber >= this.#maxAttempts) {
+      const reason = unknownMetaOutcome
+        ? `provider_outcome_unknown; manual_reconciliation_required=true; ${this.#failureReason(failure)}`
+        : this.#failureReason(failure);
+      await this.#store.deadLetter(job, reason, {
         provider,
         capability,
         operation,
@@ -137,7 +166,7 @@ export class OutboxWorker {
         ambiguous: failure.ambiguous,
         ...(failure.status === undefined ? {} : { httpStatus: failure.status }),
         ...(failure.providerCode === undefined ? {} : { providerCode: failure.providerCode }),
-        errorClass: this.#errorClass(failure)
+        errorClass: unknownMetaOutcome ? "provider_outcome_unknown" : this.#errorClass(failure)
       });
       this.#logger.error({
         outboxId: job.id,
@@ -149,7 +178,9 @@ export class OutboxWorker {
         status: failure.status,
         providerCode: failure.providerCode,
         attempt: nextAttemptNumber
-      }, "outbound action dead-lettered");
+      }, unknownMetaOutcome
+        ? "Meta outbound outcome unknown; quarantined for manual reconciliation without automatic retry"
+        : "outbound action dead-lettered");
       return;
     }
 

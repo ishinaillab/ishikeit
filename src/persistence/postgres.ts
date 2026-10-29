@@ -14,6 +14,7 @@ interface ReadinessRow extends pg.QueryResultRow {
   inbound_events: boolean;
   outbox: boolean;
   outbox_attempts: boolean;
+  meta_send_fence: boolean;
   provider: boolean;
   capability: boolean;
   last_error: boolean;
@@ -47,6 +48,12 @@ export class PostgresDatabase {
            to_regclass('public.inbound_events') IS NOT NULL AS inbound_events,
            to_regclass('public.outbox') IS NOT NULL AS outbox,
            to_regclass('public.outbox_attempts') IS NOT NULL AS outbox_attempts,
+           EXISTS (
+             SELECT 1 FROM information_schema.columns
+             WHERE table_schema='public'
+               AND table_name='outbox'
+               AND column_name='meta_send_started_at'
+           ) AS meta_send_fence,
            to_regclass('public.meta_handoff_blocks') IS NOT NULL AS meta_handoff_blocks,
            to_regclass('public.meta_native_routing_ownership') IS NOT NULL AS meta_native_routing_ownership,
            to_regclass('public.meta_whatsapp_template_opt_ins') IS NOT NULL AS meta_whatsapp_opt_ins,
@@ -101,6 +108,7 @@ export class PostgresDatabase {
       return row?.inbound_events === true
         && row.outbox === true
         && row.outbox_attempts === true
+        && row.meta_send_fence === true
         && row.provider === true
         && row.capability === true
         && row.last_error === true

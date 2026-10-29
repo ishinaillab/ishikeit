@@ -1,5 +1,27 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Durable Meta send fence; DB dependency (pending PRs)
+
+- Continued from user-supplied three Deep Research reports and the earlier ambiguous Meta network-failure quarantine fix in Ishikeit PR #164. Verified current production Supabase outbox had 0 pending, 0 leased and 0 pending Meta actions at preflight. Source baseline remains application main 02695ac and DB main 741ef24 until merge/deployment readback.
+- App PR #164 now includes durable crash/lease-loss protection: before supported Messenger/WhatsApp message or approved-template send, the current lease-holder must atomically persist an outbox send-start fence. No provider request occurs if it cannot be committed. Claimed rows exclude already fenced sends. A bounded SKIP LOCKED recovery marks expired armed sends as provider_outcome_unknown dead letters with an attempt record; these are NEVER auto-replayed. HTTP 429 explicit refusal retries clear the fence; no-response/HTTP 5xx remain quarantined.
+- Canonical DB migration initially tracked in ishinaillab/ishikeit-db PR #11 and reconciled to the exact applied Supabase version by PR #12, 20261029090102_meta_ambiguous_send_fence.sql, adds nullable outbox.meta_send_started_at and a partial recovery index; preserves outbox RLS and client-role restrictions. It must be applied BEFORE app PR #164 is merged/deployed because new app database readiness checks that column. The former application ignores this additive column.
+- Locally verified ESLint, TypeScript, 443 tests across 62 suites and build at this checkpoint. PR-specific CI, production migration/readback, safe synthetic lease-recovery validation and Hostinger exact deployed SHA must be checked separately before declaring production complete.
+- Keep current customer traffic, historical 43 dead letters, Meta webhook signing, Graph proof flag, WhatsApp template/consent and LatePoint scheduling safety holds untouched. Unknown outcome quarantine prioritizes avoiding duplicate sends over guaranteed reply delivery. Manual reconciliation remains necessary; never claim exactly-once provider delivery.
+- Runbook: docs/META_DURABLE_SEND_FENCE_2026-10-29.md. No customer test sends or production flags were toggled in the coding phase.
+
+
+## 2026-10-29 — Three Meta Deep Research reports reconciled; ambiguous-send safety (PR #164)
+
+- Received and reviewed three user-supplied reports: *Meta Platform Deep Research and Ishikeit Technical Audit*, *Executive Summary*, and *Ishikeit Meta Security Module Integration and Production Rollout Plan*. Their target architecture largely reinforces the existing provider-neutral inbox/outbox, signed ingress, product adapters, policy gates and staging strategy. Do not mistake report proposals for missing features without source-level verification.
+- GitHub `main` at review start: `02695ac979890ad9f4c531615b76e7d103557915`. Local D-only Windows app and DB repositories were clean. GitHub PR #163 has already integrated the default-OFF Meta Graph `appsecret_proof` for eligible Messenger/WhatsApp Graph requests; no Meta-wide enforcement or live token verification was claimed.
+- **Confirmed #159 bug:** `src/channels/meta-send.ts` classifies no-response Graph POST failures as `ambiguous=true`, but `src/workers/outbox-worker.ts` previously treated retryability alone as grounds for automatic retry. That could duplicate a customer message already accepted by Meta.
+- PR #164 changes the worker to send such Meta `messaging/message.send` and `message.template.send` failures into the existing durable dead-letter state with safe `provider_outcome_unknown` classification and explicit manual reconciliation. Definite 429 throttling continues retrying, other-provider behavior remains unchanged. No historic dead letters are requeued. This is a conservative **partial** safety fix, not proof of exactly-once delivery.
+- Remaining #159 risk: crash/lease loss between Meta accepting a POST and durable completion may allow reclaim without knowing the previous result. Durable pre-send fencing, expiration recovery policy, reconciliation and lease-loss/restart regression tests remain required. Do not close #159 based on PR #164 alone.
+- Local validation on isolated `fix/meta-ambiguous-send-quarantine-20261029`: ESLint, TypeScript typecheck, **438 Vitest tests/61 files**, and production build passed. GitHub CI and postmerge Hostinger revision/health/queue readback remain separate gates; no provider sends, credentials or app settings changed by this work.
+- Other research gaps remain subject to evidence: live Instagram product-specific signing-secret proof, Page/WABA token app ownership for #158, rate-limit/error policy, bounded Conversations API reconciliation, exact App Review scope readback, WhatsApp template approval and real opt-in/booking state. The appointment-reminder dispatcher stays OFF. See `docs/META_DEEP_RESEARCH_RECONCILIATION_2026-10-29.md` for the prioritized source-bounded matrix.
+- The Windows Git push for this branch returned HTTP 403 because it presented account `elanakkuku`, not authorized `ishinaillab`. Do not overwrite Windows credentials or bypass permission checks. The already-authorized GitHub connector created PR #164 directly from the same verified file contents. Local branch commit `dab1918` is not the remote branch's three-commit SHA.
+ 
+
 ## 2026-10-26 — TikTok read-only activation preflight (newest, default-off)
 
 - Continued from the October 26 authoritative checkpoint on branch

@@ -1168,7 +1168,10 @@ export function buildServer(deps: ServerDeps) {
         const signer = mainSignatureValid && instagramSignatureValid
           ? "both"
           : instagramSignatureValid ? "instagram_product" : "meta_app";
-        deps.logger.info({ signer }, "Instagram webhook signature verified");
+        // Hostinger's production log reader exposes only the log message,
+        // not Pino's structured properties. Include only the bounded signer
+        // category in the message so an authenticated delivery is auditable.
+        deps.logger.info("Instagram webhook signature verified: signer=" + signer);
       }
 
       const rawHash = sha256Hex(req.body);

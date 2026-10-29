@@ -1,5 +1,15 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Instagram product signing credential boundary and Unified Login discovery
+
+- Confirmed owner-supplied Instagram product App ID 2316046942582053 differs from main Meta App 1042452472116584. Meta DevTools lists the main Ishikeit app and its instagram/page/WhatsApp webhook subscriptions; Instagram product ID is not independently managed as a separate Meta app through this MCP. Hostinger env has BOTH main and Instagram OAuth product secrets (masked; not read/altered).
+- Root code gap: shared `POST /ishikeit/webhooks/meta` previously verified all HMAC signatures with only main `META_APP_SECRET`; it never used configured `META_INSTAGRAM_OAUTH_APP_SECRET` for Instagram webhooks. Official Meta docs require raw-byte X-Hub-Signature-256 checks, but published docs do not unambiguously distinguish the signing credential for different Instagram-login paths. Do not claim proven live signing identity yet.
+- Corrected bounded verification: `object=instagram` accepts HMAC from either configured Meta main or Instagram-specific product secret; `object=page` and `object=whatsapp_business_account` still MUST match main secret. Fail closed, parse only after valid HMAC, no raw body/secret/signature logs, INFO identity-only signer label on accepted Instagram events. No env or Meta settings changed. Tests + documented source evidence in `docs/META_INSTAGRAM_WEBHOOK_SIGNING_AND_UNIFIED_LOGIN_2026-10-29.md`.
+- Local lint/typecheck/458 Vitest tests across 64 files/build PASSED. GitHub CI, exact Hostinger deployed SHA, and *real signed Instagram event* remain separate operational gates.
+- Owner's current developer-dashboard notice recommends Instagram Unified Login over legacy Instagram Login for new features. Meta's publicly retrievable migration guide is dated 2024 and addresses Facebook Login → Instagram Login rather than Unified Login. Do not invent a blind migration; maintain responding IG accounts, account mapping, current OAuth and webhook subscriptions until an actual current product contract is validated and a reversible cutover is prepared.
+- **OWNER HOLD #169:** NO Meta App Review submission, no global Require App Secret, no automatic template reminders or dead-letter replays. Preserve proven Messenger/WhatsApp token proof compatible result from 2026-10-29 13:31:35Z.
+
+
 ## 2026-10-29 — Messenger Page-token signed Graph verification correction (PR #174)
 
 - Owner-assisted real read-only production diagnostics: both Meta credentials debugged as issued by Ishikeit app 1042452472116584, valid; Messenger Page token assigned to Ishi Nail Lab Page ID 1152841001256379 with pages_messaging/pages_manage_metadata/pages_show_list. WhatsApp System User had management/messaging permissions and owner-confirmed app/WhatsApp asset assignments.

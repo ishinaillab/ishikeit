@@ -36,6 +36,8 @@ export interface AttemptObservation {
 export interface OutboxDeliveryStore {
   claimNext(topic: string, leaseDurationMs: number): Promise<OutboxJob | undefined>;
   renewLease?(job: OutboxJob, leaseDurationMs: number): Promise<boolean>;
+  /** Durably fence a Meta message POST before any network call. */
+  prepareMetaSend?(job: OutboxJob): Promise<boolean>;
   complete(job: OutboxJob, providerResourceId?: string, observation?: AttemptObservation): Promise<boolean>;
   retry(job: OutboxJob, nextAttemptAt: Date, observation?: AttemptObservation): Promise<boolean>;
   deadLetter(job: OutboxJob, reason: string, observation?: AttemptObservation): Promise<boolean>;
@@ -84,6 +86,7 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
   }
 
   async claimNext(topic: string, leaseDurationMs: number): Promise<OutboxJob | undefined> {
+    if (topic === ACTION_DISPATCH_TOPIC) await this.#quarantineExpiredMetaSends();
     const leaseToken = randomUUID();
     const result = await this.db.query<OutboxRow>(
       `WITH candidate AS (
@@ -92,6 +95,7 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
          WHERE o.topic = $1
            AND o.published_at IS NULL
            AND o.dead_lettered_at IS NULL
+           AND o.meta_send_started_at IS NULL
            AND COALESCE(o.next_attempt_at, o.created_at) <= now()
            AND (o.lease_expires_at IS NULL OR o.lease_expires_at <= now())
            AND NOT EXISTS (
@@ -136,6 +140,64 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
       attemptCount: row.attempt_count,
       leaseToken: row.lease_token
     };
+  }
+
+  /**
+   * Stale armed messages are never claimed again, even after lease expiry.
+   * Convert a small SKIP LOCKED batch into durable outcome-unknown dead letters.
+   * Neither the payload nor any recipient identity enters the reason or metrics.
+   */
+  async #quarantineExpiredMetaSends(): Promise<void> {
+    await this.db.query(
+      `WITH expired AS (
+         SELECT o.id
+         FROM outbox AS o
+         WHERE o.topic = 'action.dispatch'
+           AND o.meta_send_started_at IS NOT NULL
+           AND o.published_at IS NULL
+           AND o.dead_lettered_at IS NULL
+           AND (o.lease_expires_at IS NULL OR o.lease_expires_at <= now())
+         ORDER BY o.meta_send_started_at, o.id
+         FOR UPDATE OF o SKIP LOCKED
+         LIMIT 25
+       ), quarantined AS (
+         UPDATE outbox AS o
+         SET attempt_count = o.attempt_count + 1,
+             dead_lettered_at = now(),
+             dead_letter_reason = 'provider_outcome_unknown; lease_expired_after_send_started; manual_reconciliation_required=true',
+             lease_expires_at = NULL,
+             lease_token = NULL
+         FROM expired
+         WHERE o.id = expired.id
+         RETURNING o.id,o.topic,o.partition_key,o.payload,o.attempt_count
+       )
+       INSERT INTO outbox_attempts
+       (outbox_id,topic,partition_key,attempt_number,outcome,provider,capability,operation,
+        duration_ms,retryable,ambiguous,http_status,provider_code,error_class)
+       SELECT id,topic,partition_key,attempt_count,'dead_letter','meta','messaging',
+              payload->>'operation',NULL,FALSE,TRUE,NULL,NULL,'provider_outcome_unknown'
+       FROM quarantined`
+    );
+  }
+
+  async prepareMetaSend(job: OutboxJob): Promise<boolean> {
+    const result = await this.db.query(
+      `UPDATE outbox
+       SET meta_send_started_at = now()
+       WHERE id = $1::uuid
+         AND topic = 'action.dispatch'
+         AND payload->>'provider' = 'meta'
+         AND payload->>'capability' = 'messaging'
+         AND payload->>'operation' IN ('message.send','message.template.send')
+         AND lease_token = $2::uuid
+         AND lease_expires_at > now()
+         AND published_at IS NULL
+         AND dead_lettered_at IS NULL
+         AND meta_send_started_at IS NULL
+       RETURNING id`,
+      [job.id, job.leaseToken]
+    );
+    return result.rowCount === 1;
   }
 
   async renewLease(job: OutboxJob, leaseDurationMs: number): Promise<boolean> {
@@ -204,7 +266,12 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
          SET attempt_count = attempt_count + 1,
              next_attempt_at = $3,
              lease_expires_at = NULL,
-             lease_token = NULL
+             lease_token = NULL,
+             meta_send_started_at = CASE
+               WHEN $10::boolean = FALSE AND $11::integer = 429
+               THEN NULL
+               ELSE meta_send_started_at
+             END
          WHERE id = $1::uuid AND lease_token = $2::uuid
          RETURNING id,topic,partition_key
        )

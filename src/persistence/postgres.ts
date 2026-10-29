@@ -14,6 +14,7 @@ interface ReadinessRow extends pg.QueryResultRow {
   inbound_events: boolean;
   outbox: boolean;
   outbox_attempts: boolean;
+  meta_outbound_reconciliations: boolean;
   meta_send_fence: boolean;
   provider: boolean;
   capability: boolean;
@@ -48,6 +49,7 @@ export class PostgresDatabase {
            to_regclass('public.inbound_events') IS NOT NULL AS inbound_events,
            to_regclass('public.outbox') IS NOT NULL AS outbox,
            to_regclass('public.outbox_attempts') IS NOT NULL AS outbox_attempts,
+           to_regclass('public.meta_outbound_reconciliations') IS NOT NULL AS meta_outbound_reconciliations,
            EXISTS (
              SELECT 1 FROM information_schema.columns
              WHERE table_schema='public'
@@ -108,6 +110,7 @@ export class PostgresDatabase {
       return row?.inbound_events === true
         && row.outbox === true
         && row.outbox_attempts === true
+        && row.meta_outbound_reconciliations === true
         && row.meta_send_fence === true
         && row.provider === true
         && row.capability === true

@@ -432,6 +432,31 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
           continue;
         }
 
+        // Instagram message_reactions includes the MID of the original
+        // message. Keep the callback non-reply but provide this correlation
+        // without inventing a unique provider event ID: repeated react/unreact
+        // cycles need distinct event identities based on their full payload.
+        if (channel === "instagram" && typeof item.reaction === "object"
+          && item.reaction !== null && !Array.isArray(item.reaction)) {
+          const reaction = item.reaction as Record<string, unknown>;
+          const mid = typeof reaction.mid === "string" && reaction.mid.length > 0
+            && reaction.mid.length <= 2048 ? reaction.mid : undefined;
+          events.push(makeEvent({
+            provider: "meta",
+            channel,
+            capability: "messaging",
+            accountId,
+            eventType: "message.reaction",
+            ...(mid === undefined ? {} : { providerMessageId: mid }),
+            ...(senderId === undefined ? {} : { identityId: senderId }),
+            ...(occurredAt === undefined ? {} : { occurredAt }),
+            receivedAt,
+            content: [{ kind: "structured", format: "meta.reaction", data: reaction }],
+            data: item
+          }));
+          continue;
+        }
+
         const eventType = item.postback !== undefined
           ? "message.postback"
           : item.reaction !== undefined

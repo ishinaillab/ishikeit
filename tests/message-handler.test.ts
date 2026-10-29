@@ -28,6 +28,29 @@ const stored: StoredInboundEvent = {
 };
 
 describe("MessageReceivedHandler", () => {
+  it("rejects self-originated Instagram messages before invoking AI or preparing a send", async () => {
+    const respond = vi.fn<BrainClient["respond"]>();
+    const handler = new MessageReceivedHandler({ respond });
+    const variants: Array<Record<string, unknown>> = [
+      { message: { mid: "self-1", text: "Hello", is_self: true } },
+      { message: { mid: "self-2", text: "Hello" }, selfOriginated: true }
+    ];
+    for (const data of variants) {
+      const self = {
+        ...stored, event: {
+          ...stored.event, provider: "meta", channel: "instagram",
+          accountId: "ig-business", identityId: "ig-scoped-self",
+          eventType: "message.received",
+          occurredAt: new Date().toISOString(),
+          data
+        }
+      };
+      expect(handler.canHandle(self)).toBe(false);
+      await expect(handler.handle(self)).resolves.toEqual({actions: [], outcome: "ignored"});
+    }
+    expect(respond).not.toHaveBeenCalled();
+  });
+
   it("creates provider-neutral ordered actions and records a handled outcome", async () => {
     const respond = vi.fn<BrainClient["respond"]>().mockResolvedValue({
       handoff: false,

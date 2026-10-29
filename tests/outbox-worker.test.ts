@@ -125,4 +125,68 @@ describe("OutboxWorker", () => {
     expect(retry).not.toHaveBeenCalled();
     expect(deadLetter).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["message.send", "message.template.send"])(
+    "quarantines ambiguous Meta %s without repeating a possibly accepted POST",
+    async (operation) => {
+      const metaJob: OutboxJob = {
+        ...job,
+        payload: { ...(job.payload as Record<string, unknown>), provider: "meta", operation }
+      };
+      const { store, deadLetter, retry } = makeStore(metaJob);
+      const execute = vi.fn<ActionAdapter["execute"]>().mockRejectedValue(
+        new DispatchFailure("Meta request lost its HTTP response", { retryable: true, ambiguous: true })
+      );
+      const dispatcher = new ActionDispatcher();
+      dispatcher.register({ provider: "meta", capability: "messaging", operation, execute });
+      const worker = new OutboxWorker({ store, dispatcher, logger: pino({ level: "silent" }) });
+
+      await expect(worker.runOnce()).resolves.toBe(true);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(retry).not.toHaveBeenCalled();
+      expect(deadLetter).toHaveBeenCalledWith(
+        metaJob,
+        expect.stringContaining("provider_outcome_unknown; manual_reconciliation_required=true"),
+        expect.objectContaining({
+          provider: "meta", operation, ambiguous: true,
+          errorClass: "provider_outcome_unknown"
+        })
+      );
+    }
+  );
+
+  it("retries a definite Meta throttling rejection without treating it as provider acceptance", async () => {
+    const metaJob: OutboxJob = {
+      ...job,
+      payload: { ...(job.payload as Record<string, unknown>), provider: "meta" }
+    };
+    const { store, retry, deadLetter } = makeStore(metaJob);
+    const execute = vi.fn<ActionAdapter["execute"]>().mockRejectedValue(
+      new DispatchFailure("Meta throttled this request", { retryable: true, ambiguous: false, status: 429 })
+    );
+    const dispatcher = new ActionDispatcher();
+    dispatcher.register({ provider: "meta", capability: "messaging", operation: "message.send", execute });
+    const worker = new OutboxWorker({ store, dispatcher, logger: pino({ level: "silent" }) });
+
+    await worker.runOnce();
+    expect(retry).toHaveBeenCalledWith(metaJob, expect.any(Date), expect.objectContaining({
+      ambiguous: false, errorClass: "throttled", httpStatus: 429
+    }));
+    expect(deadLetter).not.toHaveBeenCalled();
+  });
+
+  it("preserves the generic retry contract for other providers with ambiguous failures", async () => {
+    const { store, retry, deadLetter } = makeStore(job);
+    const execute = vi.fn<ActionAdapter["execute"]>().mockRejectedValue(
+      new DispatchFailure("Telegram timeout", { retryable: true, ambiguous: true })
+    );
+    const { dispatcher } = makeDispatcher(execute);
+    const worker = new OutboxWorker({
+      store, dispatcher, logger: pino({ level: "silent" }),
+      now: () => new Date("2026-10-29T00:00:00.000Z")
+    });
+    await worker.runOnce();
+    expect(retry).toHaveBeenCalledOnce();
+    expect(deadLetter).not.toHaveBeenCalled();
+  });
 });

@@ -331,7 +331,7 @@ export class MetaSender implements MetaMessageSender {
       ? whatsappMessageId(result)
       : typeof result.message_id === "string" && result.message_id.trim().length > 0
         ? result.message_id
-        : typeof result.id === "string" && result.id.trim().length > 0
+        : payload.channel === "instagram" && typeof result.id === "string" && result.id.trim().length > 0
           ? result.id
           : undefined;
     if (providerMessageId === undefined) {

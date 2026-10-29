@@ -222,6 +222,7 @@ describe("MetaSender", () => {
   it("quarantines successful HTTP responses missing a provider message ID instead of recording success", async () => {
     const cases: Array<{ payload: MetaOutboundPayload; body: unknown; status: number }> = [
       { payload: base, body: { recipient_id: "user-1" }, status: 200 },
+      { payload: base, body: { id: "generic-Graph-object-id" }, status: 200 },
       { payload: base, body: { message_id: "  " }, status: 200 },
       { payload: { ...base, channel: "instagram", accountId: "ig-1" }, body: {}, status: 200 },
       { payload: { ...base, channel: "whatsapp", accountId: "phone-1", recipientId: "639000000000" },

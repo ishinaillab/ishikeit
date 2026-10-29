@@ -29,8 +29,9 @@ function makeStore(claimed: OutboxJob | undefined) {
   const complete = vi.fn<OutboxDeliveryStore["complete"]>().mockResolvedValue(true);
   const retry = vi.fn<OutboxDeliveryStore["retry"]>().mockResolvedValue(true);
   const deadLetter = vi.fn<OutboxDeliveryStore["deadLetter"]>().mockResolvedValue(true);
-  const store: OutboxDeliveryStore = { claimNext, complete, retry, deadLetter };
-  return { store, claimNext, complete, retry, deadLetter };
+  const prepareMetaSend = vi.fn<NonNullable<OutboxDeliveryStore["prepareMetaSend"]>>().mockResolvedValue(true);
+  const store: OutboxDeliveryStore = { claimNext, complete, retry, deadLetter, prepareMetaSend };
+  return { store, claimNext, complete, retry, deadLetter, prepareMetaSend };
 }
 
 function makeDispatcher(
@@ -133,7 +134,7 @@ describe("OutboxWorker", () => {
         ...job,
         payload: { ...(job.payload as Record<string, unknown>), provider: "meta", operation }
       };
-      const { store, deadLetter, retry } = makeStore(metaJob);
+      const { store, deadLetter, retry, prepareMetaSend } = makeStore(metaJob);
       const execute = vi.fn<ActionAdapter["execute"]>().mockRejectedValue(
         new DispatchFailure("Meta request lost its HTTP response", { retryable: true, ambiguous: true })
       );
@@ -143,6 +144,8 @@ describe("OutboxWorker", () => {
 
       await expect(worker.runOnce()).resolves.toBe(true);
       expect(execute).toHaveBeenCalledTimes(1);
+      expect(prepareMetaSend).toHaveBeenCalledExactlyOnceWith(metaJob);
+      expect(prepareMetaSend.mock.invocationCallOrder[0]).toBeLessThan(execute.mock.invocationCallOrder[0]!);
       expect(retry).not.toHaveBeenCalled();
       expect(deadLetter).toHaveBeenCalledWith(
         metaJob,
@@ -172,6 +175,36 @@ describe("OutboxWorker", () => {
     expect(retry).toHaveBeenCalledWith(metaJob, expect.any(Date), expect.objectContaining({
       ambiguous: false, errorClass: "throttled", httpStatus: 429
     }));
+    expect(deadLetter).not.toHaveBeenCalled();
+  });
+
+  it("quarantines Meta HTTP 5xx despite a retryable provider response", async () => {
+    const metaJob = { ...job, payload: { ...(job.payload as Record<string, unknown>), provider: "meta" } };
+    const { store, retry, deadLetter } = makeStore(metaJob);
+    const execute = vi.fn<ActionAdapter["execute"]>().mockRejectedValue(
+      new DispatchFailure("Meta returned HTTP 500", { retryable: true, ambiguous: false, status: 500 })
+    );
+    const dispatcher = new ActionDispatcher();
+    dispatcher.register({ provider: "meta", capability: "messaging", operation: "message.send", execute });
+    const worker = new OutboxWorker({ store, dispatcher, logger: pino({ level: "silent" }) });
+    await worker.runOnce();
+    expect(retry).not.toHaveBeenCalled();
+    expect(deadLetter).toHaveBeenCalledWith(metaJob, expect.stringContaining("provider_outcome_unknown"),
+      expect.objectContaining({ errorClass: "provider_outcome_unknown" }));
+  });
+
+  it("makes no provider call if the durable Meta send fence cannot be acquired", async () => {
+    const metaJob = { ...job, payload: { ...(job.payload as Record<string, unknown>), provider: "meta" } };
+    const { store, prepareMetaSend, retry, deadLetter } = makeStore(metaJob);
+    prepareMetaSend.mockResolvedValue(false);
+    const execute = vi.fn<ActionAdapter["execute"]>().mockResolvedValue({ providerResourceId: "unexpected" });
+    const dispatcher = new ActionDispatcher();
+    dispatcher.register({ provider: "meta", capability: "messaging", operation: "message.send", execute });
+    const worker = new OutboxWorker({ store, dispatcher, logger: pino({ level: "silent" }) });
+    await worker.runOnce();
+    expect(prepareMetaSend).toHaveBeenCalledOnce();
+    expect(execute).not.toHaveBeenCalled();
+    expect(retry).not.toHaveBeenCalled();
     expect(deadLetter).not.toHaveBeenCalled();
   });
 

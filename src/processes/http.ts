@@ -321,10 +321,11 @@ async function reconcileInstagramOAuthAccounts(): Promise<void> {
 
   for (const credential of credentials) {
     let stage: InstagramOAuthFlowStage = "credential_lookup";
+    let accessToken: string | undefined;
     try {
       // Never use a stale snapshot when the account has been revoked or its
       // credential disappeared between listing and token resolution.
-      const accessToken = instagramAccessTokenManager === undefined
+      accessToken = instagramAccessTokenManager === undefined
         ? credential.accessToken
         : await instagramAccessTokenManager.getAccessToken(credential.accountId);
       if (accessToken === undefined) {
@@ -350,6 +351,13 @@ async function reconcileInstagramOAuthAccounts(): Promise<void> {
       );
       logger.info("Instagram OAuth account routing and webhook subscription reconciled");
     } catch (error) {
+      if (error instanceof InstagramOAuthRequestError
+        && error.providerCode === "190" && accessToken !== undefined) {
+        // Meta explicitly rejected this exact OAuth grant. Prevent another
+        // outbound attempt using it in this runtime, without revoking the
+        // stored account or redirecting to another account's token.
+        instagramAccessTokenManager?.markProviderRejected(credential.accountId, accessToken);
+      }
       // Hostinger exposes log messages but not structured details. Emit only
       // allowlisted machine diagnostics, never token-bearing URLs, API error
       // bodies or account identifiers.

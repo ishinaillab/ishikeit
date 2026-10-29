@@ -1,5 +1,14 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Meta unknown-outcome operator reconciliation (#159 continuation)
+
+- Implemented separate operator-only, **non-sending** GET and POST reconciliation routes, backed by private RLS-protected `public.meta_outbound_reconciliations` with exact Supabase migration `20261029092718_meta_outbound_unknown_reconciliations` (ishikeit-db PR #13). Migration applied and table RLS/client grants verified before app release.
+- GET yields bounded metadata and unresolved/reviewed counts; POST stores an immutable human attestation with enumerated disposition/evidence and hashed operator tag. Neither endpoint resets dead letters, creates actions, contacts Meta, or sends messages. No raw recipients/customer content/provider error text in results.
+- Fail-closed operational bearer auth, strict body and UUID validation, duplicate idempotence, 409 conflict, safe 404 and 503; existing Meta outbox fence remains untouched. See `docs/META_UNKNOWN_OUTCOME_OPERATOR_RUNBOOK_2026-10-29.md`.
+- Local source lint, TypeScript check, focused API/store tests and all 447 tests across 63 suites plus production build passed at this checkpoint. GitHub CI and exact deployment must still be read back separately before declaring this version live.
+- Open issues #159 (operator identity/RBAC, provider cross-verification) and #158 (real token/app proof canaries) remain; Instagram App Review and WhatsApp pending template/consent gates remain unchanged.
+
+
 ## 2026-10-29 — Verified Meta durable outbox production release (supersedes pending-state notes)
 
 - App PR #164 MERGED and Hostinger build COMPLETED at exact SHA 58be7eb746117428f35af6fe8f064ca8dcb20e69; direct HTTPS live/ready/build HTTP 200. Local 443/443 tests, ESLint/typecheck/build and GitHub Node/PHP/context checks passed.

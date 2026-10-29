@@ -1,5 +1,13 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Instagram legacy OAuth code 190 diagnostic update
+
+- Hostinger runtime still reports Meta Graph HTTP 400/code 190 during stored legacy Instagram OAuth account resolution, while managed Instagram token/fields reconciliation succeeds. Supabase aggregates: one stored Instagram OAuth credential with a future expiry, one alias, no explicit revocation. Future expiry does NOT override Meta rejection; do not silently replace or retire either credential.
+- Meta official access-token debug guidance distinguishes subcodes (e.g. 460 invalidated, 463 expired); prior `InstagramOAuthClient` discarded the optional numeric `error_subcode` and logged generic `provider_rejected`. Branch PR for allowlisted subcode diagnostics & `reauthorization_required` category, preserving secret/PII-free logs and no OAuth changes; regression tests for both documented subcodes and malformed values. Wait for CI, Hostinger deployed SHA/readback and provider-supplied subcode before narrowing cause.
+- Still requires account-owner OAuth consent if old tester grant must be reauthorized, or explicit retirement authorization if confirmed obsolete. Healthy managed Instagram app must not be modified as workaround. App Review hold #169 and no unsolicited customer sends preserved.
+- Instagram webhook signer-category probe is deployed under PR #177; the Meta-authorized sample passed HMAC but Hostinger omitted older structured signer field. Watch is now configured to detect `signer=` category only after PR #177 deployment SHA 774a0d2406ca999b204c6fca68408b3aa2275863. No repeat Meta sample without explicit approval.
+
+
 ## 2026-10-29 — Meta-authorized Instagram webhook sample authenticated in production
 
 - Explicit owner approval for one Meta Developer Tool test on Ishikeit app 1042452472116584 topic `instagram` field `messages`; Meta MCP returned `success=true` / sample enqueued. One sample only, no further Meta sends authorized.

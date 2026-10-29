@@ -1,5 +1,14 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Disposable PostgreSQL Meta outbox crash/recovery acceptance suite
+
+- Outbound Meta POSTs have no documented provider idempotency guarantee. Existing `PostgresOutboxStore.prepareMetaSend` writes a durable fence before the first network call; duplicate/raced claims must not retry ambiguous deliveries. Existing unit tests asserted SQL and mocked stores but did not execute the queries against PostgreSQL row-lock semantics. Issue #159 acceptance gap.
+- Added a **GitHub CI PostgreSQL 17 service** with an isolated `ishikeit_outbox_test` database and `tests/outbox-postgres.integration.test.ts`. The runner rejects any test database URI whose host isn't loopback or whose DB name isn't exactly `ishikeit_outbox_test`. No connection or DDL against production Supabase and no customer messages or provider API calls. No new paid database branch.
+- Real SQL integration scenarios: concurrent workers race on a single queued Meta action; pre-POST fence can be acquired once; lease expiry after arming quarantines provider-unknown outcome instead of repeating; next ordered conversation action can resume once predecessor is quarantined; only explicit nonambiguous HTTP 429 may clear fence and retry; late completion of quarantined action fails closed. Assertions inspect attempts and durable state.
+- CI job tests against actual PostgreSQL rather than mocked query strings; ordinary `npm test` skips this suite without the isolated env var. No production changes except deployed source/test package when PR merged (CI service independent).
+- Preserve global Meta App Review hold #169, Graph code-190 old Instagram tester authorization #176, no obsolete-credential rotation or historical replay, no WhatsApp unapproved reminder dispatch.
+
+
 ## 2026-10-29 — Instagram self-messaging event-safety correction
 
 - Official Meta Instagram self-messaging guide describes Instagram events with `is_self=true` on the messaging item and/or message, and echo events with `message.is_echo=true`, `message.is_self=true`. Reference: https://developers.facebook.com/documentation/instagram-platform/self-messaging

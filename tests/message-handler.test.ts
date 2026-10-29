@@ -74,7 +74,7 @@ describe("MessageReceivedHandler", () => {
   it("ignores Instagram edit and receipt callbacks even if the handler is called directly", async () => {
     const respond = vi.fn<BrainClient["respond"]>();
     const handler = new MessageReceivedHandler({ respond });
-    for (const eventType of ["message.edited", "message.echo", "delivery.read", "unknown"]) {
+    for (const eventType of ["message.edited", "message.reaction", "message.echo", "delivery.read", "unknown"]) {
       const event = {
         ...stored,
         event: {

@@ -1,5 +1,14 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Instagram self-messaging event-safety correction
+
+- Official Meta Instagram self-messaging guide describes Instagram events with `is_self=true` on the messaging item and/or message, and echo events with `message.is_echo=true`, `message.is_self=true`. Reference: https://developers.facebook.com/documentation/instagram-platform/self-messaging
+- Root bug: legacy `meta-normalizer` distinguished `message.echo` solely via `message.is_echo`; an Instagram self-originated event with `is_self=true` but no echo flag could become `message.received`, pass `MessageReceivedHandler`, and provoke an automated response to the business's own account. No production event of that kind was observed in historical aggregate; this is a verified code-level risk, not a claimed incident.
+- Correction: classify `is_self` without echo as `message.self`, preserve true echoes as `message.echo`, attach `selfOriginated=true` to those events, and preserve ordinary customer `message.received`. Defensive checks in `MessageReceivedHandler.canHandle/handle` reject old persisted self-originated messages even if marked received. This does not delete or replay events or suppress legitimate customer messages.
+- Tests: both item and message level self flags, self+echo, ordinary customer message, and handler non-dispatch for previously misclassified records.
+- Existing security and release controls unchanged: signed webhooks, Instagram managed token, OAuth error 190 requiring actual consent (#176), App Review hold (#169), outbound ambiguity fences (#159), WhatsApp reminder approval and consent holds.
+
+
 ## 2026-10-29 — Modern Meta sticker and Instagram post-share webhook normalization
 
 - Meta Jun 1, 2026 Messenger webhook reference requires recognizing type=sticker; after Aug 30, 2026 the dual image representation was retired. See https://developers.facebook.com/documentation/business-messaging/messenger-platform/webhooks/webhook-events/messages

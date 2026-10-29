@@ -67,8 +67,8 @@ export class MetaGraphTokenPreflight implements MetaGraphPreflightReader {
 
   async probe(): Promise<MetaGraphPreflightResult> {
     const [messenger, whatsapp] = await Promise.all([
-      this.#inspect(this.#messengerToken),
-      this.#inspect(this.#whatsappToken)
+      this.#inspect(this.#messengerToken, "messenger"),
+      this.#inspect(this.#whatsappToken, "whatsapp")
     ]);
     return {
       checkedAt: new Date().toISOString(),
@@ -103,7 +103,7 @@ export class MetaGraphTokenPreflight implements MetaGraphPreflightReader {
     }
   }
 
-  async #inspect(token: string | undefined): Promise<ProbeState> {
+  async #inspect(token: string | undefined, channel: "messenger" | "whatsapp"): Promise<ProbeState> {
     if (token === undefined || token.length === 0) return "not_configured";
 
     // Official /debug_token reads the token's originating application. Use an
@@ -118,6 +118,31 @@ export class MetaGraphTokenPreflight implements MetaGraphPreflightReader {
     if (data === undefined || data.is_valid !== true) return "invalid_token";
     if (String(data.app_id) !== this.#appId) return "wrong_app";
 
+    if (channel === "messenger") {
+      // Page tokens may not have permission to read /me?fields=id.
+      // Use the Page ID reported by Meta's token debugger and its subscription
+      // edge, which is authorized with the existing Page-management scopes.
+      const pageId = typeof data.profile_id === "string" || typeof data.profile_id === "number"
+        ? String(data.profile_id) : "";
+      const pageType = typeof data.type === "string" ? data.type.toUpperCase() : undefined;
+      if ((pageType !== undefined && pageType !== "PAGE")
+        || !/^[0-9]{5,32}$/u.test(pageId)) return "proof_unavailable";
+      const subscriptionsUrl = new URL(
+        `https://graph.facebook.com/${this.#version}/${pageId}/subscribed_apps`
+      );
+      subscriptionsUrl.searchParams.set("limit", "100");
+      const signed = withMetaGraphProof(subscriptionsUrl, token, this.#appSecret);
+      const subscriptions = await this.#get(signed, token);
+      return Array.isArray(subscriptions?.data)
+        && subscriptions.data.some((item: unknown) => {
+          const id = record(item)?.id;
+          return (typeof id === "string" || typeof id === "number")
+            && String(id) === this.#appId;
+        })
+        ? "proof_compatible" : "proof_unavailable";
+    }
+
+    // System User WhatsApp tokens support a signed /me identity request.
     const meUrl = new URL(`https://graph.facebook.com/${this.#version}/me`);
     meUrl.searchParams.set("fields", "id");
     const signed = withMetaGraphProof(meUrl, token, this.#appSecret);

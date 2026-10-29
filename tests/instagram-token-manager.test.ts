@@ -106,6 +106,80 @@ describe("InstagramAccessTokenManager", () => {
       .rejects.toMatchObject({ retryable: false });
   });
 
+  it("fails closed on the exact token Meta rejected with code 190 without revoking its durable grant", async () => {
+    const store = new MemoryOAuthStore();
+    const now = new Date("2026-10-29T12:00:00.000Z");
+    await store.put({
+      provider: "instagram", accountId: "old-tester",
+      accessToken: "test-credential-rejected-by-meta",
+      scopes: ["instagram_business_basic"],
+      accessExpiresAt: new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000)
+    });
+    const refresh = vi.fn();
+    const manager = new InstagramAccessTokenManager({
+      store,
+      client: {
+        exchangeAuthorizationCode: vi.fn(),
+        exchangeLongLived: vi.fn(),
+        refresh,
+        resolveProfessionalAccountId: vi.fn(),
+        ensureWebhookSubscription: vi.fn()
+      },
+      now: () => now
+    });
+    // Cached expiry is in the future, but Graph 190 is authoritative.
+    manager.markProviderRejected("old-tester", "test-credential-rejected-by-meta");
+    const failure = await manager.getAccessToken("old-tester")
+      .then(() => undefined, (error: unknown) => error);
+    expect(failure).toMatchObject({ retryable: false });
+    expect(String(failure)).toContain("reauthorization is required");
+    expect(String(failure)).not.toContain("test-credential-rejected-by-meta");
+    expect(refresh).not.toHaveBeenCalled();
+    expect(await store.get("instagram", "old-tester")).toMatchObject({
+      accessToken: "test-credential-rejected-by-meta"
+    });
+  });
+
+  it("keeps account-specific invalid-token fences across aliases and clears on genuine credential replacement", async () => {
+    const store = new MemoryOAuthStore();
+    const now = new Date("2026-10-29T12:00:00.000Z");
+    const expiry = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    await store.put({
+      provider: "instagram", accountId: "old-oauth-subject",
+      accessToken: "rejected-token",
+      scopes: ["instagram_business_basic"], accessExpiresAt: expiry
+    });
+    await store.putAccountAlias("instagram", "old-professional-account", "old-oauth-subject",
+      "instagram_professional_account");
+    await store.put({
+      provider: "instagram", accountId: "healthy-oauth-subject",
+      accessToken: "healthy-token",
+      scopes: ["instagram_business_basic"], accessExpiresAt: expiry
+    });
+    const manager = new InstagramAccessTokenManager({
+      store,
+      client: {
+        exchangeAuthorizationCode: vi.fn(), exchangeLongLived: vi.fn(), refresh: vi.fn(),
+        resolveProfessionalAccountId: vi.fn(), ensureWebhookSubscription: vi.fn()
+      },
+      now: () => now
+    });
+    manager.markProviderRejected("old-oauth-subject", "rejected-token");
+    await expect(manager.getAccessToken("old-professional-account"))
+      .rejects.toMatchObject({ retryable: false });
+    await expect(manager.getAccessToken("healthy-oauth-subject"))
+      .resolves.toBe("healthy-token");
+
+    // An account owner completes OAuth again; same account, new token.
+    await store.put({
+      provider: "instagram", accountId: "old-oauth-subject",
+      accessToken: "new-authorized-token",
+      scopes: ["instagram_business_basic"], accessExpiresAt: expiry
+    });
+    await expect(manager.getAccessToken("old-professional-account"))
+      .resolves.toBe("new-authorized-token");
+  });
+
   it("refreshes a valid long-lived token near expiry and persists the replacement", async () => {
     const store = new MemoryOAuthStore();
     const now = new Date("2026-10-02T05:00:00.000Z");

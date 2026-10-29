@@ -1,5 +1,15 @@
 # Ishikeit continuation handoff
 
+## 2026-10-30 — Provider-rejected Instagram OAuth token fail-closed send guard
+
+- Existing legacy Instagram tester grant persists in Supabase and has a future cached expiry, but its real Meta Graph `GET /me` returns HTTP 400, code 190/subcode 0. A separate managed Instagram token reconciles correctly. Do not infer that the legacy account can be retired from absent inbound history; real owner consent required to reauthorize or expressly retire (#176).
+- Prior `InstagramAccessTokenManager` returned that invalid-but-unexpired token to send callers based solely on cached expiry. New bounded **process-local only** safety guard accepts an exact token that Meta itself rejected with code 190 during startup reconciliation, stores only its SHA256 fingerprint in memory, and subsequently refuses to return that unchanged credential with `retryable=false`. The guard is scoped by OAuth subject, applies across its professional alias, and never returns another account's managed token as fallback.
+- An owner-approved OAuth reauthorization that replaces the durable credential changes the token fingerprint; the next durable read automatically clears the in-memory guard without a process restart. There are no DB/schema writes, revocations, token rotations, secrets in logs, customer sends or webhook changes.
+- Guard is set **only** after actual Meta `InstagramOAuthRequestError.providerCode === "190"` for the exact token, not network errors, 429s or unverified assumptions; independently managed studio token is not affected.
+- Regression tests: current code190 token fails despite future expiry; no refresh or secret in exception; other account works; account alias is correctly fenced; owner reauthorization token replacement clears the fence. CI, exact Hostinger deployed SHA and health are separate gates.
+- Separate holds unchanged: Meta App Review #169 remains NO_SUBMISSION; template reminders pending approval and opt-in; Instagram signer identity monitor active; outbound duplicate-send issue #159 closed with real disposable PostgreSQL integration proof, no replays.
+
+
 ## 2026-10-29 — Operator-only Meta unknown-outcome reconciliation SQL integration
 
 - Expanded existing disposable Postgres 17 CI suite with the real `PostgresMetaUnknownReconciler` SQL: create an ambiguous provider outcome by arming a send and allowing its lease to expire; verify the operator list returns one sanitized unreviewed case; record an evidence-backed reviewed_do_not_resend attestation, then confirm repeat attestation is idempotent and changed disposition conflicts.

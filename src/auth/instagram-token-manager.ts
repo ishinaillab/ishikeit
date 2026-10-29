@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { AccessTokenError } from "./token-provider.js";
 import type { OAuthCredential, OAuthCredentialStore } from "./oauth-store.js";
 import {
@@ -76,12 +77,45 @@ export class InstagramAccessTokenManager implements AccountAccessTokenProvider {
   readonly #refreshSkewMs: number;
   readonly #now: () => Date;
   readonly #refreshPromises = new Map<string, Promise<OAuthCredential>>();
+  /** Nonpersistent local safety gate for a specific provider-rejected token.
+   * No credential or owner consent state is changed; a newly authorized token
+   * automatically clears the gate after a fresh durable read.
+   */
+  readonly #providerRejectedTokens = new Map<string, string>();
 
   constructor(options: InstagramAccessTokenManagerOptions) {
     this.#store = options.store;
     this.#client = options.client;
     this.#refreshSkewMs = (options.refreshSkewSeconds ?? 7 * 24 * 60 * 60) * 1000;
     this.#now = options.now ?? (() => new Date());
+  }
+
+  /**
+   * Called ONLY after Meta explicitly rejects the exact account OAuth token
+   * with Graph OAuthException code 190. Hash stays in process memory and never
+   * enters logs or the DB. Does not mark the account revoked or delete grants.
+   */
+  markProviderRejected(accountId: string, accessToken: string): void {
+    this.#providerRejectedTokens.set(accountId, this.#tokenFingerprint(accessToken));
+  }
+
+  #tokenFingerprint(token: string): string {
+    return createHash("sha256").update(token, "utf8").digest("hex");
+  }
+
+  #rejectKnownInvalid(accountId: string, accessToken: string): void {
+    const known = this.#providerRejectedTokens.get(accountId);
+    if (known === undefined) return;
+    if (known !== this.#tokenFingerprint(accessToken)) {
+      // Legitimate owner reauthorization replaced the credential. No need
+      // to restart the process or bypass token-version validation.
+      this.#providerRejectedTokens.delete(accountId);
+      return;
+    }
+    throw new AccessTokenError(
+      "Meta rejected this Instagram OAuth token; owner reauthorization is required",
+      { retryable: false }
+    );
   }
 
   async getAccessToken(accountId: string): Promise<string | undefined> {
@@ -91,6 +125,7 @@ export class InstagramAccessTokenManager implements AccountAccessTokenProvider {
     ) ?? accountId;
     const credential = await this.#store.get("instagram", credentialAccountId);
     if (credential === undefined) {
+      this.#providerRejectedTokens.delete(credentialAccountId);
       if (await this.#store.isRevoked("instagram", credentialAccountId)) {
         throw new AccessTokenError(
           "Instagram account authorization has been revoked; reauthorization is required",
@@ -99,6 +134,7 @@ export class InstagramAccessTokenManager implements AccountAccessTokenProvider {
       }
       return undefined;
     }
+    this.#rejectKnownInvalid(credentialAccountId, credential.accessToken);
     if (credential.accessExpiresAt === undefined) {
       throw new AccessTokenError(
         "Instagram OAuth credential does not contain an access expiry; reauthorization is required",
@@ -140,10 +176,12 @@ export class InstagramAccessTokenManager implements AccountAccessTokenProvider {
   async #refreshUnderLock(accountId: string): Promise<OAuthCredential> {
     const current = await this.#store.get("instagram", accountId);
     if (current === undefined) {
+      this.#providerRejectedTokens.delete(accountId);
       throw new AccessTokenError("Instagram account is not authorized", {
         retryable: false
       });
     }
+    this.#rejectKnownInvalid(accountId, current.accessToken);
     if (current.accessExpiresAt === undefined) {
       throw new AccessTokenError(
         "Instagram OAuth credential does not contain an access expiry; reauthorization is required",

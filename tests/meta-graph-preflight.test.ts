@@ -12,7 +12,7 @@ function response(data: unknown, status = 200): Response {
 }
 
 describe("read-only Meta Graph proof compatibility preflight", () => {
-  it("verifies token issuer before performing only signed GET /me canaries", async () => {
+  it("verifies token issuer before signed Page subscription and WhatsApp identity reads", async () => {
     const seen: Array<{ url: URL; init: RequestInit | undefined }> = [];
     const fetchImpl = vi.fn((url: string | URL | Request, init?: RequestInit) => {
       const target = new URL(typeof url === "string" ? url : url instanceof URL ? url.toString() : url.url);
@@ -25,12 +25,21 @@ describe("read-only Meta Graph proof compatibility preflight", () => {
         expect(target.searchParams.get("input_token")).toMatch(/^synthetic-/u);
         expect((init?.headers as Record<string, string>).authorization)
           .toBe(`Bearer ${appId}|${secret}`);
-        return Promise.resolve(response({ data: { app_id: appId, is_valid: true } }));
+        const isPage = target.searchParams.get("input_token") === pageToken;
+        return Promise.resolve(response({ data: {
+          app_id: appId, is_valid: true,
+          ...(isPage ? { type: "PAGE", profile_id: "1152841001256379" } : { type: "SYSTEM_USER" })
+        } }));
       }
-      expect(target.pathname).toBe("/v26.0/me");
       const bearer = (init?.headers as Record<string, string>).authorization;
       expect(bearer).toMatch(/^Bearer synthetic-/u);
       expect(target.searchParams.get("appsecret_proof")).toMatch(/^[a-f0-9]{64}$/u);
+      if (bearer === `Bearer ${pageToken}`) {
+        expect(target.pathname).toBe("/v26.0/1152841001256379/subscribed_apps");
+        expect(target.searchParams.get("limit")).toBe("100");
+        return Promise.resolve(response({data: [{id: appId}]}));
+      }
+      expect(target.pathname).toBe("/v26.0/me");
       return Promise.resolve(response({ id: "synthetic-provider-identity" }));
     });
     const client = new MetaGraphTokenPreflight({
@@ -64,6 +73,32 @@ describe("read-only Meta Graph proof compatibility preflight", () => {
       fetchImpl: vi.fn(() => Promise.resolve(response({data:{app_id:appId,is_valid:false}})))
     });
     expect((await invalid.probe()).channels.messenger).toBe("invalid_token");
+  });
+
+  it("fails closed for missing Page identity, wrong Page type and unlisted app", async () => {
+    for (const tokenData of [
+      { app_id: appId, is_valid: true },
+      { app_id: appId, is_valid: true, type: "USER", profile_id: "1152841001256379" },
+      { app_id: appId, is_valid: true, type: "PAGE", profile_id: "not-a-page-id" }
+    ]) {
+      const fetchImpl = vi.fn(() => Promise.resolve(response({ data: tokenData })));
+      const client = new MetaGraphTokenPreflight({
+        appId, appSecret: secret, graphVersion: "v26.0", messengerToken: pageToken, fetchImpl
+      });
+      expect((await client.probe()).channels.messenger).toBe("proof_unavailable");
+      expect(fetchImpl).toHaveBeenCalledOnce();
+    }
+    const fetchImpl = vi.fn((url: string | URL | Request) => {
+      const target = new URL(typeof url === "string" ? url : url instanceof URL ? url.toString() : url.url);
+      return Promise.resolve(target.pathname.endsWith("/debug_token")
+        ? response({data:{app_id:appId,is_valid:true,type:"PAGE",profile_id:"1152841001256379"}})
+        : response({data:[{id:"another-app"}]}));
+    });
+    const client = new MetaGraphTokenPreflight({
+      appId, appSecret: secret, graphVersion: "v26.0", messengerToken: pageToken, fetchImpl
+    });
+    expect((await client.probe()).channels.messenger).toBe("proof_unavailable");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it("protects preflight endpoint with ops bearer and does not echo credentials", async () => {

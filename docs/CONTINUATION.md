@@ -1,5 +1,13 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Meta Graph Send API response JSON byte cap
+
+- Bounded Send API acknowledgment/error JSON to 64 KiB before parsing, even with missing/wrong Content-Length, canceling oversized streams; no raw provider body logging. General memory-safety improvement, not a Meta-imposed response maximum.
+- Existing channel-specific ID validation and armed outbox fence classify missing/malformed/oversized successful 2xx responses as ambiguous and quarantine for manual reconciliation, without automatic retry.
+- Local full rerun: 454 tests / 64 suites, lint, typecheck and build passed; first broad test run had transient resource-contention failures before clean rerun. Docs/META_GRAPH_JSON_RESPONSE_LIMIT_2026-10-29.md.
+- **OWNER HOLD #169: DO NOT submit Meta App Review**, enable proactive WhatsApp reminders, change Meta-wide Require App Secret, expose/rewrite masked secrets or replay historical dead letters.
+
+
 ## 2026-10-29 — Meta successful HTTP 2xx with no ID: quarantine, not false success
 
 - Real code defect: MetaSender previously returned an empty result on HTTP 200/202 send responses without a documented, nonblank provider message ID. Outbox would incorrectly mark a Meta POST published without a correlatable provider ID.

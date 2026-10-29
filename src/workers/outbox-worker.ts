@@ -126,9 +126,19 @@ export class OutboxWorker {
           cause: error
         });
     const nextAttemptNumber = job.attemptCount + 1;
+    // Meta Send API POSTs have no demonstrated provider-side idempotency key.
+    // A lost HTTP response may follow a successful provider send. Preserve the
+    // outcome for manual reconciliation instead of repeating the same POST.
+    const unknownMetaOutcome = failure.ambiguous
+      && provider === "meta"
+      && capability === "messaging"
+      && (operation === "message.send" || operation === "message.template.send");
 
-    if (!failure.retryable || nextAttemptNumber >= this.#maxAttempts) {
-      await this.#store.deadLetter(job, this.#failureReason(failure), {
+    if (unknownMetaOutcome || !failure.retryable || nextAttemptNumber >= this.#maxAttempts) {
+      const reason = unknownMetaOutcome
+        ? `provider_outcome_unknown; manual_reconciliation_required=true; ${this.#failureReason(failure)}`
+        : this.#failureReason(failure);
+      await this.#store.deadLetter(job, reason, {
         provider,
         capability,
         operation,
@@ -137,7 +147,7 @@ export class OutboxWorker {
         ambiguous: failure.ambiguous,
         ...(failure.status === undefined ? {} : { httpStatus: failure.status }),
         ...(failure.providerCode === undefined ? {} : { providerCode: failure.providerCode }),
-        errorClass: this.#errorClass(failure)
+        errorClass: unknownMetaOutcome ? "provider_outcome_unknown" : this.#errorClass(failure)
       });
       this.#logger.error({
         outboxId: job.id,
@@ -149,7 +159,9 @@ export class OutboxWorker {
         status: failure.status,
         providerCode: failure.providerCode,
         attempt: nextAttemptNumber
-      }, "outbound action dead-lettered");
+      }, unknownMetaOutcome
+        ? "Meta outbound outcome unknown; quarantined for manual reconciliation without automatic retry"
+        : "outbound action dead-lettered");
       return;
     }
 

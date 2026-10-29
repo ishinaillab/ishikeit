@@ -1,5 +1,13 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Verified Meta durable outbox production release (supersedes pending-state notes)
+
+- App PR #164 MERGED and Hostinger build COMPLETED at exact SHA 58be7eb746117428f35af6fe8f064ca8dcb20e69; direct HTTPS live/ready/build HTTP 200. Local 443/443 tests, ESLint/typecheck/build and GitHub Node/PHP/context checks passed.
+- DB PRs #11/#12 merged; Supabase applied migration 20261029090102_meta_ambiguous_send_fence. Readback: column/index present, RLS enabled, no anon/authenticated outbox grants. A one-transaction synthetic lease-crash recovery canary passed and cleaned all test rows. No customer send or existing queue row was modified by testing.
+- Postrelease queue: 0 pending, 0 unresolved armed, 0 new dead letters (inspected one-hour window). Hostinger startup: managed Instagram owner and Messenger Page subscription reconciliation succeeded; separate tester OAuth Graph 190 warning remains unrelated.
+- Meta Require App Secret false, App Review NO_SUBMISSION, contact email unverified. WhatsApp template ishi_appointment_reminder_v1 still PENDING; 0 active opt-in records, so reminders stay disabled. Token-app ownership and manual unknown-outcome reconciliation are remaining issues #158/#159. Full bounded evidence: docs/META_OUTBOUND_PRODUCTION_VERIFICATION_2026-10-29.md.
+
+
 ## 2026-10-29 — Durable Meta send fence; DB dependency (pending PRs)
 
 - Continued from user-supplied three Deep Research reports and the earlier ambiguous Meta network-failure quarantine fix in Ishikeit PR #164. Verified current production Supabase outbox had 0 pending, 0 leased and 0 pending Meta actions at preflight. Source baseline remains application main 02695ac and DB main 741ef24 until merge/deployment readback.

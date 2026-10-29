@@ -12,7 +12,7 @@ GET /ops/meta/graph-proof-preflight is registered only when the existing OPS_MET
 
 When invoked, the backend:
 1. For each configured Messenger Page and WhatsApp Graph access token, calls the official HTTPS graph.facebook.com /debug_token endpoint to inspect originating app ID and validity. The inspector uses the Ishikeit app access token, which is never returned to the caller.
-2. Only if the token is valid and its app matches META_APP_ID, builds a signed, redirect-blocked GET /me?fields=id with HMAC-SHA256 appsecret_proof using the matching META_APP_SECRET.
+2. Only if the token is valid and its app matches META_APP_ID, builds a signed, redirect-blocked Graph read using HMAC-SHA256 appsecret_proof and the matching META_APP_SECRET. The **WhatsApp System User** uses GET /me?fields=id. The **Messenger Page token** instead takes the Page ID from the validated /debug_token.profile_id, verifies Page token type if returned, and uses GET /{page-id}/subscribed_apps?limit=100, requiring the app to appear in the returned subscription list. This avoids /me and direct Page fields that produced Graph 100 on the real Messenger token because Page read grants are not present.
 3. Returns a per-channel status: not_configured, inspection_unavailable, invalid_token, wrong_app, proof_unavailable or proof_compatible. It does not reveal token material, foreign app IDs, returned account IDs, errors, Graph URLs or HMAC values. Both probes are bounded with a timeout.
 4. Leaves META_GRAPH_PROOF_ENABLED and Meta Require App Secret unchanged. There is no provider send, webhook update, template action, token refresh or database write.
 
@@ -26,4 +26,6 @@ The required debug_token GET carries input_token in its query according to Meta'
 - Enabling the proof flag and checking a real provider-signed GET remain separate operational actions, not part of this code PR.
 
 ## Status
-At the coding checkpoint, ESLint and TypeScript passed; 450 Vitest tests in 64 files passed; production build succeeded. GitHub CI and deployment readback are separately required. App Review is not submitted; this probe does not request privileges or change app review state.
+At initial coding checkpoint, ESLint and TypeScript passed; 450 Vitest tests in 64 files passed; production build succeeded. The Page-token compatibility correction above passed local lint, TypeScript, 455 Vitest tests in 64 files and production build. GitHub CI, deployment readback and a fresh authenticated live preflight must be checked separately. App Review is not submitted; this probe does not request privileges or change app review state.
+
+2026-10-29 authorized live diagnostic evidence: WhatsApp returned proof_compatible. Messenger returned proof_unavailable from the former signed /me endpoint; separate Page GET /me and GET /{page-id} returned Graph 100, while the existing token's unsigned GET /{page-id}/subscribed_apps?limit=100 returned HTTP 200 and included Ishikeit. Meta Access Token Debugger confirmed the valid Page token's issuing app ID, Page ID, and pages_manage_metadata/pages_show_list/pages_messaging permissions. No secret material was retained or pasted. Until the corrected endpoint reports live proof_compatible, Messenger signed proof is **not yet verified**.

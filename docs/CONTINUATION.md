@@ -2926,3 +2926,10 @@ Read-only WordPress plugin inventory on 2026-10-29 shows **LatePoint 5.7.5**, **
 - Full rationale, Meta official reference links, prioritized app-secret-proof / ambiguous-send retry / permission / WhatsApp consent follow-ups: `docs/META_STANDARDS_ENGINEERING_REVIEW_2026-10-29.md`. The two separate Deep Research reports are not present in this workspace and should be cross-checked when attached.
 - No live customer sends, consent changes, provider subscription edits, WordPress changes, database migrations or Hostinger environment replacements were made in this hardening patch.
 
+## 2026-10-29 Meta Graph proof integration (default-off)
+
+- Implemented Meta-recommended `appsecret_proof = HMAC-SHA256(access_token, app_secret)` in `src/channels/meta-graph-proof.ts`, restricted to HTTPS `graph.facebook.com`, preserving existing query parameters and never forwarding proof to CDN downloads.
+- Wired optional `META_GRAPH_PROOF_ENABLED` (default false) into Messenger Page sending and Page subscription GET/POST, WhatsApp ordinary and template sending, and WhatsApp Graph media metadata. Instagram Login and its distinct app credentials remain excluded.
+- Production activation requires independent Meta token-to-app ownership verification and authorized read-only proof readbacks. Do not enable Meta's app-wide Require App Secret setting or change masked Hostinger environment values until compatibility is established.
+- Local lint, typecheck, 434 tests (Vitest bounded concurrency) and build passed. PR #160 is the release review; `docs/META_GRAPH_PROOF_ROLLOUT_2026-10-29.md` documents staged enablement and rollback. No customer sends, consent, database, WordPress or Meta settings were changed.
+- GitHub issue #158 tracks outstanding live token ownership/activation; #159 tracks the separate ambiguous outbound retry risk. The two Deep Research reports are not yet attached and must be cross-checked when provided.

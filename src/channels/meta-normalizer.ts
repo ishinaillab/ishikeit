@@ -270,20 +270,25 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
         if (message !== undefined) {
           const mid = typeof message.mid === "string" ? message.mid : undefined;
           const echo = message.is_echo === true;
+          // Meta's Instagram self-messaging webhooks can mark the messaging
+          // item OR its message as is_self. Even without is_echo, these are
+          // never customer-originated requests for an automated reply.
+          const selfOriginated = channel === "instagram"
+            && (item.is_self === true || message.is_self === true);
           const providerEventId = mid === undefined ? undefined : "message:" + mid;
           events.push(makeEvent({
             provider: "meta",
             channel,
             capability: "messaging",
             accountId,
-            eventType: echo ? "message.echo" : "message.received",
+            eventType: echo ? "message.echo" : selfOriginated ? "message.self" : "message.received",
             ...(providerEventId === undefined ? {} : { providerEventId }),
             ...(mid === undefined ? {} : { providerMessageId: mid }),
             ...((echo ? recipientId : senderId) === undefined ? {} : { identityId: echo ? recipientId! : senderId! }),
             ...(occurredAt === undefined ? {} : { occurredAt }),
             receivedAt,
             content: messengerContent(message),
-            data: { message }
+            data: { message, ...(selfOriginated ? { selfOriginated: true } : {}) }
           }));
           continue;
         }

@@ -1,5 +1,13 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Operator-only Meta unknown-outcome reconciliation SQL integration
+
+- Expanded existing disposable Postgres 17 CI suite with the real `PostgresMetaUnknownReconciler` SQL: create an ambiguous provider outcome by arming a send and allowing its lease to expire; verify the operator list returns one sanitized unreviewed case; record an evidence-backed reviewed_do_not_resend attestation, then confirm repeat attestation is idempotent and changed disposition conflicts.
+- Crucially, operator review leaves the outbox dead-letter and durable pre-send fence intact, never publishes/requeues or calls Meta. The test checks no recipient/message data in the public reconciliation response and no claimable Meta jobs after review. No production Supabase data or customer messaging touched.
+- Existing safe operator API requires operations Bearer and offers GET cases/POST review only; it has no resend endpoint. Issue #159 accepted only after new CI passes.
+- Meta App Review owner hold #169, Instagram tester OAuth code 190/subcode 0 #176, WhatsApp reminder approval/consent and signer-key watch remain unchanged.
+
+
 ## 2026-10-29 — Disposable PostgreSQL Meta outbox crash/recovery acceptance suite
 
 - Outbound Meta POSTs have no documented provider idempotency guarantee. Existing `PostgresOutboxStore.prepareMetaSend` writes a durable fence before the first network call; duplicate/raced claims must not retry ambiguous deliveries. Existing unit tests asserted SQL and mocked stores but did not execute the queries against PostgreSQL row-lock semantics. Issue #159 acceptance gap.

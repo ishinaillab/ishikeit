@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresDatabase } from "../src/persistence/postgres.js";
 import { ACTION_DISPATCH_TOPIC, PostgresOutboxStore } from "../src/persistence/outbox.js";
+import { PostgresMetaUnknownReconciler } from "../src/persistence/meta-unknown-reconciliation.js";
 import type { ActionEnvelope } from "../src/domain/actions.js";
 
 /**
@@ -71,17 +72,25 @@ describe.skipIf(database === undefined)("Meta durable outbox fence on isolated P
         provider_code text,
         error_class text
       );
+      CREATE TABLE public.meta_outbound_reconciliations (
+        outbox_id uuid PRIMARY KEY REFERENCES public.outbox(id),
+        disposition text NOT NULL,
+        evidence text NOT NULL,
+        reviewer_hash text NOT NULL,
+        reviewed_at timestamptz NOT NULL DEFAULT now()
+      );
     `);
   });
 
   beforeEach(async () => {
+    await database!.query("DELETE FROM public.meta_outbound_reconciliations");
     await database!.query("DELETE FROM public.outbox_attempts");
     await database!.query("DELETE FROM public.outbox");
   });
 
   afterAll(async () => {
     try {
-      await database!.query("DROP TABLE IF EXISTS public.outbox_attempts, public.outbox");
+      await database!.query("DROP TABLE IF EXISTS public.meta_outbound_reconciliations, public.outbox_attempts, public.outbox");
     } finally {
       await database!.close();
     }
@@ -178,4 +187,47 @@ describe.skipIf(database === undefined)("Meta durable outbox fence on isolated P
     );
     expect(attempts.rows.map((row)=>row.outcome)).toEqual(["retry","published"]);
   });
+  it("keeps a quarantined provider-unknown send terminal during operator review", async () => {
+    const inserted = await store!.enqueueAction(action("manual-unknown-case"));
+    const job = await store!.claimNext(ACTION_DISPATCH_TOPIC, 80);
+    expect(job?.id).toBe(inserted.id);
+    expect(await store!.prepareMetaSend(job!)).toBe(true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 170));
+    expect(await store!.claimNext(ACTION_DISPATCH_TOPIC, 30000)).toBeUndefined();
+
+    const ledger = new PostgresMetaUnknownReconciler(database!);
+    const initial = await ledger.list(25);
+    expect(initial.total).toBe(1);
+    expect(initial.unreviewed).toBe(1);
+    expect(initial.cases[0]).toMatchObject({
+      outboxId: inserted.id, channel: "messenger", operation: "message.send",
+      disposition: null
+    });
+    expect(JSON.stringify(initial)).not.toContain("synthetic-recipient");
+    expect(JSON.stringify(initial)).not.toContain("synthetic test only");
+
+    const input = {
+      outboxId: inserted.id,
+      disposition: "reviewed_do_not_resend" as const,
+      evidence: "manual_thread_review" as const,
+      operatorTag: "ci-reviewer"
+    };
+    expect(await ledger.review(input)).toBe("recorded");
+    expect(await ledger.review(input)).toBe("already_recorded");
+    expect(await ledger.review({...input, disposition: "followup_required"})).toBe("conflict");
+    const reviewed = await ledger.list(25);
+    expect(reviewed.total).toBe(1);
+    expect(reviewed.reviewed).toBe(1);
+    expect(reviewed.unreviewed).toBe(0);
+    expect(reviewed.cases[0]?.disposition).toBe("reviewed_do_not_resend");
+
+    const state = await database!.query<{
+      published_at: Date|null; dead_lettered_at:Date|null; meta_send_started_at:Date|null
+    }>("SELECT published_at,dead_lettered_at,meta_send_started_at FROM public.outbox WHERE id=$1", [inserted.id]);
+    expect(state.rows[0]?.published_at).toBeNull();
+    expect(state.rows[0]?.dead_lettered_at).toBeInstanceOf(Date);
+    expect(state.rows[0]?.meta_send_started_at).toBeInstanceOf(Date);
+    expect(await store!.claimNext(ACTION_DISPATCH_TOPIC, 30000)).toBeUndefined();
+  });
+
 });

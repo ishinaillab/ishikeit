@@ -536,24 +536,8 @@ export class InstagramOAuthService implements InstagramOAuthController {
       this.#now().getTime() + long.accessExpiresInSeconds * 1000
     );
 
-    try {
-      await this.#store.put({
-        provider: "instagram",
-        accountId: short.userId,
-        accessToken: long.accessToken,
-        scopes: short.scopes,
-        accessExpiresAt
-      });
-      await this.#store.putAccountAlias(
-        "instagram",
-        professionalAccountId,
-        short.userId,
-        "instagram_professional_account"
-      );
-    } catch (error) {
-      throw new InstagramOAuthFlowError("credential_persistence", error);
-    }
-
+    // A failed webhook subscription must not replace working token routing.
+    // This does not modify the existing managed token or provider credentials.
     try {
       await this.#client.ensureWebhookSubscription(
         long.accessToken,
@@ -561,6 +545,20 @@ export class InstagramOAuthService implements InstagramOAuthController {
       );
     } catch (error) {
       throw new InstagramOAuthFlowError("webhook_subscription", error);
+    }
+
+    try {
+      // Both the encrypted token and the exact account alias commit together.
+      // Conflicting aliases are rejected instead of silently remapped.
+      await this.#store.putWithAlias({
+        provider: "instagram",
+        accountId: short.userId,
+        accessToken: long.accessToken,
+        scopes: short.scopes,
+        accessExpiresAt
+      }, professionalAccountId, "instagram_professional_account");
+    } catch (error) {
+      throw new InstagramOAuthFlowError("credential_persistence", error);
     }
 
     return {

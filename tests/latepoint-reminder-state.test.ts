@@ -13,12 +13,12 @@ const change: BookingChangeForPlan = {
 
 function fixture(previous?: Record<string, unknown>) {
   const sqls: { sql: string; values: readonly unknown[] | undefined }[] = [];
-  const query = vi.fn(async (sql: string, values?: readonly unknown[]) => {
+  const query = vi.fn((sql: string, values?: readonly unknown[]) => {
     sqls.push({ sql, values });
     if (sql.includes("SELECT latest_event_id,occurred_at")) {
-      return { rows: previous === undefined ? [] : [previous], rowCount: previous === undefined ? 0 : 1 };
+      return Promise.resolve({ rows: previous === undefined ? [] : [previous], rowCount: previous === undefined ? 0 : 1 });
     }
-    return { rows: [], rowCount: 1 };
+    return Promise.resolve({ rows: [], rowCount: 1 });
   });
   const tx = { query } as unknown as SqlExecutor;
   const db = {

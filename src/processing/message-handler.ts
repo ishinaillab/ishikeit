@@ -11,6 +11,23 @@ import type { EventHandler } from "./registry.js";
 import { standardMetaReplyEligibility } from "../dispatch/meta-customer-window.js";
 import { splitMetaReplyParts, type MetaTextChannel } from "./meta-reply-split.js";
 
+/**
+ * Defense in depth for historical events normalized before the self-message
+ * classification fix. A business talking to itself must not invoke the AI.
+ */
+function isInstagramSelfMessage(stored: StoredInboundEvent): boolean {
+  const event = stored.event;
+  if (event.provider !== "meta" || event.channel !== "instagram") return false;
+  if (typeof event.data !== "object" || event.data === null || Array.isArray(event.data)) {
+    return false;
+  }
+  const data = event.data as Record<string, unknown>;
+  if (data.selfOriginated === true) return true;
+  const message = data.message;
+  return typeof message === "object" && message !== null
+    && !Array.isArray(message) && (message as Record<string, unknown>).is_self === true;
+}
+
 export class MessageReceivedHandler implements EventHandler {
   constructor(
     private readonly brain: BrainClient,
@@ -20,7 +37,8 @@ export class MessageReceivedHandler implements EventHandler {
 
   canHandle(stored: StoredInboundEvent): boolean {
     const event = stored.event;
-    return event.capability === "messaging"
+    return !isInstagramSelfMessage(stored)
+      && event.capability === "messaging"
       && (event.eventType === "message.received"
         || (event.provider === "meta"
           && (event.channel === "messenger" || event.channel === "instagram")
@@ -29,6 +47,9 @@ export class MessageReceivedHandler implements EventHandler {
 
   async handle(stored: StoredInboundEvent): Promise<EventHandlingResult> {
     const event = stored.event;
+    if (isInstagramSelfMessage(stored)) {
+      return { actions: [], outcome: "ignored" };
+    }
     if (event.provider === "meta" && standardMetaReplyEligibility(event.occurredAt) !== "eligible") {
       return { actions: [], outcome: "ignored" };
     }

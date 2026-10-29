@@ -1370,8 +1370,10 @@ describe("webhook routes", () => {
 
   it("accepts Instagram-product-signed Instagram events only when configured", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>().mockResolvedValue("created");
+    const logLines: string[] = [];
+    const logger = pino({level:"info"}, {write: (line: string) => { logLines.push(line); }});
     const server = buildServer({
-      logger: pino({level:"silent"}), ready:()=>Promise.resolve(true),
+      logger, ready:()=>Promise.resolve(true),
       inbound:{ingest}, appSecret:"main-meta-secret",
       instagramWebhookAppSecret:"separate-instagram-product-secret",
       verifyToken:"verify-token-1234"
@@ -1397,6 +1399,15 @@ describe("webhook routes", () => {
       });
       expect(legacyMeta.statusCode).toBe(200);
       expect(ingest).toHaveBeenCalledTimes(2);
+      // Hostinger runtime reader preserves only Pino's message field.
+      // The key-selection result must be a bounded, safe log string.
+      const signedLogs = logLines.filter((line) =>
+        line.includes("Instagram webhook signature verified: signer="));
+      expect(signedLogs).toHaveLength(2);
+      expect(signedLogs[0]).toContain("signer=instagram_product");
+      expect(signedLogs[1]).toContain("signer=meta_app");
+      expect(signedLogs.join("")).not.toContain("main-meta-secret");
+      expect(signedLogs.join("")).not.toContain("separate-instagram-product-secret");
     } finally { await server.close(); }
   });
 

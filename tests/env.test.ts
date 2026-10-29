@@ -9,6 +9,16 @@ const productionBase = {
 };
 
 describe("environment", () => {
+  it("keeps Meta Graph proof disabled by default and requires the app secret to enable it", () => {
+    expect(loadEnvironment(productionBase).META_GRAPH_PROOF_ENABLED).toBe(false);
+    expect(() => loadEnvironment({
+      ...productionBase, META_GRAPH_PROOF_ENABLED: "true", META_APP_SECRET: undefined
+    })).toThrow();
+    expect(loadEnvironment({
+      ...productionBase, META_GRAPH_PROOF_ENABLED: "true"
+    }).META_GRAPH_PROOF_ENABLED).toBe(true);
+  });
+
   it("keeps WhatsApp template dispatch disabled without explicit opt-in", () => {
     expect(loadEnvironment(productionBase).META_WHATSAPP_TEMPLATE_DISPATCH_ENABLED).toBe(false);
     expect(() => loadEnvironment({

@@ -70,3 +70,13 @@ If a scheduling fault is detected, disable WordPress producer through the protec
 option `ishi_latepoint_bridge_enabled='0'` and leave Meta integrations untouched.
 Never rotate P-256 keys or replace masked Hostinger Node environment values as a
 routine scheduler rollback.
+
+
+## 2026-10-29 live deployment and controlled canary verification
+
+- App commit `4ff2b1bf87fcf3d68d6097417e1c915b38c4f855` auto-deployed on `apps.ishinaillab.com`, verified Hostinger build `completed`, /health/live, /health/ready and /health/build HTTP 200, unsigned booking webhook HTTP 401. Startup logs confirm the non-sending deadline reconciliation clock is enabled, with no fatal startup errors.
+- App PR #155 and DB PR #10 were merged; GitHub Actions Node lint/typecheck/build (415 tests), PHP lint and context continuity all passed. Applied Supabase migration `20261029022318_latepoint_private_reminder_schedule`, both tables with RLS enabled, anonymous and authenticated SELECT privileges false.
+- One synthetic, never-persisted LatePoint booking object (reserved test ID `999999999999999992`, not a real customer) triggered the existing WordPress v0.2.0 P-256 plugin's `created` callback and authenticated dispatcher. Inbound atomic projection created **both** `scheduled` deadlines (24h and 2h). Follow-up synthetic `cancelled` update invalidated both slots with `due_at=NULL`. Database confirmed two inbound source events (one approved, one cancelled), final `conflict=false`, `status=cancelled`; zero Meta outbound actions.
+- All one-shot temporary WordPress PHP canary snippets (IDs 67, 68 and cleanup snippet 69) were deleted; all three auxiliary test options were deleted; the synthetic booking state was deleted by exact ID, which cascaded its two test slots. Signed inbound audit history is intentionally retained.
+- Final queue audit: 0 pending jobs, 0 new dead letters; WordPress bridge remains active with key status ready and event feature ON. No live customer booking events have yet arrived, and no approved WhatsApp template or purpose opt-ins exist. The exact Meta template is `PENDING`; no outbound reminder sender was enabled.
+- Both canonical GitHub main branches and Windows repos are synchronized to the merged app/DB revisions; the premerge uncommitted local draft files were preserved in `D:\\projects\\openai\\project-files\\code-snapshots\\ishikeit-scheduler-premerge-20261029` before synchronization.

@@ -263,6 +263,35 @@ describe("MetaSender", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it("quarantines a 2xx provider response with an oversized declared JSON body", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ message_id: "untrusted-id" }), {
+        status: 200,
+        headers: { "content-length": "1000000" }
+      }
+    ));
+    await expect(makeSender(fetchImpl).send(base)).rejects.toMatchObject({
+      retryable: true, ambiguous: true, status: 200
+    });
+  });
+
+  it("cancels a 2xx response stream that exceeds the bounded Graph JSON limit", async () => {
+    const cancelled = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(40_000));
+        controller.enqueue(new Uint8Array(40_000));
+      },
+      cancel: cancelled
+    });
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, { status: 200 }));
+    await expect(makeSender(fetchImpl).send(base)).rejects.toMatchObject({
+      retryable: true, ambiguous: true, status: 200,
+      message: "Meta provider response missing a valid message ID"
+    });
+    expect(cancelled).toHaveBeenCalledOnce();
+  });
+
   it("classifies throttling as retryable and honors Retry-After", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
       JSON.stringify({ error: { message: "slow down", code: 4, is_transient: true } }),

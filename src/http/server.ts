@@ -49,6 +49,8 @@ export interface ServerDeps {
   ready: () => Promise<boolean>;
   inbound: InboundStore;
   appSecret: string;
+  /** Separate Instagram Login product secret; accepted only for object=instagram. */
+  instagramWebhookAppSecret?: string;
   verifyToken: string;
   /** Independently keyed, non-sending WordPress booking lifecycle ingress. */
   latePointWebhook?: { secret?: string; publicKeyPem?: string };
@@ -1128,15 +1130,45 @@ export function buildServer(deps: ServerDeps) {
         ? req.headers["x-hub-signature-256"][0]
         : req.headers["x-hub-signature-256"];
 
-      if (!verifyMetaSignature(req.body, signature, deps.appSecret)) {
+      // Authenticate raw bytes BEFORE parsing the untrusted envelope.
+      // Facebook Page and WABA notifications require the main Meta App secret.
+      // Instagram Login has separate product credentials, so the instagram
+      // object may authenticate with either the main app or Instagram product
+      // secret while the ongoing migration is verified.
+      const mainSignatureValid = verifyMetaSignature(req.body, signature, deps.appSecret);
+      const instagramSignatureValid = deps.instagramWebhookAppSecret !== undefined
+        && verifyMetaSignature(req.body, signature, deps.instagramWebhookAppSecret);
+      if (!mainSignatureValid && !instagramSignatureValid) {
         return reply.code(401).send({ status: "rejected" });
       }
 
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(req.body.toString("utf8")) as unknown;
+      } catch {
+        return reply.code(mainSignatureValid ? 422 : 401)
+          .send({ status: mainSignatureValid ? "invalid_payload" : "rejected" });
+      }
+      // A valid Instagram product signature NEVER authorizes a Page, WABA
+      // or unrecognized Meta object. Keep existing main-app behavior.
+      const objectType = typeof parsed === "object" && parsed !== null
+        && !Array.isArray(parsed) ? (parsed as Record<string, unknown>).object : undefined;
+      if (!mainSignatureValid && objectType !== "instagram") {
+        return reply.code(401).send({ status: "rejected" });
+      }
       let events;
       try {
-        events = normalizeMetaEnvelope(JSON.parse(req.body.toString("utf8")) as unknown);
+        events = normalizeMetaEnvelope(parsed);
       } catch {
         return reply.code(422).send({ status: "invalid_payload" });
+      }
+      if (objectType === "instagram") {
+        // Identity-only diagnostic: never log raw body, sender, recipient,
+        // credentials, signature or message contents.
+        const signer = mainSignatureValid && instagramSignatureValid
+          ? "both"
+          : instagramSignatureValid ? "instagram_product" : "meta_app";
+        deps.logger.info({ signer }, "Instagram webhook signature verified");
       }
 
       const rawHash = sha256Hex(req.body);

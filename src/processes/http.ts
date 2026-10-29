@@ -32,6 +32,7 @@ import { PostgresMetaHandoffStore } from "../persistence/meta-handoff.js";
 import { PostgresWhatsAppConsentStore } from "../persistence/whatsapp-consent.js";
 import { PostgresOutboxStore } from "../persistence/outbox.js";
 import { PostgresMetaUnknownReconciler } from "../persistence/meta-unknown-reconciliation.js";
+import { MetaGraphTokenPreflight } from "../security/meta-graph-preflight.js";
 import { PostgresLatePointReminderPlanStore } from "../persistence/latepoint-reminder-plans.js";
 import { LatePointReminderClock } from "../workers/latepoint-reminder-clock.js";
 import { PostgresDatabase } from "../persistence/postgres.js";
@@ -526,6 +527,13 @@ const server = buildServer({
     : {
         metrics: new PostgresOperationalMetrics(db),
         metaUnknown: new PostgresMetaUnknownReconciler(db),
+        metaGraphPreflight: new MetaGraphTokenPreflight({
+          appId: env.META_APP_ID,
+          appSecret: env.META_APP_SECRET,
+          graphVersion: env.META_GRAPH_API_VERSION,
+          messengerToken: env.META_MESSENGER_ACCESS_TOKEN,
+          whatsappToken: env.META_WHATSAPP_ACCESS_TOKEN
+        }),
         opsMetricsToken: env.OPS_METRICS_TOKEN
       }),
   runtimeState: {

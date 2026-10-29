@@ -406,6 +406,7 @@ async function reconcileMessengerManagedPage(): Promise<void> {
     const client = new MessengerPageSubscriptionClient({
       appId: env.META_APP_ID,
       graphApiVersion: env.META_GRAPH_API_VERSION,
+      ...(env.META_GRAPH_PROOF_ENABLED ? { graphProofAppSecret: env.META_APP_SECRET } : {}),
       requestTimeoutMs: env.META_OUTBOUND_REQUEST_TIMEOUT_MS
     });
     const recentPageId = await messengerRecentSignedPageId(db);
@@ -539,6 +540,7 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
   const dispatcher = new ActionDispatcher();
   const metaSender = new MetaSender({
     graphApiVersion: env.META_GRAPH_API_VERSION,
+    ...(env.META_GRAPH_PROOF_ENABLED ? { graphProofAppSecret: env.META_APP_SECRET } : {}),
     messengerAccessToken: env.META_MESSENGER_ACCESS_TOKEN,
     instagramAccessToken: env.META_INSTAGRAM_ACCESS_TOKEN,
     ...(instagramAccessTokenProvider === undefined ? {} : { instagramAccessTokenProvider }),
@@ -595,6 +597,7 @@ if (env.PROCESSOR_ENABLED) {
   const mediaResolvers = new MediaResolverRegistry();
   mediaResolvers.register(new MetaMediaResolver({
     graphApiVersion: env.META_GRAPH_API_VERSION,
+    ...(env.META_GRAPH_PROOF_ENABLED ? { graphProofAppSecret: env.META_APP_SECRET } : {}),
     whatsappAccessToken: env.META_WHATSAPP_ACCESS_TOKEN,
     maxBytes: env.MEDIA_MAX_BYTES,
     requestTimeoutMs: env.MEDIA_REQUEST_TIMEOUT_MS

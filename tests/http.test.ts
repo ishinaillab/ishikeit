@@ -1368,6 +1368,85 @@ describe("webhook routes", () => {
     await server.close();
   });
 
+  it("accepts Instagram-product-signed Instagram events only when configured", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>().mockResolvedValue("created");
+    const server = buildServer({
+      logger: pino({level:"silent"}), ready:()=>Promise.resolve(true),
+      inbound:{ingest}, appSecret:"main-meta-secret",
+      instagramWebhookAppSecret:"separate-instagram-product-secret",
+      verifyToken:"verify-token-1234"
+    });
+    const raw = JSON.stringify({object:"instagram",entry:[{id:"ig-account-1",messaging:[{
+      sender:{id:"sender-1"},recipient:{id:"ig-account-1"},
+      timestamp:1790000000000,message:{mid:"ig-message-1",text:"test"}
+    }]}]});
+    const makeHeaders=(secret:string) => ({
+      "content-type":"application/json",
+      "x-hub-signature-256":"sha256="+createHmac("sha256",secret).update(raw).digest("hex")
+    });
+    try {
+      const instagram = await server.inject({
+        method:"POST",url:"/ishikeit/webhooks/meta",
+        headers:makeHeaders("separate-instagram-product-secret"),payload:raw
+      });
+      expect(instagram.statusCode).toBe(200);
+      expect(ingest).toHaveBeenCalledTimes(1);
+      const legacyMeta = await server.inject({
+        method:"POST",url:"/ishikeit/webhooks/meta",
+        headers:makeHeaders("main-meta-secret"),payload:raw
+      });
+      expect(legacyMeta.statusCode).toBe(200);
+      expect(ingest).toHaveBeenCalledTimes(2);
+    } finally { await server.close(); }
+  });
+
+  it("does not authorize Messenger or WhatsApp events using Instagram's separate secret", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const server = buildServer({
+      logger:pino({level:"silent"}),ready:()=>Promise.resolve(true),
+      inbound:{ingest},appSecret:"main-meta-secret",
+      instagramWebhookAppSecret:"separate-instagram-product-secret",
+      verifyToken:"verify-token-1234"
+    });
+    try {
+      for(const objectType of ["page","whatsapp_business_account","other"]) {
+        const raw=JSON.stringify({object:objectType,entry:[]});
+        const signature="sha256="+createHmac("sha256","separate-instagram-product-secret")
+          .update(raw).digest("hex");
+        const result=await server.inject({
+          method:"POST",url:"/ishikeit/webhooks/meta",
+          headers:{"content-type":"application/json","x-hub-signature-256":signature},
+          payload:raw
+        });
+        expect(result.statusCode).toBe(401);
+      }
+      expect(ingest).not.toHaveBeenCalled();
+    } finally { await server.close(); }
+  });
+
+  it("fails closed on invalid or absent Instagram signatures without fallback", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const server = buildServer({
+      logger:pino({level:"silent"}),ready:()=>Promise.resolve(true),
+      inbound:{ingest},appSecret:"main-meta-secret",
+      verifyToken:"verify-token-1234"
+    });
+    const raw=JSON.stringify({object:"instagram",entry:[]});
+    try {
+      const sig="sha256="+createHmac("sha256","separate-instagram-product-secret")
+        .update(raw).digest("hex");
+      for(const header of [undefined,sig,"sha256="+"0".repeat(64)]) {
+        const res=await server.inject({
+          method:"POST",url:"/ishikeit/webhooks/meta",
+          headers:{"content-type":"application/json",...(header===undefined?{}:{"x-hub-signature-256":header})},
+          payload:raw
+        });
+        expect(res.statusCode).toBe(401);
+      }
+      expect(ingest).not.toHaveBeenCalled();
+    } finally { await server.close(); }
+  });
+
   it("rejects signed invalid JSON before persistence", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
     const store = { ingest } satisfies InboundStore;

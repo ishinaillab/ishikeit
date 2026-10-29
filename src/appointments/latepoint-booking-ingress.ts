@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, createPublicKey, timingSafeEqual, verify } from "node:crypto";
 import { z } from "zod";
 import type { CanonicalEvent, IngressIdentity } from "../domain/events.js";
 
@@ -57,6 +57,47 @@ export function verifyLatePointWebhook(
     .digest();
   const provided = Buffer.from(signature.slice(7), "hex");
   return provided.length === expected.length && timingSafeEqual(provided, expected);
+}
+
+/** Validate the pinned verifier at boot. Never rely on an unvalidated key at request time. */
+export function assertLatePointPublicKey(publicKeyPem: string): void {
+  const key = createPublicKey(publicKeyPem);
+  if (key.asymmetricKeyType !== "ec"
+    || key.asymmetricKeyDetails?.namedCurve !== "prime256v1") {
+    throw new Error("LatePoint public verifier must use ECDSA P-256");
+  }
+}
+
+/**
+ * Asymmetric SHA-256/ECDSA P-256 verification. The PHP private key stays
+ * outside WordPress public_html and never reaches Hostinger's masked Node env.
+ * Domain separation prevents reuse of signatures from unrelated protocols.
+ */
+export function verifyLatePointAsymmetricWebhook(
+  rawBody: Buffer,
+  timestamp: string | undefined,
+  signature: string | undefined,
+  publicKeyPem: string,
+  now: Date = new Date()
+): boolean {
+  if (timestamp === undefined || !/^[1-9][0-9]{9}$/.test(timestamp)
+    || signature === undefined || !/^[A-Za-z0-9_-]{80,128}$/.test(signature)) {
+    return false;
+  }
+  const seconds = Number(timestamp);
+  if (!Number.isSafeInteger(seconds) || !Number.isFinite(now.getTime())
+    || Math.abs(Math.floor(now.getTime() / 1000) - seconds) > 300) return false;
+  try {
+    const signatureBytes = Buffer.from(signature, "base64url");
+    if (signatureBytes.toString("base64url") !== signature) return false;
+    const message = Buffer.concat([
+      Buffer.from("ishi-latepoint-booking-v2\n" + timestamp + "\n", "utf8"),
+      rawBody
+    ]);
+    return verify("sha256", message, publicKeyPem, signatureBytes);
+  } catch {
+    return false;
+  }
 }
 
 export function normalizeLatePointBookingChange(

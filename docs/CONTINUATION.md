@@ -1,5 +1,14 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Messenger Page-token signed Graph verification correction (PR #174)
+
+- Owner-assisted real read-only production diagnostics: both Meta credentials debugged as issued by Ishikeit app 1042452472116584, valid; Messenger Page token assigned to Ishi Nail Lab Page ID 1152841001256379 with pages_messaging/pages_manage_metadata/pages_show_list. WhatsApp System User had management/messaging permissions and owner-confirmed app/WhatsApp asset assignments.
+- Authenticated production GET /ops/meta/graph-proof-preflight returned WhatsApp proof_compatible, Messenger proof_unavailable, and graphProofFlagUnchanged=true. Messenger GET /me?fields=id and GET /1152841001256379?fields=id both returned Graph HTTP 400/code 100, but read-only GET /1152841001256379/subscribed_apps?limit=100 returned HTTP 200 and listed Ishikeit; do not infer token revocation or grant missing permissions from Graph 100 alone.
+- PR #174 switches only Messenger Page-token preflight's signed Graph canary to a validated, token-debugger-derived Page ID with /{page-id}/subscribed_apps, requiring the originating app's listing. WhatsApp signed /me branch stays unchanged. Invalid type/Page ID/missing subscription fails closed. Dedicated operational bearer remains mandatory, no secrets returned or sent to ChatGPT.
+- Local eslint, typecheck, 455 Vitest tests/64 suites, build PASSED. GitHub CI, exact Hostinger deployed SHA and the owner-authenticated live signed Messenger preflight are **still required** before issue #158 can be closed.
+- **OWNER HOLD #169 UNCHANGED:** no Meta App Review submission, no blanket Require App Secret, do not enable META_GRAPH_PROOF_ENABLED until both channel checks pass and compatible production callers are established; no proactive WhatsApp reminders, no dead-letter replay.
+
+
 ## 2026-10-29 — Meta Graph Send API response JSON byte cap
 
 - Bounded Send API acknowledgment/error JSON to 64 KiB before parsing, even with missing/wrong Content-Length, canceling oversized streams; no raw provider body logging. General memory-safety improvement, not a Meta-imposed response maximum.

@@ -1,5 +1,9 @@
 # Ishikeit continuation handoff
 
+## October 30, 2026: latest verified restart checkpoint
+
+Read [ISHIKEIT_CONTINUATION_2026-10-30.md](./ISHIKEIT_CONTINUATION_2026-10-30.md) before older notes. Baseline Hostinger deployment: 4678312bf47821ad13933445d31e708897887d3b (PR #183). Current open issues #176 (legacy Instagram OAuth) and #169 (intentional App Review hold). Live and ready endpoints HTTP 200. Recheck this snapshot in a new chat; it contains the full continuation prompt and current owner holds.
+
 ## 2026-10-30 — Provider-rejected Instagram OAuth token fail-closed send guard
 
 - Existing legacy Instagram tester grant persists in Supabase and has a future cached expiry, but its real Meta Graph `GET /me` returns HTTP 400, code 190/subcode 0. A separate managed Instagram token reconciles correctly. Do not infer that the legacy account can be retired from absent inbound history; real owner consent required to reauthorize or expressly retire (#176).

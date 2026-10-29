@@ -1,3 +1,5 @@
+import { withMetaGraphProof } from "../channels/meta-graph-proof.js";
+
 /**
  * Meta's app-level Page webhook fields and the individual Page's
  * subscribed_apps fields are independent. Reconcile only after the bearer
@@ -26,6 +28,7 @@ export class MessengerPageSubscriptionError extends Error {
 interface Options {
   appId: string;
   graphApiVersion: string;
+  graphProofAppSecret?: string | undefined;
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
 }
@@ -42,6 +45,7 @@ function object(value: unknown): JsonRecord {
 export class MessengerPageSubscriptionClient {
   readonly #appId: string;
   readonly #graphApiVersion: string;
+  readonly #graphProofAppSecret: string | undefined;
   readonly #timeoutMs: number;
   readonly #fetch: typeof fetch;
 
@@ -51,6 +55,7 @@ export class MessengerPageSubscriptionClient {
     }
     this.#appId = options.appId;
     this.#graphApiVersion = options.graphApiVersion;
+    this.#graphProofAppSecret = options.graphProofAppSecret;
     this.#timeoutMs = options.requestTimeoutMs ?? 10_000;
     this.#fetch = options.fetchImpl ?? fetch;
   }
@@ -131,7 +136,10 @@ export class MessengerPageSubscriptionClient {
     try {
       const headers = new Headers(init.headers);
       headers.set("authorization", `Bearer ${accessToken}`);
-      response = await this.#fetch(url.toString(), {
+      const requestUrl = this.#graphProofAppSecret === undefined
+        ? url
+        : withMetaGraphProof(url, accessToken, this.#graphProofAppSecret);
+      response = await this.#fetch(requestUrl.toString(), {
         ...init,
         redirect: "error",
         headers,

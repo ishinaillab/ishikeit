@@ -51,6 +51,26 @@ describe("MessageReceivedHandler", () => {
     expect(respond).not.toHaveBeenCalled();
   });
 
+  it("never replies to newly normalized or historical misclassified Instagram message deletions", async () => {
+    const respond = vi.fn<BrainClient["respond"]>();
+    const handler = new MessageReceivedHandler({ respond });
+    for (const eventType of ["message.deleted", "message.received"]) {
+      const deleted = {
+        ...stored, event: {
+          ...stored.event,
+          provider: "meta", channel: "instagram", accountId: "ig-business",
+          identityId: "ig-customer", eventType,
+          occurredAt: new Date().toISOString(),
+          content: [{kind: "text" as const, text: "must not be sent to the AI"}],
+          data: {message: {mid: "deleted-original-1", is_deleted: true}}
+        }
+      };
+      expect(handler.canHandle(deleted)).toBe(false);
+      expect(await handler.handle(deleted)).toEqual({actions: [], outcome: "ignored"});
+    }
+    expect(respond).not.toHaveBeenCalled();
+  });
+
   it("ignores Instagram edit and receipt callbacks even if the handler is called directly", async () => {
     const respond = vi.fn<BrainClient["respond"]>();
     const handler = new MessageReceivedHandler({ respond });

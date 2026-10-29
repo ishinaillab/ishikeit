@@ -78,6 +78,65 @@ describe("Meta normalizer", () => {
     );
   });
 
+  it("never classifies Instagram self-originated messaging as a customer message", () => {
+    for (const location of ["message", "item"] as const) {
+      const item: Record<string, unknown> = {
+        sender: { id: "ig-business" },
+        recipient: { id: "ig-scoped-self" },
+        timestamp: 1790000000000,
+        message: {
+          mid: "self-message-1",
+          text: "message from the studio account",
+          ...(location === "message" ? { is_self: true } : {})
+        },
+        ...(location === "item" ? { is_self: true } : {})
+      };
+      const [event] = normalizeMetaEnvelope({
+        object: "instagram",
+        entry: [{ id: "ig-business", messaging: [item] }]
+      });
+      expect(event).toMatchObject({
+        provider: "meta",
+        channel: "instagram",
+        eventType: "message.self",
+        providerMessageId: "self-message-1",
+        data: { selfOriginated: true }
+      });
+      expect(event?.eventType).not.toBe("message.received");
+    }
+  });
+
+  it("keeps genuine Instagram is_echo self-messaging events as echoes", () => {
+    const [event] = normalizeMetaEnvelope({
+      object: "instagram",
+      entry: [{ id: "ig-business", messaging: [{
+        sender: { id: "ig-business" },
+        recipient: { id: "ig-scoped-self" },
+        timestamp: 1790000000000,
+        message: { mid: "self-echo-1", text: "hello", is_echo: true, is_self: true }
+      }] }]
+    });
+    expect(event).toMatchObject({
+      channel: "instagram", eventType: "message.echo", identityId: "ig-scoped-self",
+      data: { selfOriginated: true }
+    });
+  });
+
+  it("still classifies normal Instagram customer messages as received", () => {
+    const [event] = normalizeMetaEnvelope({
+      object: "instagram",
+      entry: [{ id: "ig-business", messaging: [{
+        sender: { id: "ig-customer" }, recipient: { id: "ig-business" },
+        timestamp: 1790000000000,
+        message: { mid: "customer-1", text: "How much is BIAB?" }
+      }] }]
+    });
+    expect(event).toMatchObject({
+      channel: "instagram", eventType: "message.received", identityId: "ig-customer"
+    });
+    expect(event?.data).toEqual({ message: { mid: "customer-1", text: "How much is BIAB?" } });
+  });
+
   it("normalizes WhatsApp messages using the receiving phone-number account", () => {
     const [event] = normalizeMetaEnvelope({
       object: "whatsapp_business_account",

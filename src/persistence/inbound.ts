@@ -6,6 +6,8 @@ import { canonicalEventSchema, type CanonicalEvent, type IngressIdentity } from 
 import { enqueueAction, INBOUND_ACCEPTED_TOPIC } from "./outbox.js";
 import type { PostgresDatabase } from "./postgres.js";
 import type { PostgresWhatsAppConsentStore } from "./whatsapp-consent.js";
+import type { LatePointReminderPlanStore } from "./latepoint-reminder-plans.js";
+import { bookingChangeForPlan } from "../appointments/latepoint-reminder-plan.js";
 import { isWhatsAppTemplateOptOut } from "../domain/meta-whatsapp-optout.js";
 import { isWhatsAppAppointmentOptIn } from "../domain/meta-whatsapp-optin.js";
 
@@ -39,7 +41,8 @@ interface EventRow extends pg.QueryResultRow {
 export class PostgresInboundStore implements InboundStore {
   constructor(
     private readonly db: PostgresDatabase,
-    private readonly whatsappConsents?: Pick<PostgresWhatsAppConsentStore, "revokeInTransaction"> & Partial<Pick<PostgresWhatsAppConsentStore, "grantInTransaction">>
+    private readonly whatsappConsents?: Pick<PostgresWhatsAppConsentStore, "revokeInTransaction"> & Partial<Pick<PostgresWhatsAppConsentStore, "grantInTransaction">>,
+    private readonly bookingPlans?: Pick<LatePointReminderPlanStore, "applyInTransaction">
   ) {}
 
   async ingest(event: CanonicalEvent, identity: IngressIdentity, rawBodyHash: string): Promise<"created"|"duplicate"> {
@@ -71,6 +74,15 @@ export class PostgresInboundStore implements InboundStore {
         ]
       );
       if (inserted.rowCount !== 1) return "duplicate";
+      // Project signed booking snapshots in the *same transaction* as inbound
+      // durability: process cutover and canary routing cannot silently drop a
+      // cancellation, and no customer data or messages are ever generated.
+      if (event.provider === "latepoint") {
+        if (this.bookingPlans === undefined) {
+          throw new Error("LatePoint booking projection must be configured");
+        }
+        await this.bookingPlans.applyInTransaction(tx, bookingChangeForPlan(event, id));
+      }
       // A verified WhatsApp customer STOP must immediately revoke prior
       // template opt-in in the same transaction, before the webhook ACK.
       const optOut = isWhatsAppTemplateOptOut(event);

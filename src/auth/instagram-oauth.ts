@@ -80,6 +80,7 @@ export class InstagramOAuthRequestError extends Error {
   readonly retryable: boolean;
   readonly status?: number;
   readonly providerCode?: string;
+  readonly providerSubcode?: number;
   readonly reason?: string;
 
   constructor(
@@ -88,6 +89,7 @@ export class InstagramOAuthRequestError extends Error {
       retryable: boolean;
       status?: number;
       providerCode?: string;
+      providerSubcode?: number;
       reason?: string;
       cause?: unknown;
     }
@@ -97,6 +99,7 @@ export class InstagramOAuthRequestError extends Error {
     this.retryable = options.retryable;
     if (options.status !== undefined) this.status = options.status;
     if (options.providerCode !== undefined) this.providerCode = options.providerCode;
+    if (options.providerSubcode !== undefined) this.providerSubcode = options.providerSubcode;
     if (options.reason !== undefined) this.reason = options.reason;
   }
 }
@@ -169,6 +172,7 @@ function parseInstagramJson(rawText: string): Record<string, unknown> {
 function providerError(body: Record<string, unknown> | undefined): {
   message: string;
   code?: string;
+  subcode?: number;
 } {
   const graph = record(body?.error);
   const message = stringValue(graph?.message)
@@ -178,13 +182,21 @@ function providerError(body: Record<string, unknown> | undefined): {
   const code = stringValue(graph?.code)
     ?? stringValue(body?.code)
     ?? stringValue(body?.error_type);
+  const candidateSubcode = graph?.error_subcode ?? body?.error_subcode;
+  const subcode = typeof candidateSubcode === "number"
+    && Number.isSafeInteger(candidateSubcode) && candidateSubcode >= 0
+    ? candidateSubcode : undefined;
   return {
     message,
-    ...(code === undefined ? {} : { code })
+    ...(code === undefined ? {} : { code }),
+    ...(subcode === undefined ? {} : { subcode })
   };
 }
 
-function classifyProviderReason(message: string): string {
+function classifyProviderReason(message: string, code?: string): string {
+  // Meta Graph code 190 means the token is no longer accepted. A stored
+  // future expiration timestamp cannot override this provider verdict.
+  if (code === "190") return "reauthorization_required";
   if (/matching code was not found|already used|authorization code/i.test(message)) {
     return "authorization_code_invalid_or_used";
   }
@@ -214,6 +226,10 @@ export function instagramOAuthFailureDiagnostic(error: unknown): string {
   if (request?.status !== undefined) parts.push(`status=${request.status}`);
   if (request?.providerCode !== undefined && /^[a-zA-Z0-9_.:-]{1,40}$/u.test(request.providerCode)) {
     parts.push(`provider_code=${request.providerCode}`);
+  }
+  if (request?.providerSubcode !== undefined && Number.isSafeInteger(request.providerSubcode)
+    && request.providerSubcode >= 0) {
+    parts.push(`provider_subcode=${request.providerSubcode}`);
   }
   if (request?.reason !== undefined) parts.push(`reason=${request.reason}`);
   if (request !== undefined) parts.push(`retryable=${request.retryable}`);
@@ -375,7 +391,8 @@ export class InstagramOAuthClient implements InstagramOAuthClientLike {
           retryable: response.status === 429 || response.status >= 500,
           status: response.status,
           ...(error.code === undefined ? {} : { providerCode: error.code }),
-          reason: classifyProviderReason(error.message)
+          ...(error.subcode === undefined ? {} : { providerSubcode: error.subcode }),
+          reason: classifyProviderReason(error.message, error.code)
         }
       );
     }

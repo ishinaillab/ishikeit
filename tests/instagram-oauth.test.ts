@@ -376,6 +376,121 @@ describe("InstagramOAuthService", () => {
       .rejects.toThrow(/already consumed|invalid|expired/i);
   });
 
+  it("promotes only the exact Graph-verified managed studio account", async () => {
+    const store = new MemoryOAuthStore();
+    const expectedManagedAccountId = vi.fn().mockResolvedValue("17841438662359631");
+    const client: InstagramOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn().mockResolvedValue({
+        accessToken: "short-new", userId: "app-subject-new",
+        scopes: ["instagram_business_basic", "instagram_business_manage_messages"]
+      }),
+      exchangeLongLived: vi.fn().mockResolvedValue({
+        accessToken: "long-new", accessExpiresInSeconds: 5_184_000
+      }),
+      refresh: vi.fn(),
+      resolveProfessionalAccountId: vi.fn().mockResolvedValue("17841438662359631"),
+      ensureWebhookSubscription: vi.fn().mockResolvedValue(undefined)
+    };
+    const service = new InstagramOAuthService({
+      appId: "123456789012345",
+      redirectUri: "https://apps.example.test/instagram/callback/",
+      store, client, expectedManagedAccountId
+    });
+    const started = await service.beginAuthorization();
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    await expect(service.completeAuthorization(state, "authorization-code"))
+      .resolves.toMatchObject({ accountId: "17841438662359631" });
+    expect(expectedManagedAccountId).toHaveBeenCalledOnce();
+    await expect(store.resolveCredentialAccountId("instagram", "17841438662359631"))
+      .resolves.toBe("app-subject-new");
+    expect((await store.get("instagram", "app-subject-new"))?.accessToken).toBe("long-new");
+  });
+
+  it("refuses a different Instagram login without persisting or subscribing it", async () => {
+    const store = new MemoryOAuthStore();
+    const ensureWebhookSubscription = vi.fn();
+    const client: InstagramOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn().mockResolvedValue({
+        accessToken: "short-wrong", userId: "different-app-subject",
+        scopes: [...INSTAGRAM_REVIEW_SCOPES]
+      }),
+      exchangeLongLived: vi.fn().mockResolvedValue({
+        accessToken: "long-wrong", accessExpiresInSeconds: 5_184_000
+      }),
+      refresh: vi.fn(),
+      resolveProfessionalAccountId: vi.fn().mockResolvedValue("17841437646366614"),
+      ensureWebhookSubscription
+    };
+    const service = new InstagramOAuthService({
+      appId: "123456789012345",
+      redirectUri: "https://apps.example.test/instagram/callback/",
+      store, client,
+      expectedManagedAccountId: vi.fn().mockResolvedValue("17841438662359631")
+    });
+    const state = new URL((await service.beginAuthorization()).authorizationUrl)
+      .searchParams.get("state")!;
+    await expect(service.completeAuthorization(state, "authorization-code"))
+      .rejects.toMatchObject({ stage: "account_resolution" });
+    expect(await store.get("instagram", "different-app-subject")).toBeUndefined();
+    expect(await store.resolveCredentialAccountId("instagram", "17841437646366614"))
+      .toBeUndefined();
+    expect(ensureWebhookSubscription).not.toHaveBeenCalled();
+    await expect(service.completeAuthorization(state, "authorization-code"))
+      .rejects.toThrow(/consumed|expired|invalid/i);
+  });
+
+  it("rejects an unavailable managed account before storing a new OAuth grant", async () => {
+    const store = new MemoryOAuthStore();
+    const client: InstagramOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn().mockResolvedValue({
+        accessToken: "short-new", userId: "new-subject", scopes: [...INSTAGRAM_REVIEW_SCOPES]
+      }),
+      exchangeLongLived: vi.fn().mockResolvedValue({
+        accessToken: "long-new", accessExpiresInSeconds: 5_184_000
+      }),
+      refresh: vi.fn(), resolveProfessionalAccountId: vi.fn().mockResolvedValue("17841438662359631"),
+      ensureWebhookSubscription: vi.fn()
+    };
+    const service = new InstagramOAuthService({
+      appId: "123456789012345",
+      redirectUri: "https://apps.example.test/instagram/callback/",
+      store, client,
+      expectedManagedAccountId: vi.fn().mockRejectedValue(new Error("managed token unavailable"))
+    });
+    const state = new URL((await service.beginAuthorization()).authorizationUrl)
+      .searchParams.get("state")!;
+    await expect(service.completeAuthorization(state, "authorization-code"))
+      .rejects.toMatchObject({ stage: "account_resolution" });
+    expect(await store.get("instagram", "new-subject")).toBeUndefined();
+  });
+
+  it("rejects a consent flow without all basic and messaging scopes", async () => {
+    const store = new MemoryOAuthStore();
+    const exchangeLongLived = vi.fn();
+    const client: InstagramOAuthClientLike = {
+      exchangeAuthorizationCode: vi.fn().mockResolvedValue({
+        accessToken: "short-limited", userId: "limited-subject",
+        scopes: ["instagram_business_basic"]
+      }),
+      exchangeLongLived, refresh: vi.fn(),
+      resolveProfessionalAccountId: vi.fn(), ensureWebhookSubscription: vi.fn()
+    };
+    const service = new InstagramOAuthService({
+      appId: "123456789012345",
+      redirectUri: "https://apps.example.test/instagram/callback/",
+      store, client
+    });
+    const state = new URL((await service.beginAuthorization()).authorizationUrl)
+      .searchParams.get("state")!;
+    const failure = await service.completeAuthorization(state, "authorization-code")
+      .then(() => undefined, (error: unknown) => error);
+    expect(failure).toMatchObject({ stage: "short_token_exchange" });
+    expect(instagramOAuthFailureDiagnostic(failure))
+      .toContain("reason=required_scopes_missing");
+    expect(exchangeLongLived).not.toHaveBeenCalled();
+    expect(await store.get("instagram", "limited-subject")).toBeUndefined();
+  });
+
   it("reports durable status safely when an access expiry is absent", async () => {
     const store = new MemoryOAuthStore();
     await store.put({

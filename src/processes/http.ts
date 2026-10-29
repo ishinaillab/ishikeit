@@ -8,6 +8,7 @@ import { TikTokBusinessMessagingAdapter } from "../adapters/tiktok/messaging.js"
 import { TikTokCommentToMessageAdapter } from "../adapters/tiktok/comment-to-message.js";
 import { WordPressBrainClient } from "../brain/wordpress.js";
 import { buildServer } from "../http/server.js";
+import { LATEPOINT_WORDPRESS_PUBLIC_KEY_PEM } from "../appointments/latepoint-public-key.js";
 import { MetaMediaResolver } from "../media/meta.js";
 import { TelegramMediaResolver } from "../media/telegram.js";
 import { TikTokMediaResolver } from "../media/tiktok.js";
@@ -439,9 +440,9 @@ const server = buildServer({
   metaHandoffs,
   appSecret: env.META_APP_SECRET,
   verifyToken: env.META_WEBHOOK_VERIFY_TOKEN,
-  ...(env.LATEPOINT_BOOKING_WEBHOOK_SECRET === undefined
-    ? {}
-    : { latePointWebhook: { secret: env.LATEPOINT_BOOKING_WEBHOOK_SECRET } }),
+  // Production verifier is pinned to the public-only WordPress signing key.
+  // No Hostinger env replacement or HMAC downgrade is necessary.
+  latePointWebhook: { publicKeyPem: LATEPOINT_WORDPRESS_PUBLIC_KEY_PEM },
   ...(telegram === undefined ? {} : { telegram }),
   ...(tiktok === undefined ? {} : { tiktok }),
   ...(tiktokBusinessWebhookService === undefined

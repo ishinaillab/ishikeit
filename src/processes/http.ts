@@ -200,6 +200,14 @@ const instagramOAuthService = (
       redirectUri: env.META_INSTAGRAM_OAUTH_REDIRECT_URI!,
       store: oauthStore,
       client: instagramOAuthClient,
+      // Own-business OAuth migration must authorize the exact Professional
+      // account already resolved from the healthy managed studio token.
+      // Keep existing generic onboarding when no managed token is configured.
+      ...(env.META_INSTAGRAM_ACCESS_TOKEN === undefined ? {} : {
+        expectedManagedAccountId: () => instagramOAuthClient.resolveProfessionalAccountId(
+          env.META_INSTAGRAM_ACCESS_TOKEN!
+        )
+      }),
       stateTtlSeconds: env.META_INSTAGRAM_OAUTH_STATE_TTL_SECONDS
     });
 const instagramDataLifecycle = (

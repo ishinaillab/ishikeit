@@ -1,6 +1,6 @@
 import type pg from "pg";
 import type { CredentialCipher, EncryptedCredentialValue } from "./credential-cipher.js";
-import type { PostgresDatabase } from "../persistence/postgres.js";
+import type { PostgresDatabase, SqlExecutor } from "../persistence/postgres.js";
 
 export interface OAuthCredential {
   provider: string;
@@ -24,6 +24,12 @@ export interface OAuthCredentialStore {
   latest(provider: string): Promise<OAuthCredential | undefined>;
   list(provider: string): Promise<readonly OAuthCredential[]>;
   put(credential: Omit<OAuthCredential, "tokenVersion">): Promise<void>;
+  /** Atomically store a new Instagram grant and its exact Professional ID mapping. */
+  putWithAlias(
+    credential: Omit<OAuthCredential, "tokenVersion">,
+    aliasAccountId: string,
+    aliasKind: string
+  ): Promise<void>;
   putAccountAlias(provider: string, aliasAccountId: string, credentialAccountId: string, aliasKind: string): Promise<void>;
   resolveCredentialAccountId(provider: string, accountId: string): Promise<string | undefined>;
   aliasesForCredential(provider: string, credentialAccountId: string): Promise<readonly string[]>;
@@ -152,6 +158,38 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
   }
 
   async put(credential: Omit<OAuthCredential, "tokenVersion">): Promise<void> {
+    await this.db.transaction((tx) => this.#writeCredential(tx, credential));
+  }
+
+  async putWithAlias(
+    credential: Omit<OAuthCredential, "tokenVersion">,
+    aliasAccountId: string,
+    aliasKind: string
+  ): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      // No partial credential, ambiguous alias, or revoked-token gap can commit.
+      await this.#writeCredential(tx, credential);
+      const result = await tx.query(
+        `INSERT INTO oauth_account_aliases
+           (provider,alias_account_id,credential_account_id,alias_kind)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (provider,alias_account_id) DO UPDATE SET
+           alias_kind=EXCLUDED.alias_kind,
+           updated_at=now()
+         WHERE oauth_account_aliases.credential_account_id=EXCLUDED.credential_account_id
+         RETURNING alias_account_id`,
+        [credential.provider, aliasAccountId, credential.accountId, aliasKind]
+      );
+      if (result.rowCount !== 1) {
+        throw new Error("Instagram Professional account is already mapped to a different grant");
+      }
+    });
+  }
+
+  async #writeCredential(
+    tx: SqlExecutor,
+    credential: Omit<OAuthCredential, "tokenVersion">
+  ): Promise<void> {
     const access = this.cipher.encrypt(
       credential.accessToken,
       aad(credential.provider, credential.accountId, "access")
@@ -163,8 +201,7 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
           aad(credential.provider, credential.accountId, "refresh")
         );
 
-    await this.db.transaction(async (tx) => {
-      await tx.query(
+    await tx.query(
         `INSERT INTO oauth_credentials
          (provider,account_id,
           access_token_ciphertext,access_token_iv,access_token_tag,
@@ -197,11 +234,10 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
           credential.refreshExpiresAt ?? null
         ]
       );
-      await tx.query(
-        `DELETE FROM oauth_revocations WHERE provider=$1 AND account_id=$2`,
-        [credential.provider, credential.accountId]
-      );
-    });
+    await tx.query(
+      `DELETE FROM oauth_revocations WHERE provider=$1 AND account_id=$2`,
+      [credential.provider, credential.accountId]
+    );
   }
 
   async putAccountAlias(

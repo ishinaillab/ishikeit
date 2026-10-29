@@ -77,10 +77,10 @@ jobs:
           node-version: "24"
           package-manager-cache: false
       - run: npm ci --ignore-scripts
-      - name: Verify durable Meta outbound fence on disposable PostgreSQL 17
+      - name: Verify Meta outbound fence and Instagram account promotion on disposable PostgreSQL 17
         env:
           PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
-        run: npx vitest run tests/outbox-postgres.integration.test.ts
+        run: npx vitest run tests/outbox-postgres.integration.test.ts tests/oauth-postgres.integration.test.ts
 
   php-lint:
     runs-on: ubuntu-latest

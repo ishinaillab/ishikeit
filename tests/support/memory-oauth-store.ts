@@ -46,6 +46,20 @@ export class MemoryOAuthStore implements OAuthCredentialStore {
     return Promise.resolve();
   }
 
+  async putWithAlias(
+    credential: Omit<OAuthCredential, "tokenVersion">,
+    aliasAccountId: string,
+    aliasKind: string
+  ): Promise<void> {
+    const key = credential.provider + ":" + aliasAccountId;
+    const mapped = this.aliases.get(key);
+    if (mapped !== undefined && mapped !== credential.accountId) {
+      throw new Error("Instagram Professional account is already mapped to a different grant");
+    }
+    await this.put(credential);
+    await this.putAccountAlias(credential.provider, aliasAccountId, credential.accountId, aliasKind);
+  }
+
   putAccountAlias(
     provider: string,
     aliasAccountId: string,

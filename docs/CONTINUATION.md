@@ -1,5 +1,14 @@
 # Ishikeit continuation handoff
 
+## 2026-10-29 — Verified Meta production gate checkpoint after PRs #166/#167
+
+- Ishikeit app functional deployment 0be6203b9bcad958527101a544880716dc0f583c, DB main 1b3cbef7ed838038cfb435953f239f34a931a835; Hostinger build completed, public health/live and ready HTTP 200, full local 450 tests/64 suites, CI passed.
+- #159: private operator-only unknown-outcome listing and immutable review ledger deployed, no sends/replay; synthetic DB tests and cleanup verified, zero current queues/unknown reviews; strong individual RBAC/provider evidence still pending.
+- #158: read-only Graph token issuer and HMAC proof preflight deployed, unauthenticated GET returns 401; actual production token checks NOT run because OPS token values remain masked. Global Meta Require App Secret and optional app proof flag OFF.
+- Meta App Review NO_SUBMISSION (though can_submit=true), no privileges reported, contact email unverified. App legal URLs returned HTTP 200. Managed Instagram healthy, older tester Graph 190 remains; do not alter account credentials without proper OAuth reauthorization.
+- WhatsApp appointment template PENDING and zero purpose-specific recipient opt-ins, reminders DISABLED. Full source-bounded follow-up and operational guardrails: docs/META_PLATFORM_GATE_CHECKPOINT_2026-10-29.md.
+
+
 ## 2026-10-29 — Read-only Meta token-app and signed Graph proof preflight
 
 - App main baseline prior to PR: 223df3000eb9a64b26fc904925fa9a59bc58abe2, durable operator reconciliation successfully deployed. Operator preflight implemented in separate branch feat/meta-graph-proof-readonly-preflight-20261029, using only the existing OPS_METRICS_TOKEN auth.

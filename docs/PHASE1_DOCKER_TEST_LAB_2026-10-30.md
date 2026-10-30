@@ -60,12 +60,16 @@ unrelated Docker Desktop projects. Never run `docker system prune` for this.
 On October 30, 2026, the initial Node.js 24 + PostgreSQL 17 local run passed
 `npm run lint`, `npm run typecheck`, Vitest **67 test files / 497 tests**,
 and `npm run build`. This includes **8 real PostgreSQL integration tests**
-(5 outbox-fencing and 3 OAuth-persistence). No live customer send or provider
-test occurred.
+(5 outbox-fencing and 3 OAuth-persistence). After the PostgreSQL idle-client failure hardening, the final test run passed
+**68 test files / 499 tests**, including **10 real PostgreSQL integration tests**.
+The new integration tests safely terminate only idle, disposable PostgreSQL
+backends, require a sanitized SQLSTATE warning, verify a fresh connection, and
+ensure a throwing observability callback cannot terminate the application.
+No live customer send or provider test occurred.
 
 ## Next failure-injection additions
 
-Continue with isolated database restart/connection-loss tests, lease expiry
+Continue with isolated whole-database restart and sustained connection-loss tests, lease expiry
 under worker termination, simultaneous send-worker races, out-of-order webhooks
 and alerting verification. Add them to this runner or existing CI without
 loosening production-facing security guards. Production health/metrics belong

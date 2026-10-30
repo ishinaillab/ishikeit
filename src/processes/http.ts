@@ -35,6 +35,7 @@ import { PostgresMetaUnknownReconciler } from "../persistence/meta-unknown-recon
 import { MetaGraphTokenPreflight } from "../security/meta-graph-preflight.js";
 import { PostgresLatePointReminderPlanStore } from "../persistence/latepoint-reminder-plans.js";
 import { LatePointReminderClock } from "../workers/latepoint-reminder-clock.js";
+import { InstagramOAuthMaintenance } from "../workers/instagram-oauth-maintenance.js";
 import { PostgresDatabase } from "../persistence/postgres.js";
 import { MessageReceivedHandler } from "../processing/message-handler.js";
 import { MetaRoutingOwnershipHandler } from "../processing/meta-routing-ownership-handler.js";
@@ -224,6 +225,15 @@ const instagramAccessTokenManager = (
   : new InstagramAccessTokenManager({
       store: oauthStore,
       client: instagramOAuthClient,
+      refreshSkewSeconds: env.META_INSTAGRAM_TOKEN_REFRESH_SKEW_SECONDS
+    });
+
+const instagramOAuthMaintenance = oauthStore === undefined || instagramAccessTokenManager === undefined
+  ? undefined
+  : new InstagramOAuthMaintenance({
+      store: oauthStore,
+      accessTokens: instagramAccessTokenManager,
+      hasHistoricalSignedInbound: (id) => instagramManagedAccountMatchesInbound(db, id),
       refreshSkewSeconds: env.META_INSTAGRAM_TOKEN_REFRESH_SKEW_SECONDS
     });
 
@@ -696,10 +706,12 @@ if (env.PROCESSOR_ENABLED) {
 }
 
 let shuttingDown = false;
+let instagramMaintenanceTimer: NodeJS.Timeout | undefined;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   logger.info({ signal }, "shutdown requested");
+  if (instagramMaintenanceTimer !== undefined) clearInterval(instagramMaintenanceTimer);
   await latePointReminderClock.stop();
   if (processorWorker !== undefined) await processorWorker.stop();
   if (outboundWorker !== undefined) await outboundWorker.stop();
@@ -726,6 +738,25 @@ async function main(): Promise<void> {
       throw new Error("TikTok Business Account activation requires a usable durable OAuth credential");
     }
     await server.listen({ host: env.HTTP_HOST, port: env.HTTP_PORT_EFFECTIVE });
+    if (instagramOAuthMaintenance !== undefined) {
+      const maintainInstagram = async () => {
+        try {
+          const result = await instagramOAuthMaintenance.runOnce();
+          // Aggregate counts only; no account IDs, secret values, or provider error details.
+          if (result.due > 0 || result.failed > 0) {
+            logger.info({ due: result.due, renewed: result.succeeded, failed: result.failed },
+              "Instagram OAuth maintenance pass completed");
+          }
+        } catch {
+          logger.warn("Instagram OAuth maintenance pass unavailable");
+        }
+      };
+      // Immediate check after startup, then every 6 hours even if nobody DMs.
+      // OAuth manager itself only refreshes near expiry and uses advisory locking.
+      instagramMaintenanceTimer = setInterval(() => { void maintainInstagram(); }, 6 * 60 * 60 * 1000);
+      instagramMaintenanceTimer.unref();
+      void maintainInstagram();
+    }
     // This clock suppresses deadlines only; no outbound template sender is involved.
     latePointReminderClock.start();
     logger.info("non-sending LatePoint deadline reconciliation enabled");

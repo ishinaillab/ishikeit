@@ -43,7 +43,7 @@ export class InstagramOAuthMaintenance {
       }
       if (aliases.length !== 1 || !/^\d{10,24}$/u.test(aliases[0]!)) continue;
 
-      let observed = false;
+      let observed: boolean;
       try {
         observed = await this.options.hasHistoricalSignedInbound(aliases[0]!);
       } catch {

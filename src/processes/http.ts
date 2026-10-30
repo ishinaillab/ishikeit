@@ -706,11 +706,14 @@ if (env.PROCESSOR_ENABLED) {
 }
 
 let shuttingDown = false;
+// An asynchronous Hostinger SIGTERM may arrive before startup has finished.
 let instagramMaintenanceTimer: NodeJS.Timeout | undefined;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   logger.info({ signal }, "shutdown requested");
+  // Startup must observe shuttingDown before the DB pool can be closed.
+  await startupPromise;
   if (instagramMaintenanceTimer !== undefined) clearInterval(instagramMaintenanceTimer);
   await latePointReminderClock.stop();
   if (processorWorker !== undefined) await processorWorker.stop();
@@ -734,10 +737,14 @@ async function main(): Promise<void> {
     await reconcileInstagramOAuthAccounts();
     await reconcileInstagramManagedAccount();
     await reconcileMessengerManagedPage();
+    if (shuttingDown) return;
     if (!await tiktokAuthorizationReady()) {
       throw new Error("TikTok Business Account activation requires a usable durable OAuth credential");
     }
+    if (shuttingDown) return;
     await server.listen({ host: env.HTTP_HOST, port: env.HTTP_PORT_EFFECTIVE });
+    // A shutdown request during the await must prevent new worker loops.
+    if (shuttingDown) return;
     if (instagramOAuthMaintenance !== undefined) {
       const maintainInstagram = async () => {
         try {
@@ -773,6 +780,8 @@ async function main(): Promise<void> {
       logger.info("provider action dispatcher disabled");
     }
   } catch (error) {
+    // Graceful shutdown owns all cleanup if startup was cancelled by SIGTERM.
+    if (shuttingDown) return;
     logger.fatal({ err: error }, "HTTP process failed");
     await latePointReminderClock.stop();
   if (processorWorker !== undefined) await processorWorker.stop();
@@ -782,4 +791,4 @@ async function main(): Promise<void> {
   }
 }
 
-void main();
+const startupPromise = main();

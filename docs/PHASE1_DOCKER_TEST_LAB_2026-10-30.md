@@ -79,3 +79,29 @@ The owner-approved Phase 3 private dashboard stays on
 `apps.ishinaillab.com`. At Phase 4 the existing custom WordPress bridge must
 be safely renamed to **LatePoint Addon - Ishikeit Automation** (GitHub #192).
 Neither future milestone is implemented by this Docker testing configuration.
+
+## Phase 1 operational alert summary (staged, not deployed)
+
+The existing bearer-protected `GET /ops/metrics` endpoint remains unchanged.
+A new read-only `GET /ops/metrics/alerts?window=60` route uses the same
+operator bearer authorization and accepts only windows from 5 to 1440 minutes.
+It returns a privacy-safe, non-sending aggregate summary of known queue topics,
+current inbound processing failures and recent dead letters:
+
+- Current inbound failures: warning at 1; critical at 5.
+- Pending inbound/outbound queue lag: warning from 5 minutes; critical from
+  15 minutes. Intentionally disabled processor/dispatcher queues are excluded.
+- Recent dead letters in the selected window: warning at 1; critical at 5.
+
+The route cannot send messages, change queues, access a provider or schedule
+notifications. It does not return customer identities, message bodies, tokens
+or raw errors. A healthy summary **is not proof that a worker is alive**:
+worker heartbeats and external notification delivery are separate future work.
+These initial thresholds are engineering defaults, not provider SLAs.
+
+The complete disposable Docker test run after adding alert classification
+passed **505 of 505 tests in 69 test files**, including **10 real PostgreSQL
+integration tests** and all lint/typecheck/build checks. Temporary test
+containers, network and volumes were removed. This code remains in PR #193
+until reviewed and merged; no Hostinger deployment or production test has
+occurred as part of this Phase 1 work.

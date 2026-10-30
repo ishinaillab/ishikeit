@@ -13,6 +13,7 @@ import { normalizeTikTokBusinessWebhook, tiktokBusinessIngressIdentity } from ".
 import { verifyTikTokSignature } from "../security/tiktok.js";
 import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
+import { evaluateOperationalAlerts } from "../observability/operational-alerts.js";
 import type { MetaUnknownReconciler } from "../persistence/meta-unknown-reconciliation.js";
 import type { MetaGraphPreflightReader } from "../security/meta-graph-preflight.js";
 import type { BuildIdentity } from "../observability/build-identity.js";
@@ -386,6 +387,30 @@ export function buildServer(deps: ServerDeps) {
         return await metrics.snapshot(windowMinutes);
       } catch (error) {
         deps.logger.error({ err: error }, "operational metrics snapshot failed");
+        return reply.code(503).send({ status: "metrics_unavailable" });
+      }
+    });
+
+    // Read-only alert summary; no customer identifiers, queue mutations,
+    // notifications, credentials, or provider traffic.
+    server.get<{ Querystring: { window?: string } }>("/ops/metrics/alerts", async (req, reply) => {
+      reply.header("cache-control", "private, no-store");
+      if (!verifyBearerAuthorization(req.headers.authorization, opsMetricsToken)) {
+        return reply.header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401).send({ status: "unauthorized" });
+      }
+      const rawWindow = req.query.window ?? "60";
+      if (!/^\d+$/u.test(rawWindow)) {
+        return reply.code(400).send({ status: "invalid_window" });
+      }
+      const windowMinutes = Number(rawWindow);
+      if (!Number.isInteger(windowMinutes) || windowMinutes < 5 || windowMinutes > 1440) {
+        return reply.code(400).send({ status: "invalid_window" });
+      }
+      try {
+        const snapshot = await metrics.snapshot(windowMinutes);
+        return evaluateOperationalAlerts(snapshot, deps.runtimeState);
+      } catch {
         return reply.code(503).send({ status: "metrics_unavailable" });
       }
     });

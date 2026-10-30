@@ -23,7 +23,7 @@ describe("InstagramOAuthMaintenance", () => {
     await store.putAccountAlias("instagram", "17841437646366614", "former-tester-subject",
       "instagram_professional_account");
     const getAccessToken = vi.fn();
-    const hasHistoricalSignedInbound = vi.fn(async (id: string) => id === "17841438662359631");
+    const hasHistoricalSignedInbound = vi.fn((id: string) => Promise.resolve(id === "17841438662359631"));
     const runner = new InstagramOAuthMaintenance({
       store, accessTokens: { getAccessToken },
       hasHistoricalSignedInbound, refreshSkewSeconds, now: () => now
@@ -48,7 +48,7 @@ describe("InstagramOAuthMaintenance", () => {
     const runner = new InstagramOAuthMaintenance({
       store,
       accessTokens: { getAccessToken },
-      hasHistoricalSignedInbound: async (id) => id === "17841438662359631",
+      hasHistoricalSignedInbound: (id) => Promise.resolve(id === "17841438662359631"),
       refreshSkewSeconds, now: () => now
     });
     await expect(runner.runOnce()).resolves.toEqual({
@@ -71,7 +71,7 @@ describe("InstagramOAuthMaintenance", () => {
     const getAccessToken = vi.fn().mockRejectedValue(new Error("provider failed"));
     const runner = new InstagramOAuthMaintenance({
       store, accessTokens: { getAccessToken },
-      hasHistoricalSignedInbound: async () => true,
+      hasHistoricalSignedInbound: () => Promise.resolve(true),
       refreshSkewSeconds, now: () => now
     });
     await expect(runner.runOnce()).resolves.toMatchObject({

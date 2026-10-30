@@ -222,3 +222,7 @@ The initial production registration used `allowed_updates=["message"]` and `drop
 For future token/webhook rotations, preserve the same safe sequence: update the complete production environment from a trusted secret source, verify readiness, register the webhook with the dedicated secret, inspect `getWebhookInfo`, and run a controlled canary. Hostinger's environment replacement operation is full-replacement; never round-trip masked values returned by its environment-variable listing.
 
 Access tokens and bridge credentials are secrets. Keep raw values in hosting/runtime secret storage only and never commit them.
+
+## Phase 1: local Docker integration lab
+
+On Windows with Docker Desktop running, execute `./scripts/test-docker.ps1` from this repository checkout. It runs Node.js 24 lint/typecheck/unit tests/build and real PostgreSQL 17 integration tests without starting the production HTTP server or contacting customer messaging providers. All temporary Docker resources are removed after the run; only shared image caches remain. See [the isolated test lab runbook](docs/PHASE1_DOCKER_TEST_LAB_2026-10-30.md).

@@ -1,0 +1,55 @@
+# Disposable, test-only Docker lab. NOT the production Ishikeit deployment.
+# No exposed database port, production environment file, customer data or API token.
+name: ishikeit-phase1-test
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ishikeit-disposable-test-only
+      POSTGRES_DB: ishikeit_outbox_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ishikeit_outbox_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    # No "ports" entry: the test DB is inaccessible from the Windows host.
+
+  tests:
+    image: node:24-bookworm-slim
+    working_dir: /workspace
+    # Network namespace sharing permits the existing integration-test URL
+    # guard to keep requiring 127.0.0.1/ishikeit_outbox_test unchanged.
+    network_mode: "service:postgres"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      CI: "true"
+      PG_OUTBOX_TEST_DATABASE_URL: "postgres://postgres:ishikeit-disposable-test-only@127.0.0.1:5432/ishikeit_outbox_test"
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
+      NPM_CONFIG_UPDATE_NOTIFIER: "false"
+    volumes:
+      # Host source remains read-only; npm and compiler write only inside
+      # the disposable container filesystem, never the Windows checkout.
+      - type: bind
+        source: .
+        target: /source
+        read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    init: true
+    # Explicit source allowlist excludes .env, .git, secrets and untracked files.
+    # Includes lint, typecheck, Vitest unit + real PG integration, and build.
+    # No HTTP server, WordPress, Telegram, Meta or WhatsApp client is started.
+    command: ["sh", "-ec", "for item in package.json package-lock.json tsconfig.json tsconfig.build.json eslint.config.js README.md src tests scripts migrations wordpress docs; do cp -a \"/source/$$item\" /workspace/; done; npm ci --ignore-scripts --no-audit --no-fund && npm run check"]
+
+volumes:
+  postgres_test_data:

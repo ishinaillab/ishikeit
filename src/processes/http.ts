@@ -79,7 +79,10 @@ if (env.DATABASE_URL === undefined || env.META_APP_SECRET === undefined || env.M
   throw new Error("DATABASE_URL, META_APP_SECRET and META_WEBHOOK_VERIFY_TOKEN are required to start the HTTP service");
 }
 
-const db = new PostgresDatabase(env.DATABASE_URL);
+const db = new PostgresDatabase(env.DATABASE_URL, (sqlState) => {
+  // Stable machine-readable SQLSTATE only. Never log a DB URL or raw error text.
+  logger.warn({ sqlState }, "PostgreSQL idle connection lost; pool will reconnect on next request");
+});
 const metaHandoffs = new PostgresMetaHandoffStore(db);
 const whatsappConsents = env.META_WHATSAPP_CONSENT_HASH_KEY_B64 === undefined
   ? undefined

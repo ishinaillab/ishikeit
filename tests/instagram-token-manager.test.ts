@@ -194,18 +194,18 @@ describe("InstagramAccessTokenManager", () => {
       accessToken: "refreshed-token",
       accessExpiresInSeconds: 5_184_000
     });
+    const resolveProfessionalAccountId = vi.fn().mockResolvedValue("17841438662359631");
     const client: InstagramOAuthClientLike = {
       exchangeAuthorizationCode: vi.fn(),
       exchangeLongLived: vi.fn(),
       refresh,
-      resolveProfessionalAccountId: vi.fn(),
+      resolveProfessionalAccountId,
       ensureWebhookSubscription: vi.fn()
     };
     // The refreshed Graph /me identity must match the immutable alias.
     await store.putAccountAlias(
       "instagram", "17841438662359631", "ig-1", "instagram_professional_account"
     );
-    vi.mocked(client.resolveProfessionalAccountId).mockResolvedValue("17841438662359631");
     const manager = new InstagramAccessTokenManager({
       store,
       client,

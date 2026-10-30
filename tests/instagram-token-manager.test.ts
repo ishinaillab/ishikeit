@@ -194,13 +194,18 @@ describe("InstagramAccessTokenManager", () => {
       accessToken: "refreshed-token",
       accessExpiresInSeconds: 5_184_000
     });
+    const resolveProfessionalAccountId = vi.fn().mockResolvedValue("17841438662359631");
     const client: InstagramOAuthClientLike = {
       exchangeAuthorizationCode: vi.fn(),
       exchangeLongLived: vi.fn(),
       refresh,
-      resolveProfessionalAccountId: vi.fn(),
+      resolveProfessionalAccountId,
       ensureWebhookSubscription: vi.fn()
     };
+    // The refreshed Graph /me identity must match the immutable alias.
+    await store.putAccountAlias(
+      "instagram", "17841438662359631", "ig-1", "instagram_professional_account"
+    );
     const manager = new InstagramAccessTokenManager({
       store,
       client,
@@ -213,6 +218,39 @@ describe("InstagramAccessTokenManager", () => {
     await expect(store.get("instagram", "ig-1")).resolves.toMatchObject({
       accessToken: "refreshed-token",
       tokenVersion: 2
+    });
+  });
+
+  it("refuses to persist a refreshed token that resolves to a different Instagram account", async () => {
+    const store = new MemoryOAuthStore();
+    const now = new Date("2026-11-01T04:00:00.000Z");
+    await store.put({
+      provider: "instagram",
+      accountId: "original-subject",
+      accessToken: "old-valid-token",
+      scopes: ["instagram_business_basic", "instagram_business_manage_messages"],
+      accessExpiresAt: new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000)
+    });
+    await store.putAccountAlias("instagram", "17841438662359631", "original-subject",
+      "instagram_professional_account");
+    const manager = new InstagramAccessTokenManager({
+      store,
+      client: {
+        exchangeAuthorizationCode: vi.fn(),
+        exchangeLongLived: vi.fn(),
+        refresh: vi.fn().mockResolvedValue({
+          accessToken: "new-wrong-owner-token", accessExpiresInSeconds: 5_184_000
+        }),
+        resolveProfessionalAccountId: vi.fn().mockResolvedValue("17841437646366614"),
+        ensureWebhookSubscription: vi.fn()
+      },
+      now: () => now
+    });
+    await expect(manager.getAccessToken("17841438662359631"))
+      .rejects.toMatchObject({ retryable: false });
+    expect(await store.get("instagram", "original-subject")).toMatchObject({
+      accessToken: "old-valid-token",
+      tokenVersion: 1
     });
   });
 

@@ -212,6 +212,31 @@ export class InstagramAccessTokenManager implements AccountAccessTokenProvider {
       });
     }
 
+    // A valid refresh must still represent the same Instagram Professional
+    // account as the original, durable OAuth grant. Never persist a token for
+    // an unexpected account, including after a provider-side account switch.
+    const aliases = await this.#store.aliasesForCredential("instagram", accountId);
+    if (aliases.length !== 1) {
+      throw new AccessTokenError(
+        "Instagram OAuth refresh has no unambiguous Professional account mapping",
+        { retryable: false }
+      );
+    }
+    let refreshedProfessionalId: string;
+    try {
+      refreshedProfessionalId = await this.#client.resolveProfessionalAccountId(result.accessToken);
+    } catch (error) {
+      throw new AccessTokenError("Instagram OAuth refreshed identity verification failed", {
+        retryable: error instanceof InstagramOAuthRequestError ? error.retryable : true,
+        cause: error
+      });
+    }
+    if (refreshedProfessionalId !== aliases[0]) {
+      throw new AccessTokenError("Instagram OAuth refreshed token account identity mismatch", {
+        retryable: false
+      });
+    }
+
     const updated = {
       provider: "instagram",
       accountId,

@@ -750,8 +750,13 @@ async function main(): Promise<void> {
         try {
           const result = await instagramOAuthMaintenance.runOnce();
           // Aggregate counts only; no account IDs, secret values, or provider error details.
-          if (result.due > 0 || result.failed > 0) {
-            logger.info({ due: result.due, renewed: result.succeeded, failed: result.failed },
+          if (result.failed > 0) {
+            // Failure must surface at WARN for operational log watchers.
+            // Do not log token values, provider raw responses or customer IDs.
+            logger.warn({ due: result.due, renewed: result.succeeded, failed: result.failed },
+              "Instagram OAuth maintenance requires attention");
+          } else if (result.due > 0) {
+            logger.info({ due: result.due, renewed: result.succeeded },
               "Instagram OAuth maintenance pass completed");
           }
         } catch {

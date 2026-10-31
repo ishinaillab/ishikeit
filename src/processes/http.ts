@@ -19,6 +19,7 @@ import { createLogger } from "../observability/logger.js";
 import { PostgresOperationalMetrics } from "../observability/operational-metrics.js";
 import { LocalWorkerDiagnostics } from "../observability/worker-loop-diagnostics.js";
 import { PostgresWorkerHeartbeatStore, DurableWorkerHeartbeatMonitor } from "../observability/durable-worker-heartbeats.js";
+import { PostgresOperationalIncidentStore, OperationalIncidentMonitor, HttpsOperatorWebhook } from "../observability/operational-incident-monitor.js";
 import { runtimeBuildIdentity } from "../observability/build-identity.js";
 import {
   instagramManagedAccountMatchesInbound,
@@ -91,6 +92,16 @@ const db = new PostgresDatabase(env.DATABASE_URL, (sqlState) => {
 });
 const fleetStore = new PostgresWorkerHeartbeatStore(db);
 const heartbeatMonitor = new DurableWorkerHeartbeatMonitor(fleetStore, workerDiagnostics, logger);
+const incidentStore = new PostgresOperationalIncidentStore(db);
+let instagramOauthMaintenanceFailures = 0;
+const approvedOperatorSender = env.OPS_ALERT_WEBHOOK_ENABLED
+  ? new HttpsOperatorWebhook(env.OPS_ALERT_WEBHOOK_URL!, env.OPS_ALERT_WEBHOOK_SECRET!, env.OPS_ALERT_APPROVED_HOST!)
+  : undefined;
+const incidentMonitor = new OperationalIncidentMonitor(
+  new PostgresOperationalMetrics(db), fleetStore, incidentStore, logger,
+  approvedOperatorSender, () => instagramOauthMaintenanceFailures,
+  { processorEnabled: env.PROCESSOR_ENABLED, actionDispatchEnabled: env.ACTION_DISPATCH_ENABLED_EFFECTIVE }
+);
 const metaHandoffs = new PostgresMetaHandoffStore(db);
 const whatsappConsents = env.META_WHATSAPP_CONSENT_HASH_KEY_B64 === undefined
   ? undefined
@@ -568,6 +579,7 @@ const server = buildServer({
         metrics: new PostgresOperationalMetrics(db),
         localWorkerDiagnostics: workerDiagnostics,
   workerFleet: fleetStore,
+        incidentReadback: incidentStore,
         metaUnknown: new PostgresMetaUnknownReconciler(db),
         metaGraphPreflight: new MetaGraphTokenPreflight({
           appId: env.META_APP_ID,
@@ -735,6 +747,7 @@ async function shutdown(signal: string): Promise<void> {
   await latePointReminderClock.stop();
   if (processorWorker !== undefined) await processorWorker.stop();
   if (outboundWorker !== undefined) await outboundWorker.stop();
+  await incidentMonitor.stop();
   await heartbeatMonitor.stop();
   await server.close();
   await db.close();
@@ -767,6 +780,7 @@ async function main(): Promise<void> {
       const maintainInstagram = async () => {
         try {
           const result = await instagramOAuthMaintenance.runOnce();
+          instagramOauthMaintenanceFailures = result.failed;
           // Aggregate counts only; no account IDs, secret values, or provider error details.
           if (result.failed > 0) {
             // Failure must surface at WARN for operational log watchers.
@@ -778,6 +792,7 @@ async function main(): Promise<void> {
               "Instagram OAuth maintenance pass completed");
           }
         } catch {
+          instagramOauthMaintenanceFailures = 1;
           logger.warn("Instagram OAuth maintenance pass unavailable");
         }
       };
@@ -803,6 +818,7 @@ async function main(): Promise<void> {
       logger.info("provider action dispatcher disabled");
     }
     heartbeatMonitor.start();
+    incidentMonitor.start();
   } catch (error) {
     // Graceful shutdown owns all cleanup if startup was cancelled by SIGTERM.
     if (shuttingDown) return;

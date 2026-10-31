@@ -3150,3 +3150,55 @@ Read-only WordPress plugin inventory on 2026-10-29 shows **LatePoint 5.7.5**, **
 - Permanent 6-hour Instagram OAuth maintenance remains scoped to the owner-authorized studio Professional account `17841438662359631` and durable encrypted subject `28436714725987041`; no legacy tester credential remains.
 - Any failed eligible maintenance pass is now logged at WARN using **aggregate counts only**, so production monitors can alert without exposing tokens, ciphertext or customer IDs. Successful due renewal passes remain INFO.
 - The existing Instagram signing proof automation (now fulfilled) is reused for a daily conditional renewal watch starting Oct 31, 2026 08:15 Asia/Manila. The studio long-lived token was issued Oct 30 07:52 local, and Meta prohibits refreshing it before it is at least 24 hours old. The automation must fail closed if no secure server-side execution path exists. After an actual controlled one-time renewal with independent provider/account/expiry verification, any temporary test infrastructure and the test instructions in the automation prompt must be removed; permanent scheduled maintenance and renewal-failure monitoring stay enabled. No temporary test code or early refresh was deployed as part of this change.
+
+
+### 2026-10-30 — Phase 1 isolated Docker integration lab verified
+
+- Owner approved Phase 1 local integration testing using installed Windows Docker Desktop. Local Agent successfully connected to Docker Desktop Linux engine v29.9.2, Compose v5.6.1. The isolated development worktree is `D:\projects\openai\ishikeit\phase1-docker-20261030` starting at app main SHA `ee2285188f559df81dd715b5cc2bacedc8b5d1ea`. Existing user worktrees/main remain untouched.
+- Added `compose.test.yaml`, `scripts/test-docker.ps1`, and `docs/PHASE1_DOCKER_TEST_LAB_2026-10-30.md` with Node 24 and PostgreSQL 17. The test DB is never port-published; the code is mounted read-only and whitelisted copies run in the container filesystem. No production .env, credentials, WhatsApp/Instagram endpoints or customers enter the stack. Existing tests' local-only URI guards remain unchanged. The PowerShell wrapper removes named test containers, networks and volumes even when tests fail.
+- Initial Docker Node24/PG17 `npm run check` ran successfully after resolving a Docker read-only nested mount issue: **497 tests in 67 files**, including **8 actual PostgreSQL integration tests**, plus ESLint, TypeScript and production build. Real-world provider traffic and app deployment not exercised by this isolated baseline. Final PowerShell runner was rerun successfully after escaping Compose variable interpolation and source allowlisting: 497/497 tests passed again; final `RUNNER_EXIT=0`; zero named project containers, volumes, or networks remained. A temporary nested-volume mount failure and a Compose shell-variable interpolation failure were corrected; abandoned draft test volumes were individually verified and removed.
+- Approved future architecture: Phase 3 private unified inbox at `apps.ishinaillab.com`; Phase 4 custom WordPress bridge must be fully rebranded to **LatePoint Addon - Ishikeit Automation** with safe option/key/event migration (GitHub #192). Neither phase is activated by this Phase 1 test-only change.
+
+### 2026-10-30 — PostgreSQL idle-connection resilience (Phase 1)
+
+- Source review identified that `PostgresDatabase` constructed `pg.Pool` without an idle-client `error` listener. The official node-postgres Pool documentation says a lost idle PostgreSQL connection emits `error` and with no listener can terminate the entire Node process during failover/network interruption. This is distinct from rejecting an in-flight query, which must not be automatically retried when a send may have occurred.
+- Added a Pool-level idle-error listener that catches and removes the failed connection through the library's normal behavior, emits only validated 5-character SQLSTATE (or null), and isolates failures of the optional diagnostic callback. Production HTTP process logs a safe WARN without database URI, SQL, error body or credentials. It does not retry Meta sends or change transaction semantics.
+- Added two true PostgreSQL17 integration tests under strict localhost/test-DB guard: terminate one idle backend with `pg_terminate_backend` and verify SQLSTATE warning plus a new backend ID/recovery even when the monitoring callback throws; then repeat without a callback to prove no unhandled idle-client crash. GitHub PostgreSQL CI job now runs them in addition to existing outbox/OAuth integration cases.
+- Verified on Windows Docker Desktop using the self-cleaning Phase1 PowerShell runner: **499/499 tests in 68 files, including 10 real PostgreSQL tests, ESLint, typecheck and build all PASS**. Final runner exit 0, and no dedicated test project containers, volumes or network remained. This is source-and-disposable-DB evidence; no production database failure was induced and runtime deployment is separate.
+
+
+### 2026-10-30 — Protected Phase 1 operational alert summary (PR #193; staged)
+
+- Reused the existing authenticated read-only operational metrics snapshot to expose `GET /ops/metrics/alerts?window=60` behind the **same operator bearer** as `/ops/metrics`, response `Cache-Control: private, no-store`; input window 5–1440 minutes; failure gives 503 without exposing raw SQL or provider data. This is an aggregate read-only route, NOT an external alert sender or dashboard UI.
+- Pure `evaluateOperationalAlerts` classifies current inbound processing failures (warning >=1, critical >=5), known-topic pending queue lag (warning >=5 minutes, critical >=15 minutes), and recent dead letters (warning >=1, critical >=5), suppressing queue lag when its worker is explicitly disabled. Only known queue names, counts and bounded lag are returned; no customer identities, text, access tokens or raw errors.
+- Endpoint + classifier tests verify authentication 401, bad window 400, authorized warning 200, secret exclusion, threshold rules and unknown-topic exclusion. These are **not worker heartbeats** and an empty queue does not establish actual worker liveness. Durable heartbeat, independently authenticated notification delivery and production monitoring are separate follow-up milestones.
+- Final local Windows Docker Desktop run on Node 24 / PostgreSQL 17: **505/505 tests, 69 test files, including 10 genuine PostgreSQL integration tests**, plus ESLint, typecheck and build PASS. Runner returned 0, with zero disposable Ishikeit test project containers/volumes/network left. PR #193 contains all changes, is subject to four GitHub CI checks, and **must remain unmerged/undeployed for now** to preserve production until deliberate release verification. No live message, provider token or user/booking data was touched.
+
+
+### 2026-11-01 — Phase 1 verification on relocated D: Docker Desktop
+
+- Owner explicitly requires manual BitLocker unlock for D:. Docker Desktop
+  autostart and BitLocker auto-unlock remain **off**. Windows WSL Docker distro
+  registration was independently read back under
+  `D:\projects\docker\data\DockerDesktopWSL\DockerDesktopWSL\main`.
+  Existing older D: disk and both offline recovery backups remain preserved.
+- Resumed open held PR #193 from local independent worktree, with GitHub CI
+  four jobs passing. Ran its `scripts/test-docker.ps1` on the relocated
+  Docker Desktop Engine 29.9.2 / Node.js 24 / PostgreSQL 17:
+  505/505 tests passed (69 files), including 10 real Postgres integration tests;
+  ESLint, typecheck and build passed, with **zero** test containers, volumes
+  and networks left after cleanup.
+- Follow-up Phase 1 enhancement implements protected, strictly local-process
+  worker-loop diagnostics via `GET /ops/workers/local`. Instrumented inbound
+  processor and outbound dispatcher loops without changing send policies or
+  retries. Requires `OPS_METRICS_TOKEN`, never exposes messages/tokens,
+  explicitly flags `scope=local_process`, records idle/working/stalled/
+  long-running states and iteration failures. Instrumentation callback errors
+  cannot crash workers. This is **not** distributed liveness or a replacement
+  for durable per-instance heartbeats and external alert delivery.
+- Final isolated Docker run after adding direct inbound/outbound loop observation tests:
+  **513/513 tests passed across 71 files**, including 10 real Postgres
+  integration cases; lint, TypeScript, build and zero leftover disposable
+  containers/volumes/networks verified.
+- **Release hold:** Phase 1 PR #193 remains unmerged, no automatic Hostinger
+  production deployment, no changed Meta credentials and no customer sends.

@@ -212,6 +212,62 @@ describe("webhook routes", () => {
     await server.close();
   });
 
+  it("protects operator alert summaries and refuses invalid query windows", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>();
+    const snapshot = vi.fn().mockResolvedValue({
+      generatedAt: "2026-10-30T00:00:00.000Z",
+      windowMinutes: 60,
+      inbound: { failedCurrent: 0 },
+      queue: [{
+        topic: "action.dispatch", pending: 2, oldestPendingMs: 600_000,
+        deadLetterTotal: 0, deadLettersInWindow: 0
+      }]
+    });
+    const token = "s".repeat(32);
+    const server = buildServer({
+      logger: pino({ level: "silent" }),
+      ready: () => Promise.resolve(true),
+      inbound: { ingest },
+      appSecret: "app-secret-never-return",
+      verifyToken: "verify-token",
+      metrics: { snapshot },
+      opsMetricsToken: token,
+      runtimeState: {
+        processorEnabled: true,
+        actionDispatchEnabled: true,
+        processorCutoverAt: null,
+        processorCanaryPartitionCount: 0,
+        videoInterpreterProvider: "none"
+      }
+    });
+    try {
+      const forbidden = await server.inject({ method: "GET", url: "/ops/metrics/alerts" });
+      expect(forbidden.statusCode).toBe(401);
+      expect(snapshot).not.toHaveBeenCalled();
+
+      const invalid = await server.inject({
+        method: "GET", url: "/ops/metrics/alerts?window=2",
+        headers: { authorization: "Bearer " + token }
+      });
+      expect(invalid.statusCode).toBe(400);
+
+      const ok = await server.inject({
+        method: "GET", url: "/ops/metrics/alerts?window=60",
+        headers: { authorization: "Bearer " + token }
+      });
+      expect(ok.statusCode).toBe(200);
+      expect(ok.headers["cache-control"]).toBe("private, no-store");
+      expect(snapshot).toHaveBeenCalledWith(60);
+      expect(ok.json()).toMatchObject({
+        status: "warning", windowMinutes: 60,
+        alerts: [{ code: "queue_lag", severity: "warning", topic: "action.dispatch", count: 2 }]
+      });
+      expect(ok.body).not.toContain("app-secret-never-return");
+    } finally {
+      await server.close();
+    }
+  });
+
   it("protects TikTok OAuth operations and accepts a state-validated callback", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>();
     const beginAuthorization = vi.fn().mockResolvedValue({

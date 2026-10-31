@@ -13,6 +13,8 @@ import { normalizeTikTokBusinessWebhook, tiktokBusinessIngressIdentity } from ".
 import { verifyTikTokSignature } from "../security/tiktok.js";
 import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
+import type { LocalWorkerDiagnostics } from "../observability/worker-loop-diagnostics.js";
+import { evaluateOperationalAlerts } from "../observability/operational-alerts.js";
 import type { MetaUnknownReconciler } from "../persistence/meta-unknown-reconciliation.js";
 import type { MetaGraphPreflightReader } from "../security/meta-graph-preflight.js";
 import type { BuildIdentity } from "../observability/build-identity.js";
@@ -96,6 +98,7 @@ export interface ServerDeps {
   /** Compiled-source fingerprint supplied by the startup process, never credentials. */
   buildIdentity?: BuildIdentity;
   metrics?: OperationalMetricsReader;
+  localWorkerDiagnostics?: LocalWorkerDiagnostics;
   metaUnknown?: MetaUnknownReconciler;
   metaGraphPreflight?: MetaGraphPreflightReader;
   metaHandoffs?: MetaHandoffControl;
@@ -208,6 +211,9 @@ export function buildServer(deps: ServerDeps) {
   }
   if (deps.metrics !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("operational metrics require a bearer token");
+  }
+  if (deps.localWorkerDiagnostics !== undefined && deps.opsMetricsToken === undefined) {
+    throw new Error("local worker diagnostics require an operational bearer token");
   }
   if (deps.tiktokOAuth !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("TikTok OAuth operations require an operational bearer token");
@@ -388,6 +394,44 @@ export function buildServer(deps: ServerDeps) {
         deps.logger.error({ err: error }, "operational metrics snapshot failed");
         return reply.code(503).send({ status: "metrics_unavailable" });
       }
+    });
+
+    // Read-only alert summary; no customer identifiers, queue mutations,
+    // notifications, credentials, or provider traffic.
+    server.get<{ Querystring: { window?: string } }>("/ops/metrics/alerts", async (req, reply) => {
+      reply.header("cache-control", "private, no-store");
+      if (!verifyBearerAuthorization(req.headers.authorization, opsMetricsToken)) {
+        return reply.header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401).send({ status: "unauthorized" });
+      }
+      const rawWindow = req.query.window ?? "60";
+      if (!/^\d+$/u.test(rawWindow)) {
+        return reply.code(400).send({ status: "invalid_window" });
+      }
+      const windowMinutes = Number(rawWindow);
+      if (!Number.isInteger(windowMinutes) || windowMinutes < 5 || windowMinutes > 1440) {
+        return reply.code(400).send({ status: "invalid_window" });
+      }
+      try {
+        const snapshot = await metrics.snapshot(windowMinutes);
+        return evaluateOperationalAlerts(snapshot, deps.runtimeState);
+      } catch {
+        return reply.code(503).send({ status: "metrics_unavailable" });
+      }
+    });
+  }
+
+  if (deps.localWorkerDiagnostics !== undefined && deps.opsMetricsToken !== undefined) {
+    const diagnostics = deps.localWorkerDiagnostics;
+    const token = deps.opsMetricsToken;
+    // Per-instance observation, NOT a global/cluster-wide liveness guarantee.
+    server.get("/ops/workers/local", (req, reply) => {
+      reply.header("cache-control", "private, no-store");
+      if (!verifyBearerAuthorization(req.headers.authorization, token)) {
+        return reply.header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401).send({ status: "unauthorized" });
+      }
+      return diagnostics.snapshot();
     });
   }
 

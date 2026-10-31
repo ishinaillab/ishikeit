@@ -33,12 +33,31 @@ interface ReadinessRow extends pg.QueryResultRow {
 export class PostgresDatabase {
   readonly #pool: pg.Pool;
 
-  constructor(connectionString: string) {
+  constructor(
+    connectionString: string,
+    onIdleClientError?: (sqlState: string | null) => void
+  ) {
     this.#pool = new Pool({
       connectionString,
       max: 10,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000
+    });
+
+    // node-postgres re-emits idle connection failures at the Pool level.
+    // Without a listener, Node treats this error event as uncaught and
+    // may terminate the entire Ishikeit worker on a database failover.
+    // The pool removes the failed client and reconnects lazily.
+    this.#pool.on("error", (error: Error & { code?: unknown }) => {
+      const sqlState = typeof error.code === "string"
+        && /^[A-Z0-9]{5}$/u.test(error.code) ? error.code : null;
+      try {
+        // Never leak raw PG error messages, SQL, DB URLs or credentials.
+        onIdleClientError?.(sqlState);
+      } catch {
+        // A failing diagnostics sink must not turn a recoverable
+        // idle-connection error into an uncaught exception.
+      }
     });
   }
 

@@ -47,11 +47,15 @@ describe("private operational incidents and delivery guard", () => {
       await delivery.send({code:"stale_worker",severity:"critical",count:1,recovery:false});
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [url,options]=fetchMock.mock.calls[0]!;
-      expect(url.toString()).toBe("https://example.com/alert");
+      expect(url).toBeInstanceOf(URL);
+      if (!(url instanceof URL)) throw new Error("expected URL request");
+      expect(url.href).toBe("https://example.com/alert");
       expect(options?.method).toBe("POST");
       expect(options?.redirect).toBe("error");
-      expect(String(options?.body)).not.toContain("recipient");
-      expect(String(options?.body)).not.toContain("x".repeat(32));
+      const body = options?.body;
+      if (typeof body !== "string") throw new Error("expected JSON body");
+      expect(body).not.toContain("recipient");
+      expect(body).not.toContain("x".repeat(32));
     } finally { vi.unstubAllGlobals(); }
   });
   it("operational scans do not throw when private delivery fails", async () => {

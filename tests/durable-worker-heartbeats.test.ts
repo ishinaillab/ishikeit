@@ -43,7 +43,7 @@ describe("durable, instance-aware worker observation", () => {
     const secret = "operator-test-token-for-read-only-heartbeats";
     const snapshot = vi.fn().mockResolvedValue(empty);
     const server = buildServer({
-      logger: pino({ level: "silent" }), ready: async () => true,
+      logger: pino({ level: "silent" }), ready: () => Promise.resolve(true),
       inbound: { ingest: vi.fn() },
       appSecret: "test-app-secret", verifyToken: "test-verification-token",
       opsMetricsToken: secret, workerFleet: { snapshot }
@@ -73,10 +73,10 @@ describe("durable, instance-aware worker observation", () => {
   });
   it("refuses to register fleet endpoint without operator credentials", () => {
     expect(() => buildServer({
-      logger:pino({level:"silent"}), ready:async()=>true,
+      logger:pino({level:"silent"}), ready:()=>Promise.resolve(true),
       inbound:{ingest:vi.fn()},
       appSecret:"secret", verifyToken:"verify",
-      workerFleet:{snapshot:async()=>empty}
+      workerFleet:{snapshot:()=>Promise.resolve(empty)}
     })).toThrow("worker fleet diagnostics require an operational bearer token");
   });
 });

@@ -37,7 +37,7 @@ describe.skipIf(connectionString === undefined)("durable heartbeat PostgreSQL in
       diagnostic.record("inbound_processor","iteration_succeeded");
       await store.report(diagnostic.snapshot());
       const snapshot = await store.snapshot();
-      expect(snapshot.workers.filter(w=>w.instanceId===id).map(w=>w.status)).toEqual(["idle","disabled"]);
+      expect(Object.fromEntries(snapshot.workers.filter(w=>w.instanceId===id).map(w=>[w.name,w.status]))).toMatchObject({inbound_processor:"idle",outbound_dispatcher:"disabled"});
       expect(snapshot.workers.find(w=>w.instanceId===id && w.name==="inbound_processor")?.totalIterations).toBe(1);
       await db.query(`UPDATE public.ishikeit_worker_heartbeats
         SET observed_at=now()-interval '60 seconds'

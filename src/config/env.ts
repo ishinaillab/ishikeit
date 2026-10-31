@@ -13,6 +13,10 @@ const schema = z.object({
   LOG_LEVEL: z.enum(["fatal","error","warn","info","debug","trace"]).default("info"),
   DATABASE_URL: z.string().min(1).optional(),
   OPS_METRICS_TOKEN: z.string().min(32).optional(),
+  OPS_ALERT_WEBHOOK_ENABLED: booleanFromEnv.default(false),
+  OPS_ALERT_WEBHOOK_URL: z.string().url().optional(),
+  OPS_ALERT_WEBHOOK_SECRET: z.string().min(32).optional(),
+  OPS_ALERT_APPROVED_HOST: z.string().min(4).max(255).optional(),
   OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: z.string().min(40).max(64).optional(),
 
   PROCESSOR_ENABLED: booleanFromEnv.default(false),
@@ -77,6 +81,21 @@ const schema = z.object({
   TIKTOK_MARKETING_OAUTH_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
 }).superRefine((value, ctx) => {
+  if (value.OPS_ALERT_WEBHOOK_ENABLED) {
+    for (const key of ["OPS_ALERT_WEBHOOK_URL", "OPS_ALERT_WEBHOOK_SECRET", "OPS_ALERT_APPROVED_HOST"] as const) {
+      if (value[key] === undefined) {
+        ctx.addIssue({ code: "custom", path: [key], message: "Operator alert delivery requires an approved destination and independent secret" });
+      }
+    }
+    if (value.OPS_ALERT_WEBHOOK_URL !== undefined && value.OPS_ALERT_APPROVED_HOST !== undefined) {
+      const url = new URL(value.OPS_ALERT_WEBHOOK_URL);
+      if (url.protocol !== "https:" || url.hostname !== value.OPS_ALERT_APPROVED_HOST
+          || url.username !== "" || url.password !== "" || url.hash !== "" || url.port !== "") {
+        ctx.addIssue({ code: "custom", path: ["OPS_ALERT_WEBHOOK_URL"], message: "Operator webhook must match the approved HTTPS host" });
+      }
+    }
+  }
+
   if (value.META_GRAPH_PROOF_ENABLED && value.META_APP_SECRET === undefined) {
     ctx.addIssue({
       code: "custom",

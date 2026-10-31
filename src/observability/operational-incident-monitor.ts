@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { isIP } from "node:net";
 import type { Logger } from "pino";
 import type { PostgresDatabase } from "../persistence/postgres.js";
 import type { OperationalMetricsReader, OperationalMetricsSnapshot } from "./operational-metrics.js";
@@ -119,9 +120,13 @@ export interface OperatorAlertSender {
 export class HttpsOperatorWebhook implements OperatorAlertSender {
   readonly #destination: URL;
   constructor(url: string, private readonly bearer: string, approvedHostname: string) {
-    const parsed = new URL(url);
+    let parsed: URL;
+    try { parsed = new URL(url); }
+    catch { throw new Error("operator webhook URL is invalid"); }
     if (parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== ""
-      || parsed.hash !== "" || parsed.hostname !== approvedHostname
+      || parsed.hash !== "" || parsed.search !== ""
+      || parsed.hostname !== approvedHostname || parsed.hostname === "localhost"
+      || parsed.hostname.endsWith(".local") || isIP(parsed.hostname) !== 0
       || parsed.port !== "" || bearer.length < 32) {
       throw new Error("operator webhook requires the approved HTTPS host and a dedicated secret");
     }

@@ -15,6 +15,7 @@ import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
 import type { LocalWorkerDiagnostics } from "../observability/worker-loop-diagnostics.js";
 import type { WorkerFleetSnapshot } from "../observability/durable-worker-heartbeats.js";
+import type { IncidentReadback } from "../observability/operational-incident-monitor.js";
 import { evaluateOperationalAlerts } from "../observability/operational-alerts.js";
 import type { MetaUnknownReconciler } from "../persistence/meta-unknown-reconciliation.js";
 import type { MetaGraphPreflightReader } from "../security/meta-graph-preflight.js";
@@ -101,6 +102,7 @@ export interface ServerDeps {
   metrics?: OperationalMetricsReader;
   localWorkerDiagnostics?: LocalWorkerDiagnostics;
   workerFleet?: { snapshot(): Promise<WorkerFleetSnapshot> };
+  incidentReadback?: { snapshot(): Promise<IncidentReadback> };
   metaUnknown?: MetaUnknownReconciler;
   metaGraphPreflight?: MetaGraphPreflightReader;
   metaHandoffs?: MetaHandoffControl;
@@ -213,6 +215,9 @@ export function buildServer(deps: ServerDeps) {
   }
   if (deps.metrics !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("operational metrics require a bearer token");
+  }
+  if (deps.incidentReadback !== undefined && deps.opsMetricsToken === undefined) {
+    throw new Error("incident readback requires an operational bearer token");
   }
   if (deps.workerFleet !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("worker fleet diagnostics require an operational bearer token");
@@ -437,6 +442,20 @@ export function buildServer(deps: ServerDeps) {
           .code(401).send({ status: "unauthorized" });
       }
       return diagnostics.snapshot();
+    });
+  }
+
+  if (deps.incidentReadback !== undefined && deps.opsMetricsToken !== undefined) {
+    const incidents = deps.incidentReadback;
+    const token = deps.opsMetricsToken;
+    server.get("/ops/incidents", async (req, reply) => {
+      reply.header("cache-control", "private, no-store");
+      if (!verifyBearerAuthorization(req.headers.authorization, token)) {
+        return reply.header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401).send({ status: "unauthorized" });
+      }
+      try { return await incidents.snapshot(); }
+      catch { return reply.code(503).send({ status: "incidents_unavailable" }); }
     });
   }
 

@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import type { WorkerLoopEvent } from "../observability/worker-loop-diagnostics.js";
 import { actionEnvelopeSchema } from "../domain/actions.js";
 import type { ActionDispatcher } from "../dispatch/dispatcher.js";
 import { DispatchFailure } from "../dispatch/failure.js";
@@ -14,6 +15,7 @@ export interface OutboxWorkerOptions {
   baseBackoffMs?: number;
   maxBackoffMs?: number;
   now?: () => Date;
+  onLoopEvent?: (event: WorkerLoopEvent) => void;
 }
 
 export class OutboxWorker {
@@ -26,6 +28,7 @@ export class OutboxWorker {
   readonly #baseBackoffMs: number;
   readonly #maxBackoffMs: number;
   readonly #now: () => Date;
+  readonly #onLoopEvent: ((event: WorkerLoopEvent) => void) | undefined;
   #stopping = false;
   #loop: Promise<void> | undefined;
 
@@ -39,11 +42,13 @@ export class OutboxWorker {
     this.#baseBackoffMs = options.baseBackoffMs ?? 1000;
     this.#maxBackoffMs = options.maxBackoffMs ?? 300_000;
     this.#now = options.now ?? (() => new Date());
+    this.#onLoopEvent = options.onLoopEvent;
   }
 
   start(): void {
     if (this.#loop !== undefined) return;
     this.#stopping = false;
+    this.#emitLoopEvent("started");
     this.#loop = this.#runLoop();
   }
 
@@ -51,6 +56,7 @@ export class OutboxWorker {
     this.#stopping = true;
     await this.#loop;
     this.#loop = undefined;
+    this.#emitLoopEvent("stopped");
   }
 
   async runOnce(): Promise<boolean> {
@@ -112,12 +118,23 @@ export class OutboxWorker {
     }
   }
 
+  #emitLoopEvent(event: WorkerLoopEvent): void {
+    try {
+      this.#onLoopEvent?.(event);
+    } catch {
+      // Diagnostics must never interrupt message processing or shutdown.
+    }
+  }
+
   async #runLoop(): Promise<void> {
     while (!this.#stopping) {
+      this.#emitLoopEvent("iteration_started");
       try {
         const worked = await this.runOnce();
+        this.#emitLoopEvent("iteration_succeeded");
         if (!worked) await this.#sleep(this.#pollIntervalMs);
       } catch (error) {
+        this.#emitLoopEvent("iteration_failed");
         this.#logger.error({ err: error }, "outbound worker iteration failed");
         await this.#sleep(this.#pollIntervalMs);
       }

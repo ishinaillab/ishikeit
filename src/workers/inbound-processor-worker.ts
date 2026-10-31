@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import type { WorkerLoopEvent } from "../observability/worker-loop-diagnostics.js";
 import { z } from "zod";
 import type { InboundEventProcessingStore, StoredInboundEvent } from "../persistence/inbound.js";
 import { INBOUND_ACCEPTED_TOPIC, type OutboxDeliveryStore, type OutboxJob } from "../persistence/outbox.js";
@@ -23,6 +24,7 @@ export interface InboundProcessorWorkerOptions {
   processorCutoverAt?: Date;
   canaryPartitionKeys?: readonly string[];
   now?: () => Date;
+  onLoopEvent?: (event: WorkerLoopEvent) => void;
 }
 
 export class InboundProcessorWorker {
@@ -38,6 +40,7 @@ export class InboundProcessorWorker {
   readonly #processorCutoverAt: Date | undefined;
   readonly #canaryPartitionKeys: ReadonlySet<string>;
   readonly #now: () => Date;
+  readonly #onLoopEvent: ((event: WorkerLoopEvent) => void) | undefined;
   #stopping = false;
   #loop: Promise<void> | undefined;
 
@@ -54,11 +57,13 @@ export class InboundProcessorWorker {
     this.#processorCutoverAt = options.processorCutoverAt;
     this.#canaryPartitionKeys = new Set(options.canaryPartitionKeys ?? []);
     this.#now = options.now ?? (() => new Date());
+    this.#onLoopEvent = options.onLoopEvent;
   }
 
   start(): void {
     if (this.#loop !== undefined) return;
     this.#stopping = false;
+    this.#emitLoopEvent("started");
     this.#loop = this.#runLoop();
   }
 
@@ -66,6 +71,7 @@ export class InboundProcessorWorker {
     this.#stopping = true;
     await this.#loop;
     this.#loop = undefined;
+    this.#emitLoopEvent("stopped");
   }
 
   async runOnce(): Promise<boolean> {
@@ -197,12 +203,23 @@ export class InboundProcessorWorker {
     };
   }
 
+  #emitLoopEvent(event: WorkerLoopEvent): void {
+    try {
+      this.#onLoopEvent?.(event);
+    } catch {
+      // Diagnostics must never interrupt message processing or shutdown.
+    }
+  }
+
   async #runLoop(): Promise<void> {
     while (!this.#stopping) {
+      this.#emitLoopEvent("iteration_started");
       try {
         const worked = await this.runOnce();
+        this.#emitLoopEvent("iteration_succeeded");
         if (!worked) await this.#sleep(this.#pollIntervalMs);
       } catch (error) {
+        this.#emitLoopEvent("iteration_failed");
         this.#logger.error({ err: error }, "inbound processor iteration failed");
         await this.#sleep(this.#pollIntervalMs);
       }

@@ -17,6 +17,7 @@ import { MediaInterpreterRegistry } from "../media/interpreter.js";
 import { MediaResolverRegistry } from "../media/resolver.js";
 import { createLogger } from "../observability/logger.js";
 import { PostgresOperationalMetrics } from "../observability/operational-metrics.js";
+import { LocalWorkerDiagnostics } from "../observability/worker-loop-diagnostics.js";
 import { runtimeBuildIdentity } from "../observability/build-identity.js";
 import {
   instagramManagedAccountMatchesInbound,
@@ -74,6 +75,10 @@ import { PostgresInstagramDataLifecycle } from "../privacy/instagram-data-lifecy
 
 const env = loadEnvironment();
 const logger = createLogger(env);
+const workerDiagnostics = new LocalWorkerDiagnostics({
+  inboundProcessor: env.PROCESSOR_ENABLED,
+  outboundDispatcher: env.ACTION_DISPATCH_ENABLED_EFFECTIVE
+});
 
 if (env.DATABASE_URL === undefined || env.META_APP_SECRET === undefined || env.META_WEBHOOK_VERIFY_TOKEN === undefined) {
   throw new Error("DATABASE_URL, META_APP_SECRET and META_WEBHOOK_VERIFY_TOKEN are required to start the HTTP service");
@@ -558,6 +563,7 @@ const server = buildServer({
     ? {}
     : {
         metrics: new PostgresOperationalMetrics(db),
+        localWorkerDiagnostics: workerDiagnostics,
         metaUnknown: new PostgresMetaUnknownReconciler(db),
         metaGraphPreflight: new MetaGraphTokenPreflight({
           appId: env.META_APP_ID,
@@ -624,7 +630,10 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
     }
   }
 
-  outboundWorker = new OutboxWorker({ store: queue, dispatcher, logger });
+  outboundWorker = new OutboxWorker({
+    store: queue, dispatcher, logger,
+    onLoopEvent: (event) => workerDiagnostics.record("outbound_dispatcher", event)
+  });
 }
 
 let processorWorker: InboundProcessorWorker | undefined;
@@ -701,6 +710,7 @@ if (env.PROCESSOR_ENABLED) {
     events: new PostgresInboundEventRepository(db),
     handlers,
     logger,
+    onLoopEvent: (event) => workerDiagnostics.record("inbound_processor", event),
     ...(env.PROCESSOR_CUTOVER_AT === undefined
       ? {}
       : { processorCutoverAt: new Date(env.PROCESSOR_CUTOVER_AT) }),

@@ -13,6 +13,7 @@ import { normalizeTikTokBusinessWebhook, tiktokBusinessIngressIdentity } from ".
 import { verifyTikTokSignature } from "../security/tiktok.js";
 import { runtimeContract } from "../version.js";
 import type { OperationalMetricsReader } from "../observability/operational-metrics.js";
+import type { LocalWorkerDiagnostics } from "../observability/worker-loop-diagnostics.js";
 import { evaluateOperationalAlerts } from "../observability/operational-alerts.js";
 import type { MetaUnknownReconciler } from "../persistence/meta-unknown-reconciliation.js";
 import type { MetaGraphPreflightReader } from "../security/meta-graph-preflight.js";
@@ -97,6 +98,7 @@ export interface ServerDeps {
   /** Compiled-source fingerprint supplied by the startup process, never credentials. */
   buildIdentity?: BuildIdentity;
   metrics?: OperationalMetricsReader;
+  localWorkerDiagnostics?: LocalWorkerDiagnostics;
   metaUnknown?: MetaUnknownReconciler;
   metaGraphPreflight?: MetaGraphPreflightReader;
   metaHandoffs?: MetaHandoffControl;
@@ -209,6 +211,9 @@ export function buildServer(deps: ServerDeps) {
   }
   if (deps.metrics !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("operational metrics require a bearer token");
+  }
+  if (deps.localWorkerDiagnostics !== undefined && deps.opsMetricsToken === undefined) {
+    throw new Error("local worker diagnostics require an operational bearer token");
   }
   if (deps.tiktokOAuth !== undefined && deps.opsMetricsToken === undefined) {
     throw new Error("TikTok OAuth operations require an operational bearer token");
@@ -413,6 +418,20 @@ export function buildServer(deps: ServerDeps) {
       } catch {
         return reply.code(503).send({ status: "metrics_unavailable" });
       }
+    });
+  }
+
+  if (deps.localWorkerDiagnostics !== undefined && deps.opsMetricsToken !== undefined) {
+    const diagnostics = deps.localWorkerDiagnostics;
+    const token = deps.opsMetricsToken;
+    // Per-instance observation, NOT a global/cluster-wide liveness guarantee.
+    server.get("/ops/workers/local", (req, reply) => {
+      reply.header("cache-control", "private, no-store");
+      if (!verifyBearerAuthorization(req.headers.authorization, token)) {
+        return reply.header("www-authenticate", 'Bearer realm="ishikeit-ops"')
+          .code(401).send({ status: "unauthorized" });
+      }
+      return diagnostics.snapshot();
     });
   }
 

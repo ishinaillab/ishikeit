@@ -3173,3 +3173,32 @@ Read-only WordPress plugin inventory on 2026-10-29 shows **LatePoint 5.7.5**, **
 - Pure `evaluateOperationalAlerts` classifies current inbound processing failures (warning >=1, critical >=5), known-topic pending queue lag (warning >=5 minutes, critical >=15 minutes), and recent dead letters (warning >=1, critical >=5), suppressing queue lag when its worker is explicitly disabled. Only known queue names, counts and bounded lag are returned; no customer identities, text, access tokens or raw errors.
 - Endpoint + classifier tests verify authentication 401, bad window 400, authorized warning 200, secret exclusion, threshold rules and unknown-topic exclusion. These are **not worker heartbeats** and an empty queue does not establish actual worker liveness. Durable heartbeat, independently authenticated notification delivery and production monitoring are separate follow-up milestones.
 - Final local Windows Docker Desktop run on Node 24 / PostgreSQL 17: **505/505 tests, 69 test files, including 10 genuine PostgreSQL integration tests**, plus ESLint, typecheck and build PASS. Runner returned 0, with zero disposable Ishikeit test project containers/volumes/network left. PR #193 contains all changes, is subject to four GitHub CI checks, and **must remain unmerged/undeployed for now** to preserve production until deliberate release verification. No live message, provider token or user/booking data was touched.
+
+
+### 2026-11-01 — Phase 1 verification on relocated D: Docker Desktop
+
+- Owner explicitly requires manual BitLocker unlock for D:. Docker Desktop
+  autostart and BitLocker auto-unlock remain **off**. Windows WSL Docker distro
+  registration was independently read back under
+  `D:\projects\docker\data\DockerDesktopWSL\DockerDesktopWSL\main`.
+  Existing older D: disk and both offline recovery backups remain preserved.
+- Resumed open held PR #193 from local independent worktree, with GitHub CI
+  four jobs passing. Ran its `scripts/test-docker.ps1` on the relocated
+  Docker Desktop Engine 29.9.2 / Node.js 24 / PostgreSQL 17:
+  505/505 tests passed (69 files), including 10 real Postgres integration tests;
+  ESLint, typecheck and build passed, with **zero** test containers, volumes
+  and networks left after cleanup.
+- Follow-up Phase 1 enhancement implements protected, strictly local-process
+  worker-loop diagnostics via `GET /ops/workers/local`. Instrumented inbound
+  processor and outbound dispatcher loops without changing send policies or
+  retries. Requires `OPS_METRICS_TOKEN`, never exposes messages/tokens,
+  explicitly flags `scope=local_process`, records idle/working/stalled/
+  long-running states and iteration failures. Instrumentation callback errors
+  cannot crash workers. This is **not** distributed liveness or a replacement
+  for durable per-instance heartbeats and external alert delivery.
+- Final isolated Docker run after adding direct inbound/outbound loop observation tests:
+  **513/513 tests passed across 71 files**, including 10 real Postgres
+  integration cases; lint, TypeScript, build and zero leftover disposable
+  containers/volumes/networks verified.
+- **Release hold:** Phase 1 PR #193 remains unmerged, no automatic Hostinger
+  production deployment, no changed Meta credentials and no customer sends.

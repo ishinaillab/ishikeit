@@ -105,3 +105,29 @@ integration tests** and all lint/typecheck/build checks. Temporary test
 containers, network and volumes were removed. This code remains in PR #193
 until reviewed and merged; no Hostinger deployment or production test has
 occurred as part of this Phase 1 work.
+
+
+## Local worker-loop diagnostics (Phase 1, subsequent change)
+
+- The read-only route `GET /ops/workers/local` is registered **only** when
+  `OPS_METRICS_TOKEN` is configured and requires the same bearer credential.
+  It sends `cache-control: private, no-store` and discloses **no customer or
+  provider identifiers, message bodies, raw errors, access tokens, or DB URLs**.
+- The response explicitly identifies `scope: "local_process"`, a random
+  per-process `instanceId`, last iteration timestamps, iteration counts and
+  state for inbound processing and outbound dispatch. `disabled`, `not_started`,
+  `stopped`, `idle`, `working`, `long_running` and `stalled` are descriptive,
+  not guarantees about healthy delivery or other Hostinger replicas.
+- A running worker can legitimately process a long task; after two minutes its
+  state becomes `long_running`, not `failed`. No data is sent and no queue work
+  is retried. The 30-second between-iteration stall check is a provisional local
+  diagnostic threshold, not an SLA.
+- Instrumentation wraps only worker loop iterations. Callback exceptions are
+  caught and cannot stop inbound/outbound processing. Standalone `runOnce`
+  calls intentionally are not counted as active background loop ticks.
+- This is **not distributed heartbeat persistence**. To detect dead workers
+  across multiple instances, use a future durable per-instance heartbeat and
+  external watcher. Do not treat one responsive `/ops/workers/local` result,
+  `/health/ready`, or an empty queue as proof of global worker liveness.
+- Node 24/PostgreSQL 17 integration runner checks this protected route and
+  worker event wiring without any Meta requests or real customer messages.

@@ -18,6 +18,7 @@ import { MediaResolverRegistry } from "../media/resolver.js";
 import { createLogger } from "../observability/logger.js";
 import { PostgresOperationalMetrics } from "../observability/operational-metrics.js";
 import { LocalWorkerDiagnostics } from "../observability/worker-loop-diagnostics.js";
+import { PostgresWorkerHeartbeatStore, DurableWorkerHeartbeatMonitor } from "../observability/durable-worker-heartbeats.js";
 import { runtimeBuildIdentity } from "../observability/build-identity.js";
 import {
   instagramManagedAccountMatchesInbound,
@@ -88,6 +89,8 @@ const db = new PostgresDatabase(env.DATABASE_URL, (sqlState) => {
   // Stable machine-readable SQLSTATE only. Never log a DB URL or raw error text.
   logger.warn({ sqlState }, "PostgreSQL idle connection lost; pool will reconnect on next request");
 });
+const fleetStore = new PostgresWorkerHeartbeatStore(db);
+const heartbeatMonitor = new DurableWorkerHeartbeatMonitor(fleetStore, workerDiagnostics, logger);
 const metaHandoffs = new PostgresMetaHandoffStore(db);
 const whatsappConsents = env.META_WHATSAPP_CONSENT_HASH_KEY_B64 === undefined
   ? undefined
@@ -564,6 +567,7 @@ const server = buildServer({
     : {
         metrics: new PostgresOperationalMetrics(db),
         localWorkerDiagnostics: workerDiagnostics,
+  workerFleet: fleetStore,
         metaUnknown: new PostgresMetaUnknownReconciler(db),
         metaGraphPreflight: new MetaGraphTokenPreflight({
           appId: env.META_APP_ID,
@@ -731,6 +735,7 @@ async function shutdown(signal: string): Promise<void> {
   await latePointReminderClock.stop();
   if (processorWorker !== undefined) await processorWorker.stop();
   if (outboundWorker !== undefined) await outboundWorker.stop();
+  await heartbeatMonitor.stop();
   await server.close();
   await db.close();
 }
@@ -797,6 +802,7 @@ async function main(): Promise<void> {
     } else {
       logger.info("provider action dispatcher disabled");
     }
+    heartbeatMonitor.start();
   } catch (error) {
     // Graceful shutdown owns all cleanup if startup was cancelled by SIGTERM.
     if (shuttingDown) return;

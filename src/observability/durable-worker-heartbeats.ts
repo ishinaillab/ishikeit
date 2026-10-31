@@ -55,6 +55,13 @@ export class PostgresWorkerHeartbeatStore {
       );
     }
   }
+  /** Limit retained per-instance rows; no customer or message data is stored. */
+  async pruneExpired(): Promise<void> {
+    await this.db.query(
+      "DELETE FROM public.ishikeit_worker_heartbeats WHERE observed_at < now() - interval '7 days'"
+    );
+  }
+
   async stop(instanceId: string): Promise<void> {
     await this.db.query(
       `UPDATE public.ishikeit_worker_heartbeats
@@ -110,6 +117,7 @@ export class DurableWorkerHeartbeatMonitor {
   readonly #local: LocalWorkerDiagnostics;
   readonly #logger: Logger;
   #timer: ReturnType<typeof setInterval> | undefined;
+  #cleanupTimer: ReturnType<typeof setInterval> | undefined;
   #pending: Promise<void> | undefined;
   #closed = false;
   constructor(store: PostgresWorkerHeartbeatStore, local: LocalWorkerDiagnostics, logger: Logger) {
@@ -122,6 +130,12 @@ export class DurableWorkerHeartbeatMonitor {
     void this.tick();
     this.#timer = setInterval(() => { void this.tick(); }, HEARTBEAT_INTERVAL_MS);
     this.#timer.unref();
+    this.#cleanupTimer = setInterval(() => {
+      void this.#store.pruneExpired().catch(() => {
+        this.#logger.warn("worker heartbeat retention cleanup unavailable");
+      });
+    }, 24 * 60 * 60 * 1000);
+    this.#cleanupTimer.unref();
   }
   tick(): Promise<void> {
     if (this.#closed) return Promise.resolve();
@@ -136,6 +150,7 @@ export class DurableWorkerHeartbeatMonitor {
     if (this.#closed) return;
     this.#closed = true;
     if (this.#timer !== undefined) clearInterval(this.#timer);
+    if (this.#cleanupTimer !== undefined) clearInterval(this.#cleanupTimer);
     await this.#pending;
     try {
       await this.#store.stop(this.#local.snapshot().instanceId);

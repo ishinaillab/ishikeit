@@ -54,6 +54,25 @@ describe.skipIf(connectionString === undefined)("durable heartbeat PostgreSQL in
       await db.close();
     }
   });
+  it("prunes only heartbeat rows older than seven days", async () => {
+    const db = new PostgresDatabase(connectionString!);
+    const store = new PostgresWorkerHeartbeatStore(db);
+    const expiredId = randomUUID();
+    try {
+      await db.query(`INSERT INTO public.ishikeit_worker_heartbeats
+        (instance_id,worker_name,worker_status,observed_at)
+        VALUES ($1::uuid,'inbound_processor','stopped',now()-interval '8 days')`, [expiredId]);
+      await store.pruneExpired();
+      const row = await db.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM public.ishikeit_worker_heartbeats WHERE instance_id=$1::uuid",[expiredId]
+      );
+      expect(row.rows[0]?.count).toBe("0");
+    } finally {
+      await db.query("DELETE FROM public.ishikeit_worker_heartbeats WHERE instance_id=$1::uuid",[expiredId]).catch(()=>{});
+      await db.close();
+    }
+  });
+
   it("refuses impossible worker state records and does not affect production queues", async () => {
     const db = new PostgresDatabase(connectionString!);
     try {

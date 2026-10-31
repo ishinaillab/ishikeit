@@ -63,20 +63,21 @@ export class PostgresOperationalIncidentStore {
   async observe(incidents: readonly Incident[]): Promise<Array<Incident & { recovery: boolean }>> {
     const claimed: Array<Incident & { recovery: boolean }> = [];
     for (const incident of incidents) {
-      const result = await this.db.query<{ code: IncidentCode }>(
+      const result = await this.db.query<{ claimed: boolean }>(
         `INSERT INTO public.ishikeit_operational_incidents
           (code, severity, incident_count, active, last_seen_at, claimed_at)
          VALUES ($1, $2, $3, true, now(), now())
          ON CONFLICT (code) DO UPDATE SET
            severity = EXCLUDED.severity, incident_count = EXCLUDED.incident_count,
-           last_seen_at = now(), active = true, claimed_at = now()
-         WHERE NOT ishikeit_operational_incidents.active
-            OR ishikeit_operational_incidents.severity <> EXCLUDED.severity
-            OR ishikeit_operational_incidents.claimed_at < now() - interval '5 minutes'
-         RETURNING code`,
+           last_seen_at = now(), active = true,
+           claimed_at = CASE WHEN NOT ishikeit_operational_incidents.active
+             OR ishikeit_operational_incidents.severity <> EXCLUDED.severity
+             OR ishikeit_operational_incidents.claimed_at < now() - interval '5 minutes'
+             THEN now() ELSE ishikeit_operational_incidents.claimed_at END
+         RETURNING (claimed_at = now()) AS claimed`,
         [incident.code, incident.severity, incident.count]
       );
-      if (result.rowCount !== null && result.rowCount > 0) {
+      if (result.rows[0]?.claimed === true) {
         claimed.push({ ...incident, recovery: false });
       }
     }

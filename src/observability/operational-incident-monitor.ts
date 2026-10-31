@@ -29,7 +29,8 @@ export interface IncidentReadback {
 export function evaluateIncidents(
   metrics: OperationalMetricsSnapshot,
   fleet: WorkerFleetSnapshot,
-  oauthMaintenanceFailures = 0
+  oauthMaintenanceFailures = 0,
+  runtime?: { processorEnabled: boolean; actionDispatchEnabled: boolean }
 ): Incident[] {
   const grouped = new Map<IncidentCode, Incident>();
   const add = (code: IncidentCode, severity: IncidentSeverity, count: number) => {
@@ -40,7 +41,7 @@ export function evaluateIncidents(
       count: (existing?.count ?? 0) + count
     });
   };
-  for (const alert of evaluateOperationalAlerts(metrics).alerts) {
+  for (const alert of evaluateOperationalAlerts(metrics, runtime).alerts) {
     add(alert.code, alert.severity, alert.count);
   }
   for (const issue of fleet.warnings) {
@@ -154,7 +155,9 @@ export class OperationalIncidentMonitor {
     private readonly fleet: { snapshot(): Promise<WorkerFleetSnapshot> },
     private readonly incidents: PostgresOperationalIncidentStore,
     private readonly logger: Logger,
-    private readonly sender?: OperatorAlertSender
+    private readonly sender?: OperatorAlertSender,
+    private readonly oauthMaintenanceFailures: () => number = () => 0,
+    private readonly runtime?: { processorEnabled: boolean; actionDispatchEnabled: boolean }
   ) {}
   start(): void {
     if (this.#timer !== undefined || this.#closed) return;
@@ -168,7 +171,7 @@ export class OperationalIncidentMonitor {
     const work = (async () => {
       try {
         const [metrics, fleet] = await Promise.all([this.metrics.snapshot(60), this.fleet.snapshot()]);
-        const notifications = await this.incidents.observe(evaluateIncidents(metrics, fleet));
+        const notifications = await this.incidents.observe(evaluateIncidents(metrics, fleet, this.oauthMaintenanceFailures(), this.runtime));
         for (const incident of notifications) {
           if (this.sender === undefined) continue;
           try { await this.sender.send(incident); }

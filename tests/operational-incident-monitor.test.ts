@@ -38,7 +38,7 @@ describe("private operational incidents and delivery guard", () => {
     expect(result).toContainEqual({code:"oauth_renewal_failed",count:1,severity:"warning"});
   });
   it("never sends operator alerts unless instantiated with approved HTTPS host and token", async () => {
-    const fetchMock=vi.fn().mockResolvedValue({ok:true});
+    const fetchMock=vi.fn<typeof fetch>().mockResolvedValue(new Response(null,{status:200}));
     vi.stubGlobal("fetch",fetchMock);
     try {
       expect(()=>new HttpsOperatorWebhook("http://example.com/test","x".repeat(32),"example.com")).toThrow();
@@ -48,10 +48,10 @@ describe("private operational incidents and delivery guard", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [url,options]=fetchMock.mock.calls[0]!;
       expect(url.toString()).toBe("https://example.com/alert");
-      expect(options.method).toBe("POST");
-      expect(options.redirect).toBe("error");
-      expect(options.body).not.toContain("recipient");
-      expect(options.body).not.toContain("x".repeat(32));
+      expect(options?.method).toBe("POST");
+      expect(options?.redirect).toBe("error");
+      expect(String(options?.body)).not.toContain("recipient");
+      expect(String(options?.body)).not.toContain("x".repeat(32));
     } finally { vi.unstubAllGlobals(); }
   });
   it("operational scans do not throw when private delivery fails", async () => {

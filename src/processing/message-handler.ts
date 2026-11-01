@@ -141,11 +141,20 @@ export class MessageReceivedHandler implements EventHandler {
       target: {
         channel: event.channel,
         accountId: event.accountId,
-        recipientId: event.identityId
+        recipientId: event.identityId,
+        ...(event.provider === "telegram" && typeof event.data === "object"
+          && event.data !== null && !Array.isArray(event.data)
+          && typeof (event.data as Record<string, unknown>).businessConnectionId === "string"
+          ? { businessConnectionId: (event.data as Record<string, unknown>).businessConnectionId }
+          : {})
       },
       body: {
         part,
-        ...(event.provider === "meta" && event.occurredAt !== undefined
+        ...((event.provider === "meta" || (event.provider === "telegram"
+          && typeof event.data === "object" && event.data !== null
+          && !Array.isArray(event.data)
+          && typeof (event.data as Record<string, unknown>).businessConnectionId === "string"))
+          && event.occurredAt !== undefined
           ? { customerMessageAt: event.occurredAt }
           : {})
       }

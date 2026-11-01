@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — Phase 2 clickable customer booking links
+
+- Actual Meta and Telegram messages after Phase 2 rollout contained AI-generated `[Complete Your Booking](https://...)` Markdown embedded in plain provider text payloads. Ishikeit adapters send Meta Messenger/Instagram `message.text`, WhatsApp Cloud `text.body`, and Telegram `sendMessage` without parse_mode. A Markdown label cannot be assumed to render as an actionable URL in those transports.
+- Added `src/processing/explicit-links.ts` to replace only valid Markdown HTTP(S) inline links with `Label: https://...`, preserving signed URL bytes. `MessageReceivedHandler` converts text parts before Meta's grapheme/UTF-8 message splitting and durable ordered outbox actions; Telegram and future providers receive explicit readable URLs. Media, idempotency, business-hours and consent gates untouched.
+- Tests validate helper output and end-to-end handler text across Messenger, Instagram, WhatsApp, Telegram bot. Locally Node24/PostgreSQL17 583/583 across 81 suites, lint, typecheck, build passed. See `docs/PHASE2_LINK_RENDERING_2026-11-02.md` and PR #218. Still requires exact production deployment/canaries, and Easy MCP AI credential allowlist (#216) remains an independent gate.
+
+
 ## Nov 2 Phase 2 — explicit customer-facing links for Meta and Telegram text channels
 
 - Actual customer-origin replies persisted in Supabase across Messenger, Instagram, WhatsApp and Telegram used the AI Engine markdown syntax `[Complete Your Booking](https://www.ishinaillab.com/?ishi_booking_slot=...)` in raw text. The provider senders use ordinary Meta `message.text` or WhatsApp `text.body` and Telegram `sendMessage` without a markdown `parse_mode`; an inline Markdown label is not a provider-supported guaranteed clickable link. This is a practical customer link-opening risk independent of HMAC validity or booked slot.

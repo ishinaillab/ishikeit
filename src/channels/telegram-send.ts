@@ -1,9 +1,11 @@
 import { DispatchFailure } from "../dispatch/failure.js";
 import type { ContentPart } from "../domain/content.js";
 import { telegramBotIdFromToken } from "../security/telegram.js";
+import { TelegramBusinessVerifier } from "../auth/telegram-business.js";
 
 interface TelegramSenderOptions {
   botToken: string;
+  businessUsername?: string;
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
 }
@@ -45,15 +47,46 @@ export class TelegramSender {
   readonly #botToken: string;
   readonly #requestTimeoutMs: number;
   readonly #fetch: typeof fetch;
+  readonly #business: TelegramBusinessVerifier | undefined;
 
   constructor(options: TelegramSenderOptions) {
     this.#botToken = options.botToken;
     this.botId = telegramBotIdFromToken(options.botToken);
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
     this.#fetch = options.fetchImpl ?? fetch;
+    this.#business = options.businessUsername === undefined ? undefined
+      : new TelegramBusinessVerifier({
+          botToken: options.botToken,
+          expectedUsername: options.businessUsername,
+          timeoutMs: this.#requestTimeoutMs,
+          fetchImpl: this.#fetch
+        });
   }
 
-  async send(chatId: string, part: ContentPart): Promise<TelegramSendResult> {
+  async verifyBusiness(connectionId: string): Promise<{ connectionId: string; ownerId: string }> {
+    if (this.#business === undefined) {
+      throw new DispatchFailure("Telegram Business account not configured", { retryable: false });
+    }
+    return this.#business.verify(connectionId);
+  }
+
+  async send(
+    chatId: string,
+    part: ContentPart,
+    businessConnectionId?: string,
+    customerMessageAt?: string
+  ): Promise<TelegramSendResult> {
+    if (businessConnectionId !== undefined) {
+      const business = await this.verifyBusiness(businessConnectionId);
+      if (chatId === business.ownerId || !/^-?[0-9]+$/u.test(chatId)
+        || customerMessageAt === undefined) {
+        throw new DispatchFailure("Telegram Business reply is not customer-initiated", { retryable: false });
+      }
+      const age = Date.now() - Date.parse(customerMessageAt);
+      if (!Number.isFinite(age) || age < -5 * 60_000 || age >= 24 * 60 * 60_000) {
+        throw new DispatchFailure("Telegram Business 24-hour reply window expired", { retryable: false });
+      }
+    }
     let method: string;
     let payload: Record<string, unknown>;
 
@@ -79,6 +112,7 @@ export class TelegramSender {
       throw new DispatchFailure("Telegram structured outbound content is not supported", { retryable: false });
     }
 
+    if (businessConnectionId !== undefined) payload.business_connection_id = businessConnectionId;
     return this.#request(method, payload);
   }
 

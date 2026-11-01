@@ -1,5 +1,14 @@
 # Ishikeit continuation handoff
 
+## 2026-11-01 — Telegram official-account Business connection (review/deployment gate)
+
+- Owner-confirmed real provider test showed Messenger/Instagram/WhatsApp and Telegram bot received replies; Supabase confirmed new processed inbound across all four but **no Telegram business-message events**, only channel=bot normal messages. Root cause: prior implementation normalized Telegram `message` only, never `business_message`.
+- Preferred Telegram customer entry point is owner-specified `@ishinaiilab` (exact spelling). The **existing** Telegram bot remains the automation identity and private transport; it must be connected to the actual user via Telegram Business **Secretary Mode / Chatbots** before it can reply as the official account.
+- Implemented validated `business_message` webhook handling, owner-username/right verification through Telegram `getBusinessConnection` on ingress **and** egress, 24-hour private customer reply window, business-scoped conversation partitioning, echo/bot suppression, durable outbound `business_connection_id`, and non-destructive allowed_updates inspector/reconciliation CLI. Regular bot chats are unchanged.
+- Evidence: 77/77 disposable Node24/Postgres17 test files, **548/548 tests**, ESLint/TypeScript/build passed; see `docs/TELEGRAM_BUSINESS_2026-11-01.md`.
+- **Acceptance remains gated on Telegram authorization, not bot-token possession:** read-only private `getMe` and `getWebhookInfo` verification, owner enabling Secretary Mode if absent and explicitly connecting bot to `@ishinaiilab` under Settings > Telegram Business > Chatbots with reply rights and chosen private-chat scope, and authorized new tester message directed to **official account**. Never call Telegram user-account methods using a bot token, avoid user-session impersonation and do not claim end-to-end official account delivery before a genuine `business_message` and reply are observed.
+- Do not submit Meta App Review; owner hold #169 still applies. Do not modify premium WordPress plugins, or replace Hostinger's masked environment variable set.
+
 ## 2026-11-01 — Phase 2 Meta production hardening: private Graph ownership preflight and bounded decoding
 
 - Phase 2 follows successful one-time Instagram OAuth refresh and cleanup PR #201, and begins from clean production main `228e8aaad086f8f771a69c7701f5f6f525e6bbd3`. Scope: read-only token ownership/proof compatibility, Messenger and Instagram signed interactive event handling, account isolation, retries, limits, and controlled tester-canary verification. Do NOT submit Meta App Review (issue #169 owner hold) or enable proactive WhatsApp templates.

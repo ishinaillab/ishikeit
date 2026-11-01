@@ -49,7 +49,6 @@ import { InboundProcessorWorker } from "../workers/inbound-processor-worker.js";
 import { OutboxWorker } from "../workers/outbox-worker.js";
 import { TelegramSender } from "../channels/telegram-send.js";
 import { TikTokBusinessSender } from "../channels/tiktok-send.js";
-import { telegramBotIdFromToken } from "../security/telegram.js";
 import { CredentialCipher } from "../auth/credential-cipher.js";
 import { PostgresOAuthCredentialStore } from "../auth/oauth-store.js";
 import { TikTokOAuthClient, TikTokOAuthService } from "../auth/tiktok-oauth.js";
@@ -110,11 +109,18 @@ const whatsappConsents = env.META_WHATSAPP_CONSENT_HASH_KEY_B64 === undefined
 const queue = new PostgresOutboxStore(db);
 const latePointReminderPlans = new PostgresLatePointReminderPlanStore(db);
 const latePointReminderClock = new LatePointReminderClock(latePointReminderPlans, logger);
-const telegram = env.TELEGRAM_BOT_TOKEN === undefined || env.TELEGRAM_WEBHOOK_SECRET === undefined
+const telegramSender = env.TELEGRAM_BOT_TOKEN === undefined ? undefined
+  : new TelegramSender({
+      botToken: env.TELEGRAM_BOT_TOKEN,
+      businessUsername: env.TELEGRAM_BUSINESS_USERNAME,
+      requestTimeoutMs: env.TELEGRAM_OUTBOUND_REQUEST_TIMEOUT_MS
+    });
+const telegram = telegramSender === undefined || env.TELEGRAM_WEBHOOK_SECRET === undefined
   ? undefined
   : {
-      botId: telegramBotIdFromToken(env.TELEGRAM_BOT_TOKEN),
-      webhookSecret: env.TELEGRAM_WEBHOOK_SECRET
+      botId: telegramSender.botId,
+      webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
+      verifyBusinessConnection: async (id: string) => telegramSender.verifyBusiness(id)
     };
 const tiktokOAuthConfigured = (
   env.TIKTOK_BUSINESS_APP_ID !== undefined
@@ -623,11 +629,8 @@ if (env.ACTION_DISPATCH_ENABLED_EFFECTIVE) {
       approvedTemplateKeys: env.META_WHATSAPP_APPROVED_TEMPLATE_KEYS_EFFECTIVE
     }, whatsappConsents));
   }
-  if (env.TELEGRAM_BOT_TOKEN !== undefined) {
-    dispatcher.register(new TelegramMessagingAdapter(new TelegramSender({
-      botToken: env.TELEGRAM_BOT_TOKEN,
-      requestTimeoutMs: env.TELEGRAM_OUTBOUND_REQUEST_TIMEOUT_MS
-    })));
+  if (telegramSender !== undefined) {
+    dispatcher.register(new TelegramMessagingAdapter(telegramSender));
   }
   if (
     env.TIKTOK_BUSINESS_ID !== undefined

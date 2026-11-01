@@ -5,10 +5,15 @@ import type { ActionEnvelope, ActionResult } from "../../domain/actions.js";
 import { messageSendBodySchema } from "../../domain/actions.js";
 import { TelegramSender } from "../../channels/telegram-send.js";
 
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((ch) => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127);
+}
+
 const targetSchema = z.object({
   channel: z.literal("bot"),
   accountId: z.string().min(1),
-  recipientId: z.string().min(1)
+  recipientId: z.string().min(1),
+  businessConnectionId: z.string().min(1).max(256).refine((id) => !hasControlCharacter(id)).optional()
 }).passthrough();
 
 export class TelegramMessagingAdapter implements ActionAdapter {
@@ -28,7 +33,12 @@ export class TelegramMessagingAdapter implements ActionAdapter {
       throw new DispatchFailure("Telegram action targets a different bot account", { retryable: false });
     }
 
-    const result = await this.sender.send(target.data.recipientId, body.data.part);
+    const result = await this.sender.send(
+      target.data.recipientId,
+      body.data.part,
+      target.data.businessConnectionId,
+      body.data.customerMessageAt
+    );
     return result.providerMessageId === undefined
       ? {}
       : { providerResourceId: result.providerMessageId };

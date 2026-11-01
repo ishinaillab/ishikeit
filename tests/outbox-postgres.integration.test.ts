@@ -96,6 +96,31 @@ describe.skipIf(database === undefined)("Meta durable outbox fence on isolated P
     }
   });
 
+  it("atomically fences Telegram and quarantines abandoned sends without duplicating them", async () => {
+    const telegram: ActionEnvelope = {
+      ...action("telegram-crash-test"),
+      provider: "telegram",
+      target: { channel: "bot", accountId: "123456789", recipientId: "987654321" }
+    };
+    const inserted = await store!.enqueueAction(telegram);
+    const first = await store!.claimNext(ACTION_DISPATCH_TOPIC, 80);
+    expect(first?.id).toBe(inserted.id);
+    expect(await store!.prepareTelegramSend(first!)).toBe(true);
+    expect(await store!.prepareTelegramSend(first!)).toBe(false);
+    await new Promise<void>((resolve) => setTimeout(resolve, 170));
+    const next = await new PostgresOutboxStore(database!).claimNext(ACTION_DISPATCH_TOPIC, 30000);
+    expect(next).toBeUndefined();
+    const state = await database!.query<{ dead_lettered_at: Date|null; published_at: Date|null; provider: string }>(
+      `SELECT o.dead_lettered_at,o.published_at,a.provider
+       FROM public.outbox AS o
+       JOIN public.outbox_attempts AS a ON a.outbox_id=o.id
+       WHERE o.id=$1`, [inserted.id]);
+    expect(state.rows[0]?.dead_lettered_at).toBeInstanceOf(Date);
+    expect(state.rows[0]?.published_at).toBeNull();
+    expect(state.rows[0]?.provider).toBe("telegram");
+    expect(await store!.complete(first!, "too-late-provider-ack")).toBe(false);
+  });
+
   it("allows only one concurrent worker to claim and send a single Meta action", async () => {
     const inserted = await store!.enqueueAction(action("race-single"));
     const workerA = new PostgresOutboxStore(database!);

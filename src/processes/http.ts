@@ -113,6 +113,7 @@ const telegramSender = env.TELEGRAM_BOT_TOKEN === undefined ? undefined
   : new TelegramSender({
       botToken: env.TELEGRAM_BOT_TOKEN,
       businessUsername: env.TELEGRAM_BUSINESS_USERNAME,
+      ...(env.TELEGRAM_BUSINESS_OWNER_ID === undefined ? {} : { businessOwnerId: env.TELEGRAM_BUSINESS_OWNER_ID }),
       requestTimeoutMs: env.TELEGRAM_OUTBOUND_REQUEST_TIMEOUT_MS
     });
 const telegram = telegramSender === undefined || env.TELEGRAM_WEBHOOK_SECRET === undefined

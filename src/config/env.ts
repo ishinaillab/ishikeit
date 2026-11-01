@@ -63,6 +63,8 @@ const schema = z.object({
   TELEGRAM_WEBHOOK_SECRET: z.string().min(32).max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),
   // Official Ishi Nail Lab Telegram Business account; authorization is verified with getBusinessConnection.
   TELEGRAM_BUSINESS_USERNAME: z.string().regex(/^@?[A-Za-z0-9_]{5,32}$/u).default("ishinaillab"),
+  // Optional immutable owner lock; use only after authenticated owner-identity enrollment.
+  TELEGRAM_BUSINESS_OWNER_ID: z.string().regex(/^[1-9][0-9]{0,15}$/u).optional(),
   TELEGRAM_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
 
   TIKTOK_BUSINESS_APP_ID: z.string().min(1).max(256).optional(),

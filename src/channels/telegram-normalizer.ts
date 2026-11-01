@@ -203,16 +203,21 @@ export function normalizeTelegramUpdate(
       throw new Error("Telegram message has no valid message_id or chat.id");
     }
     const occurredAt = isoFromSeconds(message.date);
+    const from = record(message.from);
+    const selfOriginated = from?.is_bot === true || integerString(from?.id) === botId;
+    const validCustomer = record(message.chat)?.type === "private"
+      && from?.is_bot === false && integerString(from?.id) === chatId;
+    // Telegram supports bot-to-bot messaging; suppress bots, groups, and echoes.
 
     return [makeEvent({
       botId,
-      eventType: "message.received",
+      eventType: selfOriginated ? "message.self" : validCustomer ? "message.received" : "message.ignored",
       providerEventId,
       providerMessageId: messageId,
       identityId: chatId,
       ...(occurredAt === undefined ? {} : { occurredAt }),
       receivedAt,
-      content: telegramContent(message),
+      content: selfOriginated ? [] : telegramContent(message),
       data: { update }
     })];
   }

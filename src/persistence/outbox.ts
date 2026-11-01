@@ -36,8 +36,9 @@ export interface AttemptObservation {
 export interface OutboxDeliveryStore {
   claimNext(topic: string, leaseDurationMs: number): Promise<OutboxJob | undefined>;
   renewLease?(job: OutboxJob, leaseDurationMs: number): Promise<boolean>;
-  /** Durably fence a Meta message POST before any network call. */
+  /** Existing legacy column is reused to fence non-idempotent Meta and Telegram message POSTs. */
   prepareMetaSend?(job: OutboxJob): Promise<boolean>;
+  prepareTelegramSend?(job: OutboxJob): Promise<boolean>;
   complete(job: OutboxJob, providerResourceId?: string, observation?: AttemptObservation): Promise<boolean>;
   retry(job: OutboxJob, nextAttemptAt: Date, observation?: AttemptObservation): Promise<boolean>;
   deadLetter(job: OutboxJob, reason: string, observation?: AttemptObservation): Promise<boolean>;
@@ -174,7 +175,7 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
        INSERT INTO outbox_attempts
        (outbox_id,topic,partition_key,attempt_number,outcome,provider,capability,operation,
         duration_ms,retryable,ambiguous,http_status,provider_code,error_class)
-       SELECT id,topic,partition_key,attempt_count,'dead_letter','meta','messaging',
+       SELECT id,topic,partition_key,attempt_count,'dead_letter',payload->>'provider','messaging',
               payload->>'operation',NULL,FALSE,TRUE,NULL,NULL,'provider_outcome_unknown'
        FROM quarantined`
     );
@@ -189,6 +190,27 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
          AND payload->>'provider' = 'meta'
          AND payload->>'capability' = 'messaging'
          AND payload->>'operation' IN ('message.send','message.template.send')
+         AND lease_token = $2::uuid
+         AND lease_expires_at > now()
+         AND published_at IS NULL
+         AND dead_lettered_at IS NULL
+         AND meta_send_started_at IS NULL
+       RETURNING id`,
+      [job.id, job.leaseToken]
+    );
+    return result.rowCount === 1;
+  }
+
+  /** Atomically arm Telegram message POSTs using the existing durable send fence. */
+  async prepareTelegramSend(job: OutboxJob): Promise<boolean> {
+    const result = await this.db.query(
+      `UPDATE outbox
+       SET meta_send_started_at = now()
+       WHERE id = $1::uuid
+         AND topic = 'action.dispatch'
+         AND payload->>'provider' = 'telegram'
+         AND payload->>'capability' = 'messaging'
+         AND payload->>'operation' = 'message.send'
          AND lease_token = $2::uuid
          AND lease_expires_at > now()
          AND published_at IS NULL

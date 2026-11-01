@@ -77,6 +77,21 @@ describe("official Telegram Business account integration", () => {
     await expect(v.verify(id)).rejects.toMatchObject({ retryable: false });
   });
 
+  it("pins a verified immutable owner ID and tolerates safe username changes", async () => {
+    const v = new TelegramBusinessVerifier({
+      botToken: token, expectedUsername: username,
+      expectedOwnerId: String(ownerId),
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(connectionResponse({ username: "renamed_studio" }))
+    });
+    await expect(v.verify(id)).resolves.toMatchObject({ ownerId: String(ownerId) });
+    const foreign = new TelegramBusinessVerifier({
+      botToken: token, expectedUsername: username,
+      expectedOwnerId: String(ownerId + 1),
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(connectionResponse())
+    });
+    await expect(foreign.verify(id)).rejects.toMatchObject({ retryable: false });
+  });
+
   it("fails closed on oversized identity read without Content-Length", async () => {
     const stream = new ReadableStream<Uint8Array>({
       pull(controller) { controller.enqueue(new Uint8Array(16385)); }

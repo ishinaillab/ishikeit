@@ -44,6 +44,16 @@ function isInstagramDeletedMessage(stored: StoredInboundEvent): boolean {
     && !Array.isArray(message) && (message as Record<string, unknown>).is_deleted === true;
 }
 
+/** Only explicit customer requests to stop automation; do not interpret unrelated text as consent. */
+export function isMetaAutomationOptOut(stored: StoredInboundEvent): boolean {
+  const event = stored.event;
+  if (event.provider !== "meta"
+    || (event.channel !== "messenger" && event.channel !== "instagram")
+    || event.eventType !== "message.received") return false;
+  return event.content.some((part) => part.kind === "text"
+    && /^(?:stop bot|stop automation|stop automated replies|turn off automated replies|disable bot)$/iu.test(part.text.trim()));
+}
+
 export class MessageReceivedHandler implements EventHandler {
   constructor(
     private readonly brain: BrainClient,
@@ -71,6 +81,31 @@ export class MessageReceivedHandler implements EventHandler {
     }
     if (isInstagramSelfMessage(stored)) {
       return { actions: [], outcome: "ignored" };
+    }
+    // Persist a durable account/customer-scoped handoff using the existing
+    // meta_handoff_blocks transaction; never send another AI reply on this partition
+    // until an authenticated operator explicitly releases the block.
+    if (isMetaAutomationOptOut(stored)) {
+      // One non-promotional confirmation is appropriate for a customer-issued
+      // stop request. The database atomically stores the durable suppression
+      // alongside this one queued confirmation; future AI turns stay blocked.
+      const actions: ActionEnvelope[] = event.identityId !== undefined
+        && standardMetaReplyEligibility(event.occurredAt) === "eligible"
+        ? [{
+            schemaVersion: 1,
+            idempotencyKey: `${stored.id}:automation-optout-confirmation`,
+            provider: "meta",
+            capability: "messaging",
+            operation: "message.send",
+            orderingKey: stored.partitionKey,
+            target: { channel: event.channel, accountId: event.accountId, recipientId: event.identityId },
+            body: {
+              part: { kind: "text", text: "Automated replies are now off for this chat. Contact Ishi Nail Lab if you need assistance." },
+              customerMessageAt: event.occurredAt
+            }
+          }]
+        : [];
+      return { actions, outcome: "handoff", handoffReason: "customer_automation_opt_out" };
     }
     if (event.provider === "meta" && standardMetaReplyEligibility(event.occurredAt) !== "eligible") {
       return { actions: [], outcome: "ignored" };

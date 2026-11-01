@@ -1184,7 +1184,7 @@ export function buildServer(deps: ServerDeps) {
     scope.removeContentTypeParser("application/json");
     scope.addContentTypeParser(
       "application/json",
-      { parseAs: "buffer", bodyLimit: deps.webhookBodyLimit ?? 1_048_576 },
+      { parseAs: "buffer", bodyLimit: (deps.webhookBodyLimit ?? 3 * 1024 * 1024) },
       (_req, body, cb) => cb(null, body)
     );
 
@@ -1207,7 +1207,9 @@ export function buildServer(deps: ServerDeps) {
         : reply.code(200).type("text/plain; charset=utf-8").send(challenge);
     });
 
-    scope.post<{ Body: Buffer }>("/ishikeit/webhooks/meta", async (req, reply) => {
+    scope.post<{ Body: Buffer }>("/ishikeit/webhooks/meta",
+      { bodyLimit: (deps.webhookBodyLimit ?? 3 * 1024 * 1024) },
+      async (req, reply) => {
       if (!Buffer.isBuffer(req.body)) {
         return reply.code(415).send({ status: "unsupported_body" });
       }

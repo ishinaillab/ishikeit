@@ -234,6 +234,50 @@ export function normalizeMetaEnvelope(value: unknown, receivedAt = new Date().to
       const e = rawEntry as Record<string, unknown>;
       const accountId = typeof e.id === "string" ? e.id : "";
       if (accountId === "") continue;
+      if (channel === "instagram") {
+        // Meta documents both Business Login entry.field/value and Facebook Login
+        // entry.changes[] webhook shapes. Preserve them as non-AI events.
+        // Subscribing to a field does not itself authorize automated replies.
+        const notifications: { field: unknown; value: unknown }[] = [];
+        if (typeof e.field === "string" && e.value !== undefined) {
+          notifications.push({ field: e.field, value: e.value });
+        }
+        if (Array.isArray(e.changes)) {
+          for (const rawChange of e.changes) {
+            if (typeof rawChange === "object" && rawChange !== null
+              && !Array.isArray(rawChange)) {
+              const change = rawChange as Record<string, unknown>;
+              notifications.push({ field: change.field, value: change.value });
+            }
+          }
+        }
+        for (const notice of notifications) {
+          if (typeof notice.field !== "string"
+            || !/^[a-z_]{1,64}$/u.test(notice.field)) continue;
+          const value = typeof notice.value === "object" && notice.value !== null
+            ? notice.value as Record<string, unknown> : {};
+          const sender = typeof value.from === "object" && value.from !== null
+            ? value.from as Record<string, unknown> : {};
+          const identityId = typeof sender.id === "string" ? sender.id : undefined;
+          const seenAt = isoFromMillis(typeof e.time === "number" ? e.time * 1000 : undefined);
+          const valueHash = hash([notice.field, notice.value]);
+          // A stable content hash handles repeated deliveries and revisions
+          // without disclosing comment/message contents in the event key.
+          events.push(makeEvent({
+            provider: "meta",
+            channel: "instagram",
+            capability: "engagement",
+            accountId,
+            eventType: "notification." + notice.field.replaceAll("_", "."),
+            providerEventId: "change:" + notice.field + ":" + valueHash,
+            ...(identityId === undefined ? {} : { identityId }),
+            ...(seenAt === undefined ? {} : { occurredAt: seenAt }),
+            receivedAt,
+            content: [{ kind: "structured", format: "meta.instagram." + notice.field, data: notice.value }],
+            data: { field: notice.field, value: notice.value }
+          }));
+        }
+      }
       const messaging = Array.isArray(e.messaging) ? e.messaging : [];
       const standby = Array.isArray(e.standby) ? e.standby : [];
 

@@ -51,6 +51,26 @@ describe("Telegram normalizer", () => {
     }]);
   });
 
+  it("never routes bot-to-bot messages or self echoes to customer AI", () => {
+    const bot = normalizeTelegramUpdate({
+      update_id: 1007, message: {
+        message_id: 7, date: 1790000000,
+        chat: { id: 111, type: "private" },
+        from: { id: 111, is_bot: true }, text: "loop"
+      }
+    }, "123456789")[0];
+    expect(bot?.eventType).toBe("message.self");
+    expect(bot?.content).toEqual([]);
+    const self = normalizeTelegramUpdate({
+      update_id: 1008, message: {
+        message_id: 8, date: 1790000000,
+        chat: { id: 123456789, type: "private" },
+        from: { id: 123456789, is_bot: false }, text: "echo"
+      }
+    }, "123456789")[0];
+    expect(self?.eventType).toBe("message.self");
+  });
+
   it("keeps edited messages out of the conversational handler route", () => {
     const [event] = normalizeTelegramUpdate({
       update_id: 1003,

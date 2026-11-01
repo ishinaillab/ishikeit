@@ -306,6 +306,22 @@ describe("MetaSender", () => {
     });
   });
 
+  it.each([
+    [4, "messenger"], [17, "messenger"], [32, "messenger"],
+    [613, "messenger"], [80006, "messenger"],
+    [130429, "whatsapp"], [131056, "whatsapp"]
+  ] as const)("retries documented account throttling Graph %i even with HTTP 400", async (code, channel) => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ error: { code, is_transient: false, message: "rate exceeded" } }),
+      { status: 400, headers: { "retry-after": "3" } }
+    ));
+    await expect(makeSender(fetchImpl).send({ ...base, channel }))
+      .rejects.toMatchObject({
+        retryable: true, ambiguous: false, status: 400, graphCode: code,
+        retryAfterMs: 3000
+      });
+  });
+
   it("does not persist Graph error descriptions containing private data", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
       JSON.stringify({ error: {

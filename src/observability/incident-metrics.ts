@@ -10,7 +10,7 @@ import type { OperationalMetricsSnapshot } from "./operational-metrics.js";
  */
 export interface IncidentMetricsSnapshot extends OperationalAlertInput {
   attempts: {
-    byRoute: Array<Pick<OperationalMetricsSnapshot["attempts"]["byRoute"][number], "provider" | "httpStatus" | "count"> & Partial<OperationalMetricsSnapshot["attempts"]["byRoute"][number]>>>;
+    byRoute: Array<Pick<OperationalMetricsSnapshot["attempts"]["byRoute"][number], "provider" | "httpStatus" | "count"> & Partial<OperationalMetricsSnapshot["attempts"]["byRoute"][number]>>;
   };
 }
 

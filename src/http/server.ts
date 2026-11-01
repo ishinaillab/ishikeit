@@ -61,6 +61,7 @@ export interface ServerDeps {
   telegram?: {
     botId: string;
     webhookSecret: string;
+    verifyBusinessConnection?: (connectionId: string) => Promise<{ ownerId: string }>;
   };
   tiktok?: {
     appId: string;
@@ -1298,10 +1299,49 @@ export function buildServer(deps: ServerDeps) {
 
         let events;
         try {
-          events = normalizeTelegramUpdate(
-            JSON.parse(req.body.toString("utf8")) as unknown,
-            telegram.botId
-          );
+          const update = JSON.parse(req.body.toString("utf8")) as unknown;
+          // A Telegram Business account is not the bot itself. Validate the
+          // active owner and reply rights with Telegram's getBusinessConnection
+          // before storing or processing any customer content.
+          if (typeof update === "object" && update !== null && !Array.isArray(update)) {
+            const businessMessage = (update as Record<string, unknown>).business_message;
+            if (typeof businessMessage === "object" && businessMessage !== null
+              && !Array.isArray(businessMessage)) {
+              const message = businessMessage as Record<string, unknown>;
+              const connectionId = message.business_connection_id;
+              if (typeof connectionId !== "string" || telegram.verifyBusinessConnection === undefined) {
+                return reply.code(200).send({ status: "business_connection_not_configured" });
+              }
+              let owner: { ownerId: string };
+              try {
+                owner = await telegram.verifyBusinessConnection(connectionId);
+              } catch (error) {
+                // Invalid or wrong-account connections are not retried. On a
+                // transient Telegram outage return 503 so Telegram retries.
+                const retryable = typeof error === "object" && error !== null
+                  && "retryable" in error && error.retryable === true;
+                return reply.code(retryable ? 503 : 200)
+                  .send({ status: retryable ? "business_connection_unavailable" : "business_connection_ignored" });
+              }
+              const from = message.from;
+              const chat = message.chat;
+              const sender = typeof from === "object" && from !== null
+                && !Array.isArray(from) ? from as Record<string, unknown> : undefined;
+              const conversation = typeof chat === "object" && chat !== null
+                && !Array.isArray(chat) ? chat as Record<string, unknown> : undefined;
+              // Prevent owner echo, bot-to-bot loops, group forwarding and
+              // cross-chat routing. Customer identity must match private chat.
+              if (sender?.is_bot !== false || typeof sender.id !== "number"
+                || !Number.isSafeInteger(sender.id)
+                || sender.id.toString() === owner.ownerId
+                || conversation?.type !== "private"
+                || conversation.id !== sender.id
+                || message.sender_business_bot !== undefined) {
+                return reply.code(200).send({ status: "business_message_ignored" });
+              }
+            }
+          }
+          events = normalizeTelegramUpdate(update, telegram.botId);
         } catch {
           return reply.code(422).send({ status: "invalid_payload" });
         }

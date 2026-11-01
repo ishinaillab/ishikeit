@@ -95,9 +95,26 @@ export class MetaGraphTokenPreflight implements MetaGraphPreflightReader {
       if (!response.ok) return undefined;
       const size = Number(response.headers.get("content-length") ?? "0");
       if (!Number.isFinite(size) || size > 16384) return undefined;
-      const raw = await response.text();
-      if (raw.length > 16384) return undefined;
-      return record(JSON.parse(raw) as unknown);
+      const reader = response.body?.getReader();
+      if (reader === undefined) return undefined;
+      const chunks: Uint8Array[] = [];
+      let sizeRead = 0;
+      try {
+        for (;;) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          if (chunk.value === undefined) continue;
+          sizeRead += chunk.value.byteLength;
+          if (sizeRead > 16384) {
+            await reader.cancel().catch(() => undefined);
+            return undefined;
+          }
+          chunks.push(chunk.value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      return record(JSON.parse(Buffer.concat(chunks, sizeRead).toString("utf8")) as unknown);
     } catch {
       return undefined;
     }

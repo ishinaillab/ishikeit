@@ -3219,3 +3219,9 @@ Read-only WordPress plugin inventory on 2026-10-29 shows **LatePoint 5.7.5**, **
 - Production log showed recurring sanitized `operational incident scan unavailable` WARN after startup, despite successful heartbeat writes and working HTTP health. This remains an unresolved incident; do not mark monitoring healthy based on compilation/health alone.
 - Follow-up patch adds only explicitly allowlisted monitor step (`metrics`, `fleet`, `evaluate`, `persist`, `deliver`), exception class and syntactically validated SQLSTATE to existing warning logs. Raw SQL errors, secrets, message content and database URLs are never emitted. Review log after controlled deployment and fix the actual root cause, not just silence warnings.
 - Separate hourly independent hosted watch was appended to existing enabled WordPress Security Closure automation, preserving original prompt and schedule, because creating another active task exceeded the 5/5 limit. External approved operator webhook remains OFF and cannot be activated without separate destination approval.
+
+
+## 2026-11-01 — Hostinger log transport does not preserve structured Pino fields
+
+- PR #196 deployed production diagnostic classification from SHA `60028f5ddf4ed32cfa3536ddfdd34f2a7b86ada5`, Hostinger build `01a1946e-342d-7248-90bc-329a1f6ca7de` completed. Hostinger Node runtime log API returns only `timestamp`, `level`, and `message` and discards extra Pino fields. A sanitized warning still appeared but its stage could not be read through the official API.
+- This narrow follow-up embeds only fixed literal stage names, hard-allowlisted exception class and five-character sanitized SQLSTATE in the message text. Never include raw DB errors, SQL, request bodies, recipients, credentials, or provider diagnostics. Must use production log readback to identify and fix the incident, not suppress it.

@@ -196,11 +196,15 @@ export class OperationalIncidentMonitor {
           ? (error as { code?: unknown }).code : undefined;
         const sqlState = typeof candidate === "string" && /^[A-Z0-9]{5}$/u.test(candidate)
           ? candidate : null;
-        this.logger.warn({
-          phase,
-          errorClass: error instanceof Error ? error.name : "unknown",
-          sqlState
-        }, "operational incident scan unavailable");
+        // Hostinger's runtime log retrieval emits message text but discards
+        // structured Pino fields. Keep every embedded field hard-allowlisted.
+        const name = error instanceof Error ? error.name : "";
+        const errorClass = ["DatabaseError", "Error", "TypeError", "RangeError", "SyntaxError", "AggregateError"].includes(name)
+          ? name : "unknown";
+        this.logger.warn(
+          "operational incident scan unavailable phase=" + phase
+          + " class=" + errorClass + " sqlstate=" + (sqlState ?? "none")
+        );
       }
     })();
     this.#pending = work.finally(() => { this.#pending = undefined; });

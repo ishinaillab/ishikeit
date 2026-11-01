@@ -3301,3 +3301,9 @@ Read-only WordPress plugin inventory on 2026-10-29 shows **LatePoint 5.7.5**, **
 - Review of the deployed #209 code identified a transactional interaction: the Messenger/Instagram explicit automation opt-out queues a confirmation message and records a durable Meta handoff in the same transaction. The Meta outbound adapter correctly checks the handoff and refuses **all** automated sends, including that confirmation; this would produce a dead letter for a legitimate opt-out, although no actual post-deployment opt-out events were recorded when inspected.
 - The safe correction ensures explicit opt-out commands (`STOP`, `unsubscribe`, `opt out`, and existing longer phrases) produce **zero** automated outbound actions and a durable `customer_automation_opt_out` handoff. The operator can follow up manually. Outbound handoff enforcement stays strictly fail-closed, with no special-case bypass.
 - Fix implementation, regression and Node24/PostgreSQL17 verification should be linked to their actual PR and merge SHA after GitHub CI. Do not report deployed until Hostinger exact-SHA readback.
+
+
+## Phase 2 minimatch advisory patch candidate — 2026-11-01
+- Upstream advisory **GHSA-g3hv-75wg-m249**, patched in minimatch **11.0.1**. Hostinger flagged minimatch **10.2.6**, pulled by ESLint and TypeScript-ESLint development tooling, not the application runtime dependency graph.
+- Separate isolated D: worktree `phase2-minimatch-release-20261101` tests an exact `minimatch: 11.0.1` root npm override and generated lockfile, with Node24/PostgreSQL17 full test/compile gate. Do not claim deployment until GitHub CI and Hostinger package readback demonstrate the patched version. No forced broad dependency upgrade and no changes to production tokens, provider configuration or local canonical dirty edits.
+- The opt-out atomic handoff correction has been merged in PR #210 SHA `98a4f68cac8fb4b720fc6fe2b0a773b42119177c`; verify its Hostinger deployment independently.

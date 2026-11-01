@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { PostgresDatabase } from "../src/persistence/postgres.js";
+import { ISHIKEIT_DB_SESSION_POOL_MAX, PostgresDatabase } from "../src/persistence/postgres.js";
 
 /**
  * Admin backends are terminated ONLY in the disposable localhost PostgreSQL
@@ -17,6 +17,25 @@ if (connectionString !== undefined) {
 }
 
 describe.skipIf(connectionString === undefined)("PostgreSQL idle connection recovery", () => {
+  it("limits overlapping requests to three backend sessions per Node process", async () => {
+    // Supabase session-pool cap in the live project was 15, while rolling
+    // Hostinger deploys overlap multiple Node processes.
+    expect(ISHIKEIT_DB_SESSION_POOL_MAX).toBe(3);
+    const app = new PostgresDatabase(connectionString!);
+    try {
+      const samples = await Promise.all(Array.from({ length: 9 }, async () => {
+        const result = await app.query<{ pid: number }>(
+          "SELECT pg_backend_pid()::integer AS pid FROM pg_sleep(0.08)"
+        );
+        return result.rows[0]!.pid;
+      }));
+      expect(new Set(samples).size).toBeLessThanOrEqual(ISHIKEIT_DB_SESSION_POOL_MAX);
+    } finally {
+      await app.close();
+    }
+  });
+
+
   it("survives an idle backend termination, records a safe warning, and reconnects", async () => {
     const sqlStates: Array<string | null> = [];
     const app = new PostgresDatabase(connectionString!, (sqlState) => {

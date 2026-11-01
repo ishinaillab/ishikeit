@@ -153,9 +153,9 @@ describe("InstagramOAuthClient", () => {
   });
 
   it("enables the authorized account for the active Instagram webhook fields", async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ success: true }), { status: 200 })
-    );
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }));
     const client = new InstagramOAuthClient({
       appId: "123456789012345",
       appSecret: "instagram-secret-123456",
@@ -166,7 +166,13 @@ describe("InstagramOAuthClient", () => {
     await expect(client.ensureWebhookSubscription("long-access"))
       .resolves.toBeUndefined();
 
-    const [request, init] = fetchImpl.mock.calls[0]!;
+    const [readUrl, readInit] = fetchImpl.mock.calls[0]!;
+    const firstUrl = new URL(requestUrl(readUrl));
+    expect(firstUrl.origin + firstUrl.pathname)
+      .toBe("https://graph.instagram.com/v26.0/me/subscribed_apps");
+    expect(firstUrl.searchParams.has("subscribed_fields")).toBe(false);
+    expect(readInit?.method).toBe("GET");
+    const [request, init] = fetchImpl.mock.calls[1]!;
     const url = new URL(requestUrl(request));
     expect(url.origin + url.pathname)
       .toBe("https://graph.instagram.com/v26.0/me/subscribed_apps");
@@ -180,6 +186,66 @@ describe("InstagramOAuthClient", () => {
     expect(init?.method).toBe("POST");
     expect(new Headers(init?.headers).get("authorization"))
       .toBe("Bearer long-access");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not re-POST Instagram webhook fields already installed for this app", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: [{
+        application: { id: "123456789012345" },
+        subscribed_fields: [...INSTAGRAM_WEBHOOK_FIELDS, "comments"]
+      }] }), { status: 200 })
+    );
+    const client = new InstagramOAuthClient({
+      appId: "123456789012345", appSecret: "instagram-secret-123456",
+      graphApiVersion: "v26.0", fetchImpl
+    });
+    await client.ensureWebhookSubscription("long-access");
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl.mock.calls[0]?.[1]?.method).toBe("GET");
+  });
+
+  it("preserves extra fields when upgrading partial verified IG webhook subscription", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{
+        id: "123456789012345", subscribed_fields: ["messages", "comments"]
+      }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }));
+    const client = new InstagramOAuthClient({
+      appId: "123456789012345", appSecret: "instagram-secret-123456",
+      graphApiVersion: "v26.0", fetchImpl
+    });
+    await client.ensureWebhookSubscription("long-access");
+    const sent = new URL(requestUrl(fetchImpl.mock.calls[1]![0]));
+    expect(sent.searchParams.get("subscribed_fields")?.split(","))
+      .toEqual(["messages", "comments", ...INSTAGRAM_WEBHOOK_FIELDS.filter(f => f !== "messages")]);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not issue a write after Meta limits a subscription read", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { code: 613, message: "Too many calls" } }), { status: 500 })
+    );
+    const client = new InstagramOAuthClient({
+      appId: "123456789012345", appSecret: "instagram-secret-123456",
+      graphApiVersion: "v26.0", fetchImpl
+    });
+    await expect(client.ensureWebhookSubscription("long-access"))
+      .rejects.toMatchObject({ retryable: true, providerCode: "613" });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("falls back to the documented POST when legacy IG account reads are unsupported", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: 100 } }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }));
+    const client = new InstagramOAuthClient({
+      appId: "123456789012345", appSecret: "instagram-secret-123456",
+      graphApiVersion: "v26.0", fetchImpl
+    });
+    await client.ensureWebhookSubscription("long-access");
+    expect(fetchImpl.mock.calls[0]?.[1]?.method).toBe("GET");
+    expect(fetchImpl.mock.calls[1]?.[1]?.method).toBe("POST");
   });
 
   it("uses the current refresh endpoint and classifies provider failures", async () => {

@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS public.provider_account_capability_facts (
 ALTER TABLE public.provider_account_capability_facts ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.provider_account_capability_facts FROM PUBLIC;
 -- Supabase provides these client roles; disposable vanilla PostgreSQL does not.
-DO $
+DO $ishikeit$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
     EXECUTE 'REVOKE ALL ON TABLE public.provider_account_capability_facts FROM anon';
@@ -28,7 +28,7 @@ BEGIN
     EXECUTE 'REVOKE ALL ON TABLE public.provider_account_capability_facts FROM authenticated';
   END IF;
 END
-$;
+$ishikeit$;
 -- Existing rows persist until an authenticated provider revalidation replaces
 -- them or the account's deletion workflow removes them.
 CREATE INDEX IF NOT EXISTS provider_account_capability_facts_expiry_idx

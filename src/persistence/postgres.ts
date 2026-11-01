@@ -1,6 +1,13 @@
 import pg from "pg";
 const { Pool } = pg;
 
+/** Per-instance session pool cap. Supabase's shared session pool has 15 slots
+ * for the Ishikeit DB user; several Hostinger Node workers overlap on deploy.
+ * 3 clients per Node process leaves headroom for multiple replicas and ops.
+ * Do not silently restore pg's default 10-client pool.
+ */
+export const ISHIKEIT_DB_SESSION_POOL_MAX = 3;
+
 export type SqlValue = string | number | boolean | Date | Buffer | readonly string[] | null;
 
 export interface SqlExecutor {
@@ -39,7 +46,7 @@ export class PostgresDatabase {
   ) {
     this.#pool = new Pool({
       connectionString,
-      max: 10,
+      max: ISHIKEIT_DB_SESSION_POOL_MAX,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000
     });

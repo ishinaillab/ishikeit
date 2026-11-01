@@ -1,5 +1,11 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 Phase 2 Supabase session-pool capacity root cause
+
+- Live Supabase Supavisor logs at 2026-11-01T20:34:24Z show `(EMAXCONNSESSION) max clients reached in session mode - max clients are limited to pool_size: 15`, followed by SQLSTATE XX000. Hostinger overlapping Node processes each previously used pool max 10.
+- Node PostgreSQL pool is capped at 3 connections per process, leaving headroom for rolling replicas. Session mode is kept because code uses session-scoped advisory locks. No credential, database connection URI, compute plan or schema change.
+- An isolated PostgreSQL 17 test covers concurrent-request session limits. Post-deploy live verification is required. Meta provider 613 is a distinct unresolved issue.
+
 ## 2026-11-02 Phase 2 Instagram account-deletion state cleanup
 
 - Instagram account-level data deletion previously removed inbound/outbox rows but not account-associated hashed handoff blocks and native routing ownership entries; these can retain identity-derived state and stale routing after deletion.

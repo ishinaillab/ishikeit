@@ -51,7 +51,7 @@ export function isMetaAutomationOptOut(stored: StoredInboundEvent): boolean {
     || (event.channel !== "messenger" && event.channel !== "instagram")
     || event.eventType !== "message.received") return false;
   return event.content.some((part) => part.kind === "text"
-    && /^(?:stop bot|stop automation|stop automated replies|turn off automated replies|disable bot)$/iu.test(part.text.trim()));
+    && /^(?:stop|unsubscribe|opt[ -]?out|stop bot|stop automation|stop automated replies|turn off automated replies|disable bot)$/iu.test(part.text.trim()));
 }
 
 export class MessageReceivedHandler implements EventHandler {
@@ -86,26 +86,11 @@ export class MessageReceivedHandler implements EventHandler {
     // meta_handoff_blocks transaction; never send another AI reply on this partition
     // until an authenticated operator explicitly releases the block.
     if (isMetaAutomationOptOut(stored)) {
-      // One non-promotional confirmation is appropriate for a customer-issued
-      // stop request. The database atomically stores the durable suppression
-      // alongside this one queued confirmation; future AI turns stay blocked.
-      const actions: ActionEnvelope[] = event.identityId !== undefined
-        && standardMetaReplyEligibility(event.occurredAt) === "eligible"
-        ? [{
-            schemaVersion: 1,
-            idempotencyKey: `${stored.id}:automation-optout-confirmation`,
-            provider: "meta",
-            capability: "messaging",
-            operation: "message.send",
-            orderingKey: stored.partitionKey,
-            target: { channel: event.channel, accountId: event.accountId, recipientId: event.identityId },
-            body: {
-              part: { kind: "text", text: "Automated replies are now off for this chat. Contact Ishi Nail Lab if you need assistance." },
-              customerMessageAt: event.occurredAt
-            }
-          }]
-        : [];
-      return { actions, outcome: "handoff", handoffReason: "customer_automation_opt_out" };
+      // Complete the inbound event and customer-initiated suppression atomically.
+      // Do NOT queue an acknowledgement: all Meta outbound actions are deliberately
+      // blocked as soon as the handoff is active, including previously queued AI replies.
+      // A follow-up message must be deliberately sent by an authenticated human operator.
+      return { actions: [], outcome: "handoff", handoffReason: "customer_automation_opt_out" };
     }
     if (event.provider === "meta" && standardMetaReplyEligibility(event.occurredAt) !== "eligible") {
       return { actions: [], outcome: "ignored" };

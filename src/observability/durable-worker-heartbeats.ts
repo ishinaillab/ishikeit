@@ -7,13 +7,14 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
 const STALE_AFTER_MS = 45_000;
 const LOOKBACK_MINUTES = 15;
 type WorkerStatus = LocalWorkerSnapshot["workers"][number]["status"];
-export type FleetStatus = WorkerStatus | "stale";
+export type FleetStatus = WorkerStatus | "stale" | "superseded";
 
 interface HeartbeatRow extends pg.QueryResultRow {
   instance_id: string;
   worker_name: WorkerLoopName;
   worker_status: WorkerStatus;
   observed_at: Date;
+  process_started_at: Date | null;
   last_completed_at: Date | null;
   total_iterations: string;
   failed_iterations: string;
@@ -23,6 +24,7 @@ export interface FleetWorker {
   name: WorkerLoopName;
   status: FleetStatus;
   observedAt: string;
+  instanceStartedAt: string | null;
   lastCompletedAt: string | null;
   totalIterations: number;
   failedIterations: number;
@@ -42,16 +44,17 @@ export class PostgresWorkerHeartbeatStore {
     for (const worker of snapshot.workers) {
       await this.db.query(
         `INSERT INTO public.ishikeit_worker_heartbeats
-           (instance_id, worker_name, worker_status, last_completed_at, total_iterations, failed_iterations, observed_at)
-         VALUES ($1::uuid, $2, $3, $4::timestamptz, $5, $6, now())
+           (instance_id, worker_name, worker_status, last_completed_at, total_iterations, failed_iterations, process_started_at, observed_at)
+         VALUES ($1::uuid, $2, $3, $4::timestamptz, $5, $6, $7::timestamptz, now())
          ON CONFLICT (instance_id, worker_name) DO UPDATE SET
            worker_status = EXCLUDED.worker_status,
            last_completed_at = EXCLUDED.last_completed_at,
            total_iterations = EXCLUDED.total_iterations,
            failed_iterations = EXCLUDED.failed_iterations,
+           process_started_at = EXCLUDED.process_started_at,
            observed_at = now()`,
         [snapshot.instanceId, worker.name, worker.status, worker.lastCompletedAt,
-          worker.totalIterations, worker.failedIterations]
+          worker.totalIterations, worker.failedIterations, snapshot.instanceStartedAt]
       );
     }
   }
@@ -72,7 +75,7 @@ export class PostgresWorkerHeartbeatStore {
   }
   async snapshot(): Promise<WorkerFleetSnapshot> {
     const result = await this.db.query<HeartbeatRow>(
-      `SELECT instance_id::text, worker_name, worker_status, observed_at, last_completed_at,
+      `SELECT instance_id::text, worker_name, worker_status, observed_at, process_started_at, last_completed_at,
               total_iterations::text, failed_iterations::text
          FROM public.ishikeit_worker_heartbeats
         WHERE observed_at >= now() - make_interval(mins => $1)
@@ -85,13 +88,26 @@ export class PostgresWorkerHeartbeatStore {
 export function classifyFleetHeartbeats(rows: readonly HeartbeatRow[], now: Date): WorkerFleetSnapshot {
   const workers = rows.map((row) => {
     const stale = now.getTime() - row.observed_at.getTime() > STALE_AFTER_MS;
-    const status: FleetStatus = stale && !["disabled", "stopped"].includes(row.worker_status)
-      ? "stale" : row.worker_status;
+    const enabledAndStale = stale && !["disabled", "stopped"].includes(row.worker_status);
+    // An old process replaced by a *newer-born* healthy process of the same
+    // worker type should not trigger a false outage during Hostinger rolling
+    // deployment. Merely surviving older replicas cannot suppress a loss.
+    const replaced = enabledAndStale && rows.some(candidate =>
+      candidate.instance_id !== row.instance_id
+      && candidate.worker_name === row.worker_name
+      && candidate.process_started_at !== null
+      && candidate.process_started_at.getTime() > row.observed_at.getTime()
+      && now.getTime() - candidate.observed_at.getTime() <= STALE_AFTER_MS
+      && !["disabled", "stopped"].includes(candidate.worker_status)
+    );
+    const status: FleetStatus = replaced ? "superseded"
+      : enabledAndStale ? "stale" : row.worker_status;
     return {
       instanceId: row.instance_id,
       name: row.worker_name,
       status,
       observedAt: row.observed_at.toISOString(),
+      instanceStartedAt: row.process_started_at?.toISOString() ?? null,
       lastCompletedAt: row.last_completed_at?.toISOString() ?? null,
       totalIterations: Number(row.total_iterations),
       failedIterations: Number(row.failed_iterations)

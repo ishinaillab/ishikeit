@@ -74,6 +74,14 @@ function retryAfterMs(value: string | null): number | undefined {
   return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
 }
 
+/**
+ * Meta sometimes returns account-level throttling as HTTP 400 with a Graph
+ * error code. Recognize documented Graph and WhatsApp throughput limit codes.
+ */
+function isRateLimitError(code: number | undefined): boolean {
+  return code !== undefined && [4, 17, 32, 613, 80006, 130429, 131056].includes(code);
+}
+
 const MAX_META_GRAPH_RESPONSE_BYTES = 64 * 1024;
 
 /**
@@ -349,7 +357,7 @@ export class MetaSender implements MetaMessageSender {
       const graphError = typeof result.error === "object" && result.error !== null
         ? result.error as GraphErrorBody["error"]
         : undefined;
-      const isTransient = graphError?.is_transient === true || response.status === 429 || response.status >= 500;
+      const isTransient = graphError?.is_transient === true || response.status === 429 || response.status >= 500 || isRateLimitError(graphError?.code);
       const retryAfter = retryAfterMs(response.headers.get("retry-after"));
       // Provider error descriptions may contain customer PII or credentials.
       throw new MetaSendFailure(`Meta provider rejected the message request (HTTP ${response.status})`, {
@@ -434,7 +442,7 @@ export class MetaSender implements MetaMessageSender {
     if (!response.ok) {
       const graphError = typeof result.error === "object" && result.error !== null
         ? result.error as GraphErrorBody["error"] : undefined;
-      const transient = graphError?.is_transient === true || response.status === 429 || response.status >= 500;
+      const transient = graphError?.is_transient === true || response.status === 429 || response.status >= 500 || isRateLimitError(graphError?.code);
       const retryAfter = retryAfterMs(response.headers.get("retry-after"));
       throw new MetaSendFailure("WhatsApp template provider request rejected", {
         retryable: transient,

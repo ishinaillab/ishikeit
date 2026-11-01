@@ -9,7 +9,7 @@ import { buildServer } from "../src/http/server.js";
 import type { CanonicalEvent } from "../src/domain/events.js";
 
 const token = "123456789:abcdefghijklmnopqrstuvwxyzABCDE";
-const username = "ishinaiilab";
+const username = "ishinaillab";
 const id = "connection_1";
 const customerId = 7001;
 const ownerId = 9001;
@@ -55,7 +55,7 @@ function businessUpdate(updateId = 39001, options: {
 describe("official Telegram Business account integration", () => {
   it("verifies the connected studio owner and the minimum reply permission", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(connectionResponse());
-    const v = new TelegramBusinessVerifier({ botToken: token, expectedUsername: "@ishinaiilab", fetchImpl });
+    const v = new TelegramBusinessVerifier({ botToken: token, expectedUsername: "@ishinaillab", fetchImpl });
     await expect(v.verify(id)).resolves.toEqual({ connectionId: id, ownerId: String(ownerId) });
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toBe("https://api.telegram.org/bot" + token + "/getBusinessConnection");
@@ -66,6 +66,7 @@ describe("official Telegram Business account integration", () => {
 
   it.each([
     { username: "some_other_account", enabled: true, canReply: true },
+    { username: "ishinaiilab", enabled: true, canReply: true },
     { username, enabled: false, canReply: true },
     { username, enabled: true, canReply: false }
   ])("rejects foreign, disabled or permissionless business connections", async (options) => {

@@ -2,6 +2,7 @@ import { DispatchFailure } from "../dispatch/failure.js";
 import type { ContentPart } from "../domain/content.js";
 import { telegramBotIdFromToken } from "../security/telegram.js";
 import { TelegramBusinessVerifier } from "../auth/telegram-business.js";
+import { customerReplyWindowEligibility } from "../policy/provider-contract.js";
 
 interface TelegramSenderOptions {
   botToken: string;
@@ -118,9 +119,9 @@ export class TelegramSender {
         || customerMessageAt === undefined) {
         throw new DispatchFailure("Telegram Business reply is not customer-initiated", { retryable: false });
       }
-      const age = Date.now() - Date.parse(customerMessageAt);
-      if (!Number.isFinite(age) || age < -5 * 60_000 || age >= 24 * 60 * 60_000) {
-        throw new DispatchFailure("Telegram Business 24-hour reply window expired", { retryable: false });
+      const eligibility = customerReplyWindowEligibility("telegram", "business", "message.send", customerMessageAt);
+      if (eligibility !== "eligible") {
+        throw new DispatchFailure("Telegram Business customer reply not permitted: " + eligibility, { retryable: false });
       }
     }
     let method: string;

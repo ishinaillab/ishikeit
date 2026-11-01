@@ -1,5 +1,11 @@
 # Ishikeit continuation handoff
 
+## 2026-11-01 — Prepared one-time Instagram OAuth proof cleanup (merge only after provider verification)
+
+- Branch `cleanup/instagram-one-shot-proof-20261101` removes the temporary CLI, proof module and their test fixture introduced by #200. There was never a production HTTP startup hook in the merged #200 release.
+- **Do not merge this cleanup before the one-time Hostinger cron invocation has completed**, the cron is deleted, and Supabase proves Instagram token version increased from 1 to 2, expiry extended, and alias remains the expected Professional account. Stop and diagnose any mismatched result without requesting a second refresh.
+- After verifying the exact Meta result and normal production health, merge cleanup, verify Hostinger deployed the cleanup SHA, and retain only the historical audit note. The private home-directory claim may be retained until all cron/run paths are removed; delete it only when it cannot permit a repeat provider request.
+
 ## 2026-11-01 — Private one-time Instagram OAuth refresh via explicit Hostinger Node.js cron (PR #200)
 
 - **No production HTTP startup hook or public route.** The isolated CLI is `dist/observability/instagram-once-runner.js`, executed only once through Hostinger's private Node.js cron with `--env-file` under `hbuilds/config/.env`. The regular Fastify server and automatic seven-day-before-expiry refresh policy remain untouched.

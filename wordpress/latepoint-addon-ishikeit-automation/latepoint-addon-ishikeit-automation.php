@@ -2,7 +2,7 @@
 /**
  * Plugin Name: LatePoint Addon - Ishikeit Automation
  * Description: Server-verified, non-reserving LatePoint booking links for Ishi Nail Lab's AI concierge.
- * Version: 0.1.1
+ * Version: 0.1.2
  * Requires at least: 6.9
  * Requires PHP: 8.1
  * Requires Plugins: latepoint, ishi-latepoint-instant
@@ -45,7 +45,7 @@ final class Ishi_LatePoint_Automation {
         }
         wp_register_ability( self::ABILITY, [
             'label' => 'Verify a specific appointment and generate its booking link',
-            'description' => 'Use this as the LAST step for a customer-selected exact appointment time. In one server-side operation, LatePoint rechecks the date, time, service and assigned agent, then generates a customer-facing link only when still available. Never use older availability or previously generated links as proof. If unavailable, return current alternatives without a link. This tool never holds, reserves, or pays for an appointment and never invents a temporary-hold expiry. A customer who rejected 8:00 AM must choose a different time; supply rejected times under excluded_start_times. Do not manually construct links.',
+            'description' => 'Use this as the LAST step for a customer-selected exact appointment time. In one server-side operation, LatePoint rechecks the date, time, service and assigned agent, then generates a customer-facing link only when still available. Never use older availability or previously generated links as proof. If unavailable, return current alternatives without a link. This tool never holds, reserves, or pays for an appointment and never invents a temporary-hold expiry. A customer who rejected 8:00 AM must choose a different time; supply rejected times under excluded_start_times. For relative dates such as tomorrow, supply day_offset=1 alongside the Manila calendar date; any disagreement fails closed. Do not manually construct links.',
             'category' => 'ishi-booking',
             'input_schema' => [
                 'type' => 'object',
@@ -54,6 +54,7 @@ final class Ishi_LatePoint_Automation {
                     'date' => [ 'type' => 'string', 'format' => 'date', 'description' => 'Requested date in Asia/Manila, YYYY-MM-DD.' ],
                     'start_time' => [ 'type' => 'integer', 'minimum' => 0, 'maximum' => 1439, 'description' => 'Customer-selected time in minutes after midnight (8 AM = 480; 9 AM = 540).' ],
                     'excluded_start_times' => [ 'type' => 'array', 'items' => [ 'type' => 'integer', 'minimum' => 0, 'maximum' => 1439 ], 'maxItems' => 12, 'description' => 'Times this customer declined; never return those times as booking links or alternatives.' ],
+                    'day_offset' => [ 'type' => 'integer', 'minimum' => 0, 'maximum' => 30, 'description' => 'Set 0 for today or 1 for tomorrow, computed in the studio timezone. A mismatched absolute date fails closed with no URL.' ],
                 ],
                 'required' => [ 'date', 'start_time' ],
             ],
@@ -164,6 +165,23 @@ final class Ishi_LatePoint_Automation {
             && method_exists( 'OsSettingsHelper', 'is_on' )
             && OsSettingsHelper::is_on( 'reserve_slots_during_checkout' );
         $hold_visibility = $hold_enabled ? 'not_exposed' : 'disabled';
+
+        // An actual customer requested "tomorrow" just after midnight Manila,
+        // but the model sent yesterday's absolute date and a valid signed URL.
+        // Reconcile relative dates with the trusted site timezone before ANY
+        // LatePoint availability or URL operation; fail closed on disagreement.
+        if ( array_key_exists( 'day_offset', $input ) ) {
+            $offset = $input['day_offset'];
+            if ( ! is_int( $offset ) || $offset < 0 || $offset > 30 ) {
+                return self::failure( 'ishi_booking_invalid_relative_day', 'Relative day must be 0-30 in the studio timezone.' );
+            }
+            $expected_date = ( new DateTimeImmutable( 'now', wp_timezone() ) )
+                ->setTime( 0, 0 )->modify( '+' . $offset . ' days' )->format( 'Y-m-d' );
+            if ( $date !== $expected_date ) {
+                return self::public_result( false, 'verification_unavailable', $date, $time, [], $hold_visibility,
+                    'The requested date does not match the studio local date for that relative day. No booking link was generated; check the Manila date again.' );
+            }
+        }
 
         if ( ! self::is_future_time( $date, $time ) ) {
             return self::public_result( false, 'unavailable', $date, $time, [], $hold_visibility, 'This appointment time is in the past.' );

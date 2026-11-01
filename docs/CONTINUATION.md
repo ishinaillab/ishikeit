@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 Phase 2 Meta customer disclosure rendering and deterministic outbox integration test
+
+- Post-PR #219 source inspection proved the Messenger/Instagram first-contact disclosure text was double-escaped: `\\\\n\\\\n` appeared as literal backslash characters to plain-text provider recipients rather than two actual paragraph line breaks. The original test incorrectly expected those literal characters. PR #220 changes the source to real JavaScript newline escapes and updates the regression expectation; no other outbound behavior, send policy, database schema or provider account settings are changed.
+- A disposable Node24/PostgreSQL17 full-suite run initially had one unrelated test-only timing failure: an 80ms PostgreSQL outbox claim expired before its `prepareMetaSend()` assertion. Four integration tests now use a normal 30s test lease plus explicit SQL expiry only inside the isolated test database, preserving the exact production lease fencing/quarantine implementation. Retest: **591/591 tests (82 suites), ESLint, typecheck, build all passed**; temporary containers, network and volumes removed.
+- GitHub PR #220 CI and exact Hostinger deployed SHA/health must pass before describing production as fixed. Do not manufacture customer-origin canaries or alter user permissions. Canonical D: checkout still has seven unpublished changes; changes were prepared in a new isolated worktree and published through authorized GitHub tools because local Windows `git push` authenticated as a different GitHub user without repository write access.
+
+
 ## 2026-11-02 Phase 2 Meta AI first-contact disclosure
 
 - Official Meta Messenger/IG messaging policy advises clearly identifying automated chat at first contact, after a significant lapse and at transitions from human to automated messaging. Production AI Engine replies sometimes omitted disclosure despite prompt instructions. `src/persistence/meta-disclosure.ts` adds a read-only account+customer partition lookup of earlier handled inbound turns in the last 24 hours using the existing `inbound_events_partition_idx`; Supabase EXPLAIN proved index usage, no new database schema or raw customer content.

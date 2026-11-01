@@ -171,7 +171,8 @@ export class MessageReceivedHandler implements EventHandler {
       if (disclosureRequired && !acknowledged) {
         acknowledged = true;
         if (!/Ishi Nail Lab(?:'s|’s)? AI assistant/iu.test(text.slice(0, 250))) {
-          text = "I'm Ishi Nail Lab's AI assistant.\\n\\n" + text;
+          // Provider plain-text messages need real line breaks, not literal backslash-n.
+          text = "I'm Ishi Nail Lab's AI assistant.\n\n" + text;
         }
       }
       return { ...part, text };

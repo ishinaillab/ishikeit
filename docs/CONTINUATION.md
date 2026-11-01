@@ -3211,3 +3211,11 @@ Read-only WordPress plugin inventory on 2026-10-29 shows **LatePoint 5.7.5**, **
 - Stale threshold is provisional 45 seconds (three intervals). Explicitly disabled and cleanly stopped workers are not classified as stale; unexpected process loss remains stale until the observation window expires. The endpoint does not prove expected-replica count, post-lookback process loss, or an independently running watcher.
 - This branch is NOT production released. Apply a reviewed additive RLS-protected Supabase migration before deployment; verify app CI + isolated PostgreSQL failure-injection tests. No direct customer/provider messages, live token changes or payment/booking effects. Independent operator alert delivery, subscription/approval, dedup and recovery remain in #194.
 - No WordPress premium plugins, provider global policies, Meta App Secret proof rollout, WhatsApp reminder consent, or TikTok messaging approval gates are changed.
+
+
+## 2026-11-01 — Issue #194 production monitor postdeploy diagnostics
+
+- Phase 1 follow-up PR #195 merged to main `104b6eebcd567c22f24cb042ca09c2692e3e2913`, official Hostinger Node 24 build `01a1946a-0733-71f6-9cc6-2d8524b18f30` completed. Health endpoints responded 200, new private Supabase worker heartbeats began reporting running inbound/outbound processes, no user/customer data queried.
+- Production log showed recurring sanitized `operational incident scan unavailable` WARN after startup, despite successful heartbeat writes and working HTTP health. This remains an unresolved incident; do not mark monitoring healthy based on compilation/health alone.
+- Follow-up patch adds only explicitly allowlisted monitor step (`metrics`, `fleet`, `evaluate`, `persist`, `deliver`), exception class and syntactically validated SQLSTATE to existing warning logs. Raw SQL errors, secrets, message content and database URLs are never emitted. Review log after controlled deployment and fix the actual root cause, not just silence warnings.
+- Separate hourly independent hosted watch was appended to existing enabled WordPress Security Closure automation, preserving original prompt and schedule, because creating another active task exceeded the 5/5 limit. External approved operator webhook remains OFF and cannot be activated without separate destination approval.

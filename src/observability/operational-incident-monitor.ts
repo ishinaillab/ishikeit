@@ -175,16 +175,32 @@ export class OperationalIncidentMonitor {
     if (this.#closed) return Promise.resolve();
     if (this.#pending !== undefined) return this.#pending;
     const work = (async () => {
+      let phase: "metrics" | "fleet" | "evaluate" | "persist" | "deliver" = "metrics";
       try {
-        const [metrics, fleet] = await Promise.all([this.metrics.snapshot(60), this.fleet.snapshot()]);
-        const notifications = await this.incidents.observe(evaluateIncidents(metrics, fleet, this.oauthMaintenanceFailures(), this.runtime));
+        const metrics = await this.metrics.snapshot(60);
+        phase = "fleet";
+        const fleet = await this.fleet.snapshot();
+        phase = "evaluate";
+        const evaluated = evaluateIncidents(metrics, fleet, this.oauthMaintenanceFailures(), this.runtime);
+        phase = "persist";
+        const notifications = await this.incidents.observe(evaluated);
+        phase = "deliver";
         for (const incident of notifications) {
           if (this.sender === undefined) continue;
           try { await this.sender.send(incident); }
           catch { this.logger.warn({ code: incident.code }, "operator alert delivery unavailable"); }
         }
-      } catch {
-        this.logger.warn("operational incident scan unavailable");
+      } catch (error: unknown) {
+        // The diagnostic intentionally avoids raw SQL/provider error messages.
+        const candidate = error !== null && typeof error === "object" && "code" in error
+          ? (error as { code?: unknown }).code : undefined;
+        const sqlState = typeof candidate === "string" && /^[A-Z0-9]{5}$/u.test(candidate)
+          ? candidate : null;
+        this.logger.warn({
+          phase,
+          errorClass: error instanceof Error ? error.name : "unknown",
+          sqlState
+        }, "operational incident scan unavailable");
       }
     })();
     this.#pending = work.finally(() => { this.#pending = undefined; });

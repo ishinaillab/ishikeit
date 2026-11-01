@@ -166,6 +166,35 @@ export function normalizeTelegramUpdate(
   if (updateId === undefined) throw new Error("Telegram update has no valid update_id");
   const providerEventId = "update:" + updateId;
 
+  const businessMessage = record(update.business_message);
+  if (businessMessage !== undefined) {
+    const connectionId = businessMessage.business_connection_id;
+    const messageId = integerString(businessMessage.message_id);
+    const chatId = chatIdFromMessage(businessMessage);
+    const from = record(businessMessage.from);
+    if (typeof connectionId !== "string" || connectionId.length < 1
+      || connectionId.length > 256 || messageId === undefined || chatId === undefined
+      || record(businessMessage.chat)?.type !== "private") {
+      throw new Error("Invalid Telegram Business message envelope");
+    }
+    const occurredAt = isoFromSeconds(businessMessage.date);
+    // Echoes, bot-originated messages and outgoing business messages must not
+    // invoke a customer AI turn, even after a webhook replay.
+    const selfOriginated = from?.is_bot === true
+      || businessMessage.sender_business_bot !== undefined;
+    return [makeEvent({
+      botId,
+      eventType: selfOriginated ? "message.self" : "message.received",
+      providerEventId,
+      providerMessageId: messageId,
+      identityId: chatId,
+      ...(occurredAt === undefined ? {} : { occurredAt }),
+      receivedAt,
+      content: selfOriginated ? [] : telegramContent(businessMessage),
+      data: { update, businessConnectionId: connectionId }
+    })];
+  }
+
   const message = record(update.message);
   if (message !== undefined) {
     const messageId = integerString(message.message_id);
@@ -236,6 +265,9 @@ export function telegramIngressIdentity(event: CanonicalEvent): IngressIdentity 
       "conversation-v1",
       event.channel,
       event.accountId,
+      ...(typeof event.data === "object" && event.data !== null && !Array.isArray(event.data)
+        && typeof (event.data as Record<string, unknown>).businessConnectionId === "string"
+        ? [(event.data as Record<string, unknown>).businessConnectionId] : []),
       event.identityId ?? event.providerMessageId ?? event.providerEventId ?? event.id
     ])
   };

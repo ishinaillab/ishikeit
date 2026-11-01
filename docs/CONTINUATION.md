@@ -1,5 +1,15 @@
 # Ishikeit continuation handoff
 
+## 2026-11-01 — Instagram live OAuth renewal proved and private CLI cleanup (PR #201)
+
+- **VERIFIED LIVE SUCCESS**, not a mock: Hostinger private cron UID `ZVp13fB8RX`, scheduled once for `2026-11-01 03:12 UTC` (11:12 Manila), produced `Instagram one-time renewal proof: succeeded`. The production app ran merged PR #200 commit `0340adf24999a8bb6ebdbdca1d3f9fb27e028b53`; the merged code had no automatic Fastify startup hook or public renewal route.
+- Supabase readback showed exactly one managed Instagram subject `28436714725987041` advanced **token_version 1 → 2**, with updated_at `2026-11-01T03:12:03.271556Z` and access_expires_at `2026-12-31T03:12:03.226Z`, versus prior expiry `2026-12-28T23:52:32.169Z`. Professional account `17841438662359631` was the single matching alias, with **0 revocations**. The CLI verifies refreshed Meta identity before storing encrypted credentials.
+- The temporary cron was deleted immediately; Hostinger cron list returned `[]`. Public `/health/live` and `/health/ready` both returned healthy JSON after the provider refresh. No token/plaintext, app secret or customer message was emitted.
+- Cleanup PR #201 removes the one-time CLI, proof module and tests. Merge and verify the cleanup deployment, preserving the standard Instagram renewal manager's existing seven-day expiry skew and normal maintenance schedule. There is no temporary database schema to drop.
+- Private claim at `/home/u328762438/.ishikeit-instagram-renewal-once-20261101.claim` contains only the bounded outcome, and is outside the public webroot. It can be retained temporarily as an at-most-once audit guard; never remove it until no executable one-time renewal code or cron remains. Avoid automatically repeating this test.
+- Phase 2 can be reconsidered after verifying the cleanup release's deployed SHA and production health. The regular 8:15 AM Instagram Renewal Watch remains useful for future lifecycle monitoring.
+
+
 ## 2026-11-01 — Private one-time Instagram OAuth refresh via explicit Hostinger Node.js cron (PR #200)
 
 - **No production HTTP startup hook or public route.** The isolated CLI is `dist/observability/instagram-once-runner.js`, executed only once through Hostinger's private Node.js cron with `--env-file` under `hbuilds/config/.env`. The regular Fastify server and automatic seven-day-before-expiry refresh policy remain untouched.

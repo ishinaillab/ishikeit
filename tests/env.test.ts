@@ -75,6 +75,14 @@ describe("environment", () => {
     }).OPS_METRICS_TOKEN).toBe(token);
   });
 
+  it("uses the exact official @ishinaillab handle for connected Telegram Chat Automation", () => {
+    expect(loadEnvironment(productionBase).TELEGRAM_BUSINESS_USERNAME).toBe("ishinaillab");
+    expect(loadEnvironment({
+      ...productionBase,
+      TELEGRAM_BUSINESS_USERNAME: "@ishinaillab"
+    }).TELEGRAM_BUSINESS_USERNAME).toBe("@ishinaillab");
+  });
+
   it("requires Telegram bot token and webhook secret to be configured together", () => {
     expect(() => loadEnvironment({
       ...productionBase,

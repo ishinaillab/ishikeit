@@ -128,19 +128,37 @@ const telegramSender = env.TELEGRAM_BOT_TOKEN === undefined ? undefined
       businessUsername: env.TELEGRAM_BUSINESS_USERNAME,
       ...(env.TELEGRAM_BUSINESS_OWNER_ID === undefined ? {} : { businessOwnerId: env.TELEGRAM_BUSINESS_OWNER_ID }),
       requestTimeoutMs: env.TELEGRAM_OUTBOUND_REQUEST_TIMEOUT_MS,
-      onBusinessConnectionVerified: (ownerId) =>
-        capabilityFacts.record(latestObservedProof(
-          "telegram", ownerId,
-          ["telegram.business_connection", "telegram.rights.can_reply"],
-          "provider_connection_readback", "getBusinessConnection"
-        )).then(() => undefined)
+      onBusinessConnectionObserved: (observation) => {
+        const observedAt = new Date();
+        const validUntil = new Date(observedAt.getTime() + 5 * 60_000);
+        const fact = (key: string, granted: boolean) => ({
+          provider: "telegram", accountId: observation.ownerId, key,
+          state: granted ? "granted" as const : "denied" as const,
+          source: "provider_connection_readback" as const,
+          sourceReference: "getBusinessConnection",
+          observedAt: observedAt.toISOString(),
+          validUntil: validUntil.toISOString()
+        });
+        // Dynamically retain each documented can_* right returned by Telegram.
+        // This is visibility only; it must not auto-install an API adapter.
+        const observations = [
+          fact("telegram.business_connection", observation.enabled),
+          ...Object.entries(observation.rights).map(([key, value]) =>
+            fact("telegram.rights." + key, observation.enabled && value)
+          )
+        ];
+        return capabilityFacts.record(observations).then(() => undefined);
+      }
     });
 const telegram = telegramSender === undefined || env.TELEGRAM_WEBHOOK_SECRET === undefined
   ? undefined
   : {
       botId: telegramSender.botId,
       webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
-      verifyBusinessConnection: async (id: string) => telegramSender.verifyBusiness(id)
+      verifyBusinessConnection: async (id: string) => telegramSender.verifyBusiness(id),
+      observeBusinessConnection: async (id: string) => {
+        await telegramSender.observeBusinessConnection(id);
+      }
     };
 const tiktokOAuthConfigured = (
   env.TIKTOK_BUSINESS_APP_ID !== undefined

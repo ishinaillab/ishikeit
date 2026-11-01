@@ -23,13 +23,14 @@ function connectionResponse(options: {
   username?: string;
   enabled?: boolean;
   canReply?: boolean;
+  extraRights?: Record<string, boolean>;
 } = {}): Response {
   return new Response(JSON.stringify({
     ok: true,
     result: {
       id, is_enabled: options.enabled ?? true,
       user: { id: ownerId, username: options.username ?? username, is_bot: false },
-      rights: { can_reply: options.canReply ?? true }
+      rights: { can_reply: options.canReply ?? true, ...options.extraRights }
     }
   }), { status: 200 });
 }
@@ -82,22 +83,60 @@ describe("official Telegram Business account integration", () => {
     const fetchImpl = vi.fn<typeof fetch>().mockImplementation(() => Promise.resolve(connectionResponse()));
     const sender = new TelegramSender({
       botToken: token, businessUsername: username, fetchImpl,
-      onBusinessConnectionVerified: record
+      onBusinessConnectionObserved: record
     });
     await expect(sender.verifyBusiness(id)).resolves.toMatchObject({ ownerId: String(ownerId) });
-    expect(record).toHaveBeenCalledExactlyOnceWith(String(ownerId));
+    expect(record).toHaveBeenCalledExactlyOnceWith({
+      connectionId: id, ownerId: String(ownerId), enabled: true,
+      rights: { can_reply: true }
+    });
 
     const disconnected = new TelegramSender({
       botToken: token, businessUsername: username,
-      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(connectionResponse({ canReply: false })),
-      onBusinessConnectionVerified: record
+      fetchImpl: vi.fn<typeof fetch>().mockImplementation(
+        () => Promise.resolve(connectionResponse({ canReply: false }))
+      ),
+      onBusinessConnectionObserved: record
     });
     await expect(disconnected.verifyBusiness(id)).rejects.toMatchObject({ retryable: false });
-    expect(record).toHaveBeenCalledTimes(1);
-
+    expect(record).toHaveBeenCalledTimes(2);
+    expect(record).toHaveBeenLastCalledWith({
+      connectionId: id, ownerId: String(ownerId), enabled: true,
+      rights: { can_reply: false }
+    });
     record.mockRejectedValueOnce(new Error("telemetry DB is unavailable"));
     await expect(sender.verifyBusiness(id)).resolves.toMatchObject({ ownerId: String(ownerId) });
-    expect(record).toHaveBeenCalledTimes(2);
+    expect(record).toHaveBeenCalledTimes(3);
+  });
+
+  it("discovers existing and future account-scoped rights without enabling actions", async () => {
+    const ownerReadback = new TelegramBusinessVerifier({
+      botToken: token, expectedUsername: username,
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(connectionResponse({
+        extraRights: { can_read_messages: true, can_manage_stories: false, can_future_feature: true }
+      }))
+    });
+    const observed = await ownerReadback.inspect(id);
+    expect(observed.rights).toEqual({
+      can_reply: true, can_read_messages: true,
+      can_manage_stories: false, can_future_feature: true
+    });
+    const deny = new TelegramBusinessVerifier({
+      botToken: token, expectedUsername: username,
+      fetchImpl: vi.fn<typeof fetch>().mockImplementation(() => Promise.resolve(connectionResponse({
+        enabled: false, canReply: true
+      })))
+    });
+    await expect(deny.inspect(id)).resolves.toMatchObject({ enabled: false, ownerId: String(ownerId) });
+    await expect(deny.verify(id)).rejects.toMatchObject({ retryable: false });
+  });
+
+  it("refuses to collect rights for a different owner even with can_reply granted", async () => {
+    const verify = new TelegramBusinessVerifier({
+      botToken: token, expectedUsername: username, expectedOwnerId: String(ownerId + 1),
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(connectionResponse())
+    });
+    await expect(verify.inspect(id)).rejects.toMatchObject({ retryable: false });
   });
 
   it("pins a verified immutable owner ID and tolerates safe username changes", async () => {
@@ -257,6 +296,47 @@ describe("official Telegram Business account integration", () => {
       });
       expect(echo.statusCode).toBe(200);
       expect(ingest).toHaveBeenCalledOnce();
+    } finally { await server.close(); }
+  });
+
+  it("refreshes revocation evidence from signed business_connection updates without ingesting customer content", async () => {
+    const ingest = vi.fn();
+    const observeBusinessConnection = vi.fn().mockResolvedValue(undefined);
+    const server = buildServer({
+      logger: pino({ level: "silent" }), ready: () => Promise.resolve(true),
+      inbound: { ingest }, appSecret: "meta-test", verifyToken: "meta-verify",
+      telegram: {
+        botId: "123456789", webhookSecret: "t".repeat(32),
+        verifyBusinessConnection: vi.fn(),
+        observeBusinessConnection
+      }
+    });
+    const changed = { update_id: 40001, business_connection: { id, is_enabled: false } };
+    try {
+      const rejected = await server.inject({
+        method: "POST", url: "/ishikeit/webhooks/telegram",
+        headers: { "x-telegram-bot-api-secret-token": "wrong", "content-type": "application/json" },
+        payload: changed
+      });
+      expect(rejected.statusCode).toBe(401);
+      expect(observeBusinessConnection).not.toHaveBeenCalled();
+      const observed = await server.inject({
+        method: "POST", url: "/ishikeit/webhooks/telegram",
+        headers: { "x-telegram-bot-api-secret-token": "t".repeat(32), "content-type": "application/json" },
+        payload: changed
+      });
+      expect(observed.json()).toEqual({ status: "business_connection_observed" });
+      expect(observeBusinessConnection).toHaveBeenCalledExactlyOnceWith(id);
+      expect(ingest).not.toHaveBeenCalled();
+
+      observeBusinessConnection.mockRejectedValueOnce({ retryable: true });
+      const outage = await server.inject({
+        method: "POST", url: "/ishikeit/webhooks/telegram",
+        headers: { "x-telegram-bot-api-secret-token": "t".repeat(32), "content-type": "application/json" },
+        payload: changed
+      });
+      expect(outage.statusCode).toBe(503);
+      expect(ingest).not.toHaveBeenCalled();
     } finally { await server.close(); }
   });
 

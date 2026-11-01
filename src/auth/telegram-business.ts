@@ -5,6 +5,15 @@ export interface TelegramBusinessAccount {
   ownerId: string;
 }
 
+/**
+ * Verified, account-bound Telegram Business readback, even if a right was
+ * removed. Only a studio-owner-matched response can generate this evidence.
+ */
+export interface TelegramBusinessObservation extends TelegramBusinessAccount {
+  enabled: boolean;
+  rights: Readonly<Record<string, boolean>>;
+}
+
 function hasControlCharacter(value: string): boolean {
   return [...value].some((ch) => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127);
 }
@@ -52,6 +61,16 @@ export class TelegramBusinessVerifier {
   }
 
   async verify(connectionId: string): Promise<TelegramBusinessAccount> {
+    const observation = await this.inspect(connectionId);
+    if (!observation.enabled || observation.rights.can_reply !== true) {
+      throw new DispatchFailure("Telegram Business connection not authorized for the studio", {
+        retryable: false
+      });
+    }
+    return { connectionId: observation.connectionId, ownerId: observation.ownerId };
+  }
+
+  async inspect(connectionId: string): Promise<TelegramBusinessObservation> {
     if (connectionId.length === 0 || connectionId.length > 256
       || hasControlCharacter(connectionId)) {
       throw new DispatchFailure("Telegram business connection ID invalid", { retryable: false });
@@ -115,17 +134,31 @@ export class TelegramBusinessVerifier {
     const rights = record(result?.rights);
     const ownerId = owner?.id;
     const ownerUsername = owner?.username;
-    if (body?.ok !== true || result?.id !== connectionId || result?.is_enabled !== true
+    if (body?.ok !== true || result?.id !== connectionId
+      || typeof result?.is_enabled !== "boolean"
       || typeof ownerId !== "number" || !Number.isSafeInteger(ownerId)
       || (this.#expectedOwnerId === undefined
         ? typeof ownerUsername !== "string"
           || ownerUsername.toLowerCase() !== this.#expectedUsername
-        : String(ownerId) !== this.#expectedOwnerId)
-      || rights?.can_reply !== true) {
+        : String(ownerId) !== this.#expectedOwnerId)) {
       throw new DispatchFailure("Telegram Business connection not authorized for the studio", {
         retryable: false
       });
     }
-    return { connectionId, ownerId: String(ownerId) };
+    // Do not guess a right from plan, username or absent property.
+    // Preserve new provider rights as observed evidence without ever treating
+    // them as callable Ishikeit operations until an official adapter exists.
+    const observedRights: Record<string, boolean> = {};
+    for (const [name, value] of Object.entries(rights ?? {})) {
+      if (/^can_[a-z0-9_]{1,80}$/u.test(name) && typeof value === "boolean") {
+        observedRights[name] = value;
+      }
+    }
+    // Omitting can_reply is a documented absence of this optional True field.
+    observedRights.can_reply = rights?.can_reply === true;
+    return {
+      connectionId, ownerId: String(ownerId), enabled: result.is_enabled,
+      rights: observedRights
+    };
   }
 }

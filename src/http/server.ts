@@ -62,6 +62,7 @@ export interface ServerDeps {
     botId: string;
     webhookSecret: string;
     verifyBusinessConnection?: (connectionId: string) => Promise<{ ownerId: string }>;
+  observeBusinessConnection?: (connectionId: string) => Promise<void>;
   };
   tiktok?: {
     appId: string;
@@ -1306,6 +1307,30 @@ export function buildServer(deps: ServerDeps) {
           // active owner and reply rights with Telegram's getBusinessConnection
           // before storing or processing any customer content.
           if (typeof update === "object" && update !== null && !Array.isArray(update)) {
+            const updateRecord = update as Record<string, unknown>;
+            const changedConnection = updateRecord.business_connection;
+            if (changedConnection !== undefined) {
+              if (typeof changedConnection !== "object" || changedConnection === null
+                || Array.isArray(changedConnection)) {
+                return reply.code(200).send({ status: "business_connection_ignored" });
+              }
+              const connectionId = (changedConnection as Record<string, unknown>).id;
+              if (typeof connectionId !== "string"
+                || telegram.observeBusinessConnection === undefined) {
+                return reply.code(200).send({ status: "business_connection_not_configured" });
+              }
+              try {
+                // Only a newly authenticated provider connection readback may
+                // update per-account proof. Webhook text itself grants nothing.
+                await telegram.observeBusinessConnection(connectionId);
+              } catch (error) {
+                const retryable = typeof error === "object" && error !== null
+                  && "retryable" in error && error.retryable === true;
+                return reply.code(retryable ? 503 : 200)
+                  .send({ status: retryable ? "business_connection_unavailable" : "business_connection_ignored" });
+              }
+              return reply.code(200).send({ status: "business_connection_observed" });
+            }
             const businessMessage = (update as Record<string, unknown>).business_message;
             if (typeof businessMessage === "object" && businessMessage !== null
               && !Array.isArray(businessMessage)) {

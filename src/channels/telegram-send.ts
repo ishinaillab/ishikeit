@@ -1,7 +1,7 @@
 import { DispatchFailure } from "../dispatch/failure.js";
 import type { ContentPart } from "../domain/content.js";
 import { telegramBotIdFromToken } from "../security/telegram.js";
-import { TelegramBusinessVerifier } from "../auth/telegram-business.js";
+import { TelegramBusinessVerifier, type TelegramBusinessObservation } from "../auth/telegram-business.js";
 import { customerReplyWindowEligibility } from "../policy/provider-contract.js";
 
 interface TelegramSenderOptions {
@@ -10,8 +10,8 @@ interface TelegramSenderOptions {
   businessOwnerId?: string;
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
-  /** Optional audit sink after a verified live provider readback; not a grant source itself. */
-  onBusinessConnectionVerified?: (ownerId: string) => Promise<void>;
+  /** Optional account-bound audit sink for approved or denied provider rights. */
+  onBusinessConnectionObserved?: (observation: TelegramBusinessObservation) => Promise<void>;
 }
 
 export interface TelegramSendResult {
@@ -86,14 +86,14 @@ export class TelegramSender {
   readonly #requestTimeoutMs: number;
   readonly #fetch: typeof fetch;
   readonly #business: TelegramBusinessVerifier | undefined;
-  readonly #onBusinessConnectionVerified: ((ownerId: string) => Promise<void>) | undefined;
+  readonly #onBusinessConnectionObserved: ((observation: TelegramBusinessObservation) => Promise<void>) | undefined;
 
   constructor(options: TelegramSenderOptions) {
     this.#botToken = options.botToken;
     this.botId = telegramBotIdFromToken(options.botToken);
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
     this.#fetch = options.fetchImpl ?? fetch;
-    this.#onBusinessConnectionVerified = options.onBusinessConnectionVerified;
+    this.#onBusinessConnectionObserved = options.onBusinessConnectionObserved;
     this.#business = options.businessUsername === undefined ? undefined
       : new TelegramBusinessVerifier({
           botToken: options.botToken,
@@ -104,20 +104,30 @@ export class TelegramSender {
         });
   }
 
-  async verifyBusiness(connectionId: string): Promise<{ connectionId: string; ownerId: string }> {
+  async observeBusinessConnection(connectionId: string): Promise<TelegramBusinessObservation> {
     if (this.#business === undefined) {
       throw new DispatchFailure("Telegram Business account not configured", { retryable: false });
     }
-    const verified = await this.#business.verify(connectionId);
-    // This diagnostic storage must never override Telegram's fresh
-    // readback as the authoritative condition for actually sending.
+    const observed = await this.#business.inspect(connectionId);
+    // A denied right or disconnected studio is an important authenticated
+    // observation. Never persist a response for a foreign account owner.
     try {
-      await this.#onBusinessConnectionVerified?.(verified.ownerId);
+      await this.#onBusinessConnectionObserved?.(observed);
     } catch {
-      // Transient telemetry DB failure must not silently disable a reply
-      // already authorized by a live getBusinessConnection read.
+      // Proof storage failure cannot authorize a message; send-time readback
+      // below remains authoritative. A future audit pass can retry storage.
     }
-    return verified;
+    return observed;
+  }
+
+  async verifyBusiness(connectionId: string): Promise<{ connectionId: string; ownerId: string }> {
+    const observed = await this.observeBusinessConnection(connectionId);
+    if (!observed.enabled || observed.rights.can_reply !== true) {
+      throw new DispatchFailure("Telegram Business connection not authorized for the studio", {
+        retryable: false
+      });
+    }
+    return { connectionId: observed.connectionId, ownerId: observed.ownerId };
   }
 
   async send(

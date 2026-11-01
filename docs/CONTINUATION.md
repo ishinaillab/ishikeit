@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 Phase 2 Meta AI first-contact disclosure
+
+- Official Meta Messenger/IG messaging policy advises clearly identifying automated chat at first contact, after a significant lapse and at transitions from human to automated messaging. Production AI Engine replies sometimes omitted disclosure despite prompt instructions. `src/persistence/meta-disclosure.ts` adds a read-only account+customer partition lookup of earlier handled inbound turns in the last 24 hours using the existing `inbound_events_partition_idx`; Supabase EXPLAIN proved index usage, no new database schema or raw customer content.
+- `MessageReceivedHandler` now, when injected with this reader, prepends “I'm Ishi Nail Lab's AI assistant.” only on first/after-gap Messenger and Instagram replies unless the bot already identified itself; preserves customer opt-out/handoff and other provider messages. Happens before Meta length-aware splitting and durable outbox actions. If the history lookup fails, it retries safely instead of silently sending without needed disclosure.
+- Local Node24/PostgreSQL17 591/591 tests, 82 suites, lint/typecheck/build passed. Detailed evidence `docs/PHASE2_AI_DISCLOSURE_2026-11-02.md`; PR #219. 24h is studio implementation threshold, not stated as a legal Meta threshold. Human handoff back to AI still needs explicit provider-transition proof. Phase 2 **not closed** until CI/release and owner-channel canaries.
+
+
 ## Nov 2 Phase 2 — explicit customer-facing links for Meta and Telegram text channels
 
 - Actual customer-origin replies persisted in Supabase across Messenger, Instagram, WhatsApp and Telegram used the AI Engine markdown syntax `[Complete Your Booking](https://www.ishinaillab.com/?ishi_booking_slot=...)` in raw text. The provider senders use ordinary Meta `message.text` or WhatsApp `text.body` and Telegram `sendMessage` without a markdown `parse_mode`; an inline Markdown label is not a provider-supported guaranteed clickable link. This is a practical customer link-opening risk independent of HMAC validity or booked slot.

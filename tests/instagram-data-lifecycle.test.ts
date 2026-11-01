@@ -27,13 +27,15 @@ describe("Instagram account deletion includes durable hashed conversation state"
     const result = await reader.requestDeletion("studio-ig", "https://apps.ishinaillab.com");
     expect(result.statusUrl).toMatch(/^https:\/\/apps\.ishinaillab\.com\/ishikeit\/privacy\/data-deletion\/status\/[a-f0-9]{36}$/u);
     expect(executed.map(x => x.sql)).toEqual([
+      expect.stringContaining("DELETE FROM public.provider_account_capability_facts"),
       expect.stringContaining("DELETE FROM public.meta_handoff_blocks"),
       expect.stringContaining("DELETE FROM public.meta_native_routing_ownership"),
       expect.stringContaining("DELETE FROM outbox_attempts"),
       expect.stringContaining("DELETE FROM outbox o"),
       expect.stringContaining("DELETE FROM inbound_events")
     ]);
-    for (const index of [0, 1]) {
+    expect(executed[0]?.args).toEqual([["studio-ig", "studio-ig-alias"]]);
+    for (const index of [1, 2]) {
       expect(executed[index]?.sql).toContain("provider='meta' AND channel='instagram'");
       expect(executed[index]?.sql).toContain("account_id=ANY($1::text[])");
       expect(executed[index]?.args).toEqual([["studio-ig", "studio-ig-alias"]]);
@@ -44,6 +46,20 @@ describe("Instagram account deletion includes durable hashed conversation state"
     expect(JSON.parse(successArgs?.[1] as string)).toMatchObject({
       inboundEvents: 2, outboxRows: 2, outboxAttempts: 2, handoffBlocks: 2, nativeRoutingRows: 2
     });
+  });
+
+  it("clears cached Instagram account grants on deauthorization", async () => {
+    const dbQuery = vi.fn().mockResolvedValue({ rowCount: 2, rows: [] });
+    const oauth = {
+      resolveCredentialAccountId: vi.fn().mockResolvedValue("studio-ig"),
+      aliasesForCredential: vi.fn().mockResolvedValue(["studio-ig-alias"]),
+      revoke: vi.fn().mockResolvedValue(undefined)
+    };
+    const reader = new PostgresInstagramDataLifecycle({ query: dbQuery } as never, oauth as never);
+    await reader.deauthorize("studio-ig");
+    expect(dbQuery.mock.calls[0]?.[0]).toContain("DELETE FROM public.provider_account_capability_facts");
+    expect(dbQuery.mock.calls[0]?.[1]).toEqual([["studio-ig", "studio-ig-alias"]]);
+    expect(oauth.revoke).toHaveBeenCalledWith("instagram", "studio-ig", "deauthorized");
   });
 
   it("does not claim deletion complete after a transaction failure", async () => {

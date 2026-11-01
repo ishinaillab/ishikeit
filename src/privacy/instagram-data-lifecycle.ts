@@ -41,8 +41,19 @@ export class PostgresInstagramDataLifecycle implements InstagramDataLifecycle {
     }
   }
 
-  deauthorize(accountId: string): Promise<void> {
-    return this.oauthStore.revoke("instagram", accountId, "deauthorized");
+  async deauthorize(accountId: string): Promise<void> {
+    const credentialAccountId = await this.oauthStore.resolveCredentialAccountId(
+      "instagram", accountId
+    ) ?? accountId;
+    const aliases = await this.oauthStore.aliasesForCredential("instagram", credentialAccountId);
+    // Invalidate cached capability evidence before revoking the OAuth token;
+    // never allow an old successful readback to stand after deauthorization.
+    await this.db.query(
+      `DELETE FROM public.provider_account_capability_facts
+       WHERE provider='instagram' AND account_id=ANY($1::text[])`,
+      [[...new Set([accountId, credentialAccountId, ...aliases])]]
+    );
+    await this.oauthStore.revoke("instagram", credentialAccountId, "deauthorized");
   }
 
   async requestDeletion(
@@ -82,6 +93,13 @@ export class PostgresInstagramDataLifecycle implements InstagramDataLifecycle {
         "data_deletion"
       );
       const details = await this.db.transaction(async (tx) => {
+        // Account-specific entitlement evidence is also a retained provider
+        // identity record and must be purged with this account.
+        await tx.query(
+          `DELETE FROM public.provider_account_capability_facts
+           WHERE provider='instagram' AND account_id=ANY($1::text[])`,
+          [accountIds]
+        );
         // Partition keys identify a studio account + customer conversation.
         // Purging inbound/outbox alone leaves hashed Instagram customer state
         // in human handoff and native routing tables after account deletion.

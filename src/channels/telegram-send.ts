@@ -10,6 +10,8 @@ interface TelegramSenderOptions {
   businessOwnerId?: string;
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
+  /** Optional audit sink after a verified live provider readback; not a grant source itself. */
+  onBusinessConnectionVerified?: (ownerId: string) => Promise<void>;
 }
 
 export interface TelegramSendResult {
@@ -84,12 +86,14 @@ export class TelegramSender {
   readonly #requestTimeoutMs: number;
   readonly #fetch: typeof fetch;
   readonly #business: TelegramBusinessVerifier | undefined;
+  readonly #onBusinessConnectionVerified: ((ownerId: string) => Promise<void>) | undefined;
 
   constructor(options: TelegramSenderOptions) {
     this.#botToken = options.botToken;
     this.botId = telegramBotIdFromToken(options.botToken);
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
     this.#fetch = options.fetchImpl ?? fetch;
+    this.#onBusinessConnectionVerified = options.onBusinessConnectionVerified;
     this.#business = options.businessUsername === undefined ? undefined
       : new TelegramBusinessVerifier({
           botToken: options.botToken,
@@ -104,7 +108,16 @@ export class TelegramSender {
     if (this.#business === undefined) {
       throw new DispatchFailure("Telegram Business account not configured", { retryable: false });
     }
-    return this.#business.verify(connectionId);
+    const verified = await this.#business.verify(connectionId);
+    // This diagnostic storage must never override Telegram's fresh
+    // readback as the authoritative condition for actually sending.
+    try {
+      await this.#onBusinessConnectionVerified?.(verified.ownerId);
+    } catch {
+      // Transient telemetry DB failure must not silently disable a reply
+      // already authorized by a live getBusinessConnection read.
+    }
+    return verified;
   }
 
   async send(

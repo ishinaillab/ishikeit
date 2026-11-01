@@ -52,6 +52,7 @@ import { TelegramSender } from "../channels/telegram-send.js";
 import { TikTokBusinessSender } from "../channels/tiktok-send.js";
 import { CredentialCipher } from "../auth/credential-cipher.js";
 import { PostgresOAuthCredentialStore } from "../auth/oauth-store.js";
+import { PostgresAccountCapabilityFacts } from "../persistence/account-capability-facts.js";
 import { TikTokOAuthClient, TikTokOAuthService } from "../auth/tiktok-oauth.js";
 import {
   TikTokMarketingOAuthClient,
@@ -92,6 +93,16 @@ const db = new PostgresDatabase(env.DATABASE_URL, (sqlState) => {
   // Stable machine-readable SQLSTATE only. Never log a DB URL or raw error text.
   logger.warn({ sqlState }, "PostgreSQL idle connection lost; pool will reconnect on next request");
 });
+const capabilityFacts = new PostgresAccountCapabilityFacts(db);
+function latestObservedProof(provider: string, accountId: string, keys: readonly string[], source: "provider_api" | "provider_connection_readback", reference: string) {
+  const observedAt = new Date();
+  const validUntil = new Date(observedAt.getTime() + 5 * 60 * 1000);
+  return keys.map((key) => ({
+    provider, accountId, key, state: "granted" as const,
+    source, sourceReference: reference,
+    observedAt: observedAt.toISOString(), validUntil: validUntil.toISOString()
+  }));
+}
 const fleetStore = new PostgresWorkerHeartbeatStore(db);
 const heartbeatMonitor = new DurableWorkerHeartbeatMonitor(fleetStore, workerDiagnostics, logger);
 const incidentStore = new PostgresOperationalIncidentStore(db);
@@ -116,7 +127,13 @@ const telegramSender = env.TELEGRAM_BOT_TOKEN === undefined ? undefined
       botToken: env.TELEGRAM_BOT_TOKEN,
       businessUsername: env.TELEGRAM_BUSINESS_USERNAME,
       ...(env.TELEGRAM_BUSINESS_OWNER_ID === undefined ? {} : { businessOwnerId: env.TELEGRAM_BUSINESS_OWNER_ID }),
-      requestTimeoutMs: env.TELEGRAM_OUTBOUND_REQUEST_TIMEOUT_MS
+      requestTimeoutMs: env.TELEGRAM_OUTBOUND_REQUEST_TIMEOUT_MS,
+      onBusinessConnectionVerified: (ownerId) =>
+        capabilityFacts.record(latestObservedProof(
+          "telegram", ownerId,
+          ["telegram.business_connection", "telegram.rights.can_reply"],
+          "provider_connection_readback", "getBusinessConnection"
+        )).then(() => undefined)
     });
 const telegram = telegramSender === undefined || env.TELEGRAM_WEBHOOK_SECRET === undefined
   ? undefined
@@ -402,6 +419,18 @@ async function reconcileInstagramOAuthAccounts(): Promise<void> {
           INSTAGRAM_WEBHOOK_FIELDS
         )
       );
+      // Scoped factual evidence: verified Professional account identity,
+      // successfully authenticated provider endpoint and webhook readback.
+      // Historical OAuth scopes are NOT elevated to newly granted permissions.
+      try {
+        await capabilityFacts.record(latestObservedProof(
+          "instagram", professionalAccountId,
+          ["instagram.oauth", "instagram.app_access"],
+          "provider_api", "professional_account_and_subscription_readback"
+        ));
+      } catch {
+        logger.warn("Instagram verified account evidence persistence unavailable");
+      }
       logger.info("Instagram OAuth account routing and webhook subscription reconciled");
     } catch (error) {
       if (error instanceof InstagramOAuthRequestError

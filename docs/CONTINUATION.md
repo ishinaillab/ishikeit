@@ -1,5 +1,13 @@
 # Ishikeit continuation handoff
 
+## Booking add-on MCP client exposure (2026-11-01)
+
+- The active addon `LatePoint Addon - Ishikeit Automation` v0.1.0 passed live authenticated ability tests: declined 8 AM, verified 9 AM link and past date blocked. No booking created.
+- v0.1.1 sets `meta.public=true` per WordPress `wp_register_ability` client-discovery rules, retaining the authenticated `permission_callback`. Easy MCP AI enabled the new ability globally (667 enabled); this does not widen token-specific scopes.
+- Vendor official guidance confirms API tokens with Read-only access snapshot tools on creation. The active "AI Engine - LatePoint (read-only)" token only sees 13 of 917 global tools, so exact new-tool access must be verified/narrowly authorized with an official credential scope edit. Do not change it to Full access or bypass controls.
+- Active AI chatbot `default` now excludes rejected times, never reuses broken booking links, never invents checkout holds and identifies itself as AI. Fail closed if combined ability not exposed to its MCP client. See docs/BOOKING_CONCIERGE_2026-11-01.md.
+
+
 ## 2026-11-01 — Telegram official-account Business connection (review/deployment gate)
 
 - Owner-confirmed real provider test showed Messenger/Instagram/WhatsApp and Telegram bot received replies; Supabase confirmed new processed inbound across all four but **no Telegram business-message events**, only channel=bot normal messages. Root cause: prior implementation normalized Telegram `message` only, never `business_message`.

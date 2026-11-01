@@ -2,7 +2,7 @@
 /**
  * Plugin Name: LatePoint Addon - Ishikeit Automation
  * Description: Server-verified, non-reserving LatePoint booking links for Ishi Nail Lab's AI concierge.
- * Version: 0.1.0
+ * Version: 0.1.1
  * Requires at least: 6.9
  * Requires PHP: 8.1
  * Requires Plugins: latepoint, ishi-latepoint-instant
@@ -77,6 +77,9 @@ final class Ishi_LatePoint_Automation {
             'permission_callback' => [ __CLASS__, 'can_execute' ],
             'meta' => [
                 'annotations' => [ 'readonly' => true, 'destructive' => false, 'idempotent' => true ],
+                // WordPress 6.9+ uses public as the client/MCP visibility
+                // default; permission_callback still enforces login.
+                'public' => true,
                 'show_in_rest' => true,
             ],
         ] );

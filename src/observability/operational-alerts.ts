@@ -28,8 +28,13 @@ export interface OperationalAlertSummary {
  *
  * Thresholds are conservative initial operating defaults, not provider SLAs.
  */
+export type OperationalAlertInput =
+  Pick<OperationalMetricsSnapshot, "generatedAt" | "windowMinutes" | "queue"> & {
+    inbound: Pick<OperationalMetricsSnapshot["inbound"], "failedCurrent">;
+  };
+
 export function evaluateOperationalAlerts(
-  metrics: OperationalMetricsSnapshot,
+  metrics: OperationalAlertInput,
   runtime?: { processorEnabled: boolean; actionDispatchEnabled: boolean }
 ): OperationalAlertSummary {
   const alerts: OperationalAlert[] = [];

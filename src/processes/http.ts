@@ -770,9 +770,9 @@ async function main(): Promise<void> {
     if (instagramDataLifecycle !== undefined && !await instagramDataLifecycle.ready()) {
       throw new Error("Instagram data lifecycle schema is not ready");
     }
-    await reconcileInstagramOAuthAccounts();
-    await reconcileInstagramManagedAccount();
-    await reconcileMessengerManagedPage();
+    // Provider account/subscription maintenance is never a prerequisite for
+    // accepting signed webhooks or satisfying Hostinger's fast listen deadline.
+    // In particular, provider error 613 can stall these requests for seconds.
     if (shuttingDown) return;
     if (!await tiktokAuthorizationReady()) {
       throw new Error("TikTok Business Account activation requires a usable durable OAuth credential");
@@ -824,6 +824,24 @@ async function main(): Promise<void> {
     }
     heartbeatMonitor.start();
     incidentMonitor.start();
+
+    // Noncritical provider reconciliation starts only AFTER the HTTP socket,
+    // workers and health endpoints are operational. Never block startup on
+    // external APIs and do not retry provider throttling on a failed attempt.
+    void (async () => {
+      try {
+        if (shuttingDown) return;
+        await reconcileInstagramOAuthAccounts();
+        if (shuttingDown) return;
+        await reconcileInstagramManagedAccount();
+        if (shuttingDown) return;
+        await reconcileMessengerManagedPage();
+      } catch {
+        // Account listing/database availability may fail before the per-account
+        // catch blocks. No secrets or customer identities in operational logs.
+        if (!shuttingDown) logger.warn("post-listen provider reconciliation unavailable");
+      }
+    })();
   } catch (error) {
     // Graceful shutdown owns all cleanup if startup was cancelled by SIGTERM.
     if (shuttingDown) return;

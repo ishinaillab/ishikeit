@@ -32,6 +32,7 @@ Ishi_LatePoint_Automation::register_ability();
 $definition=$GLOBALS['registered']['ishi/verify-and-generate-booking-link'] ?? null;
 assert_true(is_array($definition), 'WordPress ability registration');
 assert_true($definition['meta']['annotations']['readonly']===true,'readonly declaration');
+assert_true($definition['meta']['public'] === true && $definition['meta']['show_in_rest'] === true,'client discoverability requires authentication');
 assert_true($definition['permission_callback']===['Ishi_LatePoint_Automation','can_execute'], 'correct permission');
 $date=(new DateTimeImmutable('tomorrow',wp_timezone()))->format('Y-m-d');
 $slot=['date'=>$date,'start_time'=>480];

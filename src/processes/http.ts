@@ -74,6 +74,7 @@ import {
 } from "../messaging/tiktok-webhook-config.js";
 import { INSTAGRAM_WEBHOOK_FIELDS, InstagramOAuthClient, InstagramOAuthService, InstagramOAuthFlowError, InstagramOAuthRequestError, instagramOAuthFailureDiagnostic, type InstagramOAuthFlowStage } from "../auth/instagram-oauth.js";
 import { InstagramAccessTokenManager, InstagramAccessTokenRouter } from "../auth/instagram-token-manager.js";
+import { proveOneTimeInstagramRefresh } from "../observability/instagram-once-proof.js";
 import { PostgresInstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 
 const env = loadEnvironment();
@@ -820,6 +821,16 @@ async function main(): Promise<void> {
     }
     heartbeatMonitor.start();
     incidentMonitor.start();
+    // Temporary private one-shot proof; remove immediately after verification.
+    if (env.NODE_ENV === "production" && oauthStore !== undefined && instagramOAuthClient !== undefined) {
+      void proveOneTimeInstagramRefresh({db,store:oauthStore,client:instagramOAuthClient})
+        .then((status)=>{
+          if(status === "succeeded") logger.info("Instagram one-time renewal proof succeeded");
+          else if(status === "failed") logger.warn("Instagram one-time renewal proof failed");
+          else logger.info({status}, "Instagram one-time renewal proof skipped");
+        })
+        .catch(()=>logger.warn("Instagram one-time renewal proof unavailable"));
+    }
   } catch (error) {
     // Graceful shutdown owns all cleanup if startup was cancelled by SIGTERM.
     if (shuttingDown) return;

@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — Telegram Business permission changes and future rights discovery
+
+- Official Bot API `BusinessConnection` has `is_enabled` and extensible `BusinessBotRights` `can_*` booleans. A studio-owner-verified `getBusinessConnection` readback now returns enabled/disabled and all supplied boolean rights, not just `can_reply`. No action becomes callable from right discovery alone: installed official adapter and reviewed contract still required.
+- Account-specific proof records distinguish freshly granted, denied, and disabled rights, including when the user revokes `can_reply`. A foreign-account response is rejected before recording; failed proof storage does not relax fresh provider send-time validation.
+- Signed `business_connection` webhook changes recheck the provider connection and update evidence; invalid webhook secrets are rejected, and transient official readback failure responds retryably. No customer content is stored for connection updates.
+- Local Windows lint/typecheck/build and 603/603 non-DB tests passed. Node24/PG17 CI and production release still required. See Telegram official Bot API `https://core.telegram.org/bots/api`.
+
 ## 2026-11-02 — durable per-account provider capability evidence (Phase 2 engineering)
 
 - Additive private Postgres table `provider_account_capability_facts`, primary key `(provider,account_id,evidence_key)`, RLS and revoked client grants; atomic upsert of latest provider evidence including expiry, provider reference and deny-over-grant tie safety. Existing OAuth token/permission secrets remain only in encrypted OAuth store.

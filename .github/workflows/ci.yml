@@ -101,6 +101,10 @@ jobs:
         run: find wordpress/ishi-ai-bridge -name '*.php' -print0 | xargs -0 -n1 php -l
       - name: Verify sanitized AI Bridge diagnostics
         run: php tests/php/ishi-ai-bridge-diagnostics.php
+      - name: Lint LatePoint Addon - Ishikeit Automation
+        run: find wordpress/latepoint-addon-ishikeit-automation -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: Verify server-side booking recheck and customer-declined time safeguards
+        run: php -d zend.assertions=1 -d assert.exception=1 wordpress/latepoint-addon-ishikeit-automation/tests/booking-ability-test.php
 
   context-continuity:
     runs-on: ubuntu-latest

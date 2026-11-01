@@ -130,6 +130,10 @@ export class DurableWorkerHeartbeatMonitor {
     void this.tick();
     this.#timer = setInterval(() => { void this.tick(); }, HEARTBEAT_INTERVAL_MS);
     this.#timer.unref();
+    // Also prune on startup: short-lived Hostinger processes may never reach 24h.
+    void this.#store.pruneExpired().catch(() => {
+      this.#logger.warn("worker heartbeat retention cleanup unavailable");
+    });
     this.#cleanupTimer = setInterval(() => {
       void this.#store.pruneExpired().catch(() => {
         this.#logger.warn("worker heartbeat retention cleanup unavailable");

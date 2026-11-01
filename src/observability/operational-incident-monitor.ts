@@ -2,7 +2,7 @@ import type pg from "pg";
 import { isIP } from "node:net";
 import type { Logger } from "pino";
 import type { PostgresDatabase } from "../persistence/postgres.js";
-import type { OperationalMetricsReader, OperationalMetricsSnapshot } from "./operational-metrics.js";
+import type { IncidentMetricsSnapshot } from "./incident-metrics.js";
 import { evaluateOperationalAlerts } from "./operational-alerts.js";
 import type { WorkerFleetSnapshot } from "./durable-worker-heartbeats.js";
 
@@ -28,7 +28,7 @@ export interface IncidentReadback {
 }
 
 export function evaluateIncidents(
-  metrics: OperationalMetricsSnapshot,
+  metrics: IncidentMetricsSnapshot,
   fleet: WorkerFleetSnapshot,
   oauthMaintenanceFailures = 0,
   runtime?: { processorEnabled: boolean; actionDispatchEnabled: boolean }
@@ -157,7 +157,7 @@ export class OperationalIncidentMonitor {
   #timer: ReturnType<typeof setInterval> | undefined;
   #closed = false;
   constructor(
-    private readonly metrics: OperationalMetricsReader,
+    private readonly metrics: { snapshot(windowMinutes: number): Promise<IncidentMetricsSnapshot> },
     private readonly fleet: { snapshot(): Promise<WorkerFleetSnapshot> },
     private readonly incidents: PostgresOperationalIncidentStore,
     private readonly logger: Logger,

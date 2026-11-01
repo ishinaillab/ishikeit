@@ -41,3 +41,11 @@ Official troubleshooting for explicit safety blocks: https://help.openai.com/en/
 - Official Supabase connector returned project ishikeit-db status ACTIVE_HEALTHY with existing migrations, with no production schema changes.
 - Ishi EMCP Bridge read published WordPress pages successfully when its required status filter was supplied.
 - Official OpenAI troubleshooting guidance says explicit platform safety blocks cannot be overridden through app permissions, reconnection, or saved approval.
+
+## Verified Codex hosted Hostinger connection
+- Local Codex CLI version 0.163.0; git, Docker and SSH executables detected on Windows.
+- Existing legacy Hostinger MCP names remained enabled. They were not removed, because preserving existing configuration takes priority over a speculative cleanup.
+- The official hosted Hostinger server was not configured under the name hostinger. Added it with the vendor-supported Codex MCP command, retaining old entries.
+- OAuth completed successfully. Readback of Codex MCP config verified hostinger: enabled=true, transport=streamable_http, URL=https://mcp.hostinger.com, authentication=OAuth.
+- OAuth success does not alone prove that Codex selected the exact hosting account for apps.ishinaillab.com. Verify a read-only website listing with that Codex connection before production writes.
+- The Ishi Local Agent recovered during a later read-only check and successfully ran the Codex CLI. Earlier internal tool errors remain an intermittent reliability symptom, not an established credential failure.

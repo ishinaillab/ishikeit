@@ -42,3 +42,7 @@ Authoritative references:
 - **Provider authorization and ongoing health are dynamic**; test accounts, permission changes, token refresh and real ingress still need continuous monitoring.
 
 Security holds: do not touch WordPress premium plugins, WordPress production keys, live Supabase DDL, Meta global settings, or protected Hostinger secrets as an incidental side effect of this patch.
+
+
+## Security advisory correction — dev-only minimatch (2026-11-01)
+The authoritative [upstream GHSA-g3hv-75wg-m249](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249) identifies potential DoS under pattern amplification and fixes all versions below 11.0.1 in **11.0.1**. Because ESLint 10 and TypeScript-ESLint 8 still transitively depend on minimatch 10.x, an explicit exact-version npm **override** for minimatch 11.0.1 in the development tool dependency graph is deliberately compatibility-tested rather than blindly forcing `npm audit fix --force`. The production app does not call minimatch directly. The lockfile is updated and full Node24/PostgreSQL17 tests, lint, typecheck and build must pass after override. This is a transitive-major override that should be revisited when upstream dev tools support patched minimatch natively.

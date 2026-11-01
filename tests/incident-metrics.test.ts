@@ -5,7 +5,7 @@ import type { PostgresDatabase } from "../src/persistence/postgres.js";
 
 describe("bounded incident-only SQL aggregates", () => {
   it("does not invoke costly dashboard receipt joins, percentiles, or customer payloads", async () => {
-    const query = vi.fn()
+    const query = vi.fn<(sql: string, params?: readonly number[]) => Promise<{ rows: Record<string, unknown>[] }>>()
       .mockResolvedValueOnce({ rows:[{failed_current:"2"}] })
       .mockResolvedValueOnce({ rows:[{
         topic:"action.dispatch", pending:"3", oldest_pending_ms:400000,
@@ -15,7 +15,7 @@ describe("bounded incident-only SQL aggregates", () => {
     const reader = new PostgresIncidentMetricsReader({query} as unknown as PostgresDatabase);
     const snapshot = await reader.snapshot(60);
     expect(query).toHaveBeenCalledTimes(3);
-    const statements = query.mock.calls.map(call => String(call[0])).join("\n");
+    const statements = query.mock.calls.map(call => call[0]).join("\n");
     expect(statements).not.toMatch(/lateral|percentile_cont|provider_resource_id|payload->|join/iu);
     expect(statements).toMatch(/outbox_attempts/iu);
     expect(snapshot.inbound.failedCurrent).toBe(2);

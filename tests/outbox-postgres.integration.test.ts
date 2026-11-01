@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresDatabase } from "../src/persistence/postgres.js";
-import { ACTION_DISPATCH_TOPIC, PostgresOutboxStore } from "../src/persistence/outbox.js";
+import { ACTION_DISPATCH_TOPIC, PostgresOutboxStore, type OutboxJob } from "../src/persistence/outbox.js";
 import { PostgresMetaUnknownReconciler } from "../src/persistence/meta-unknown-reconciliation.js";
 import type { ActionEnvelope } from "../src/domain/actions.js";
 
@@ -35,6 +35,15 @@ function action(key: string, partition = "synthetic-partition"): ActionEnvelope 
     target: { channel: "messenger", accountId: "synthetic-page", recipientId: "synthetic-recipient" },
     body: { part: { kind: "text", text: "synthetic test only" } }
   };
+}
+
+/** Force an expired lease deterministically; slow CI database startup must not race a 80ms TTL. */
+async function expireTestLease(job: OutboxJob): Promise<void> {
+  const changed = await database!.query(
+    "UPDATE public.outbox SET lease_expires_at = now() - interval '1 second' WHERE id = $1::uuid AND lease_token = $2::uuid",
+    [job.id, job.leaseToken]
+  );
+  expect(changed.rowCount).toBe(1);
 }
 
 describe.skipIf(database === undefined)("Meta durable outbox fence on isolated PostgreSQL", () => {
@@ -103,11 +112,11 @@ describe.skipIf(database === undefined)("Meta durable outbox fence on isolated P
       target: { channel: "bot", accountId: "123456789", recipientId: "987654321" }
     };
     const inserted = await store!.enqueueAction(telegram);
-    const first = await store!.claimNext(ACTION_DISPATCH_TOPIC, 80);
+    const first = await store!.claimNext(ACTION_DISPATCH_TOPIC, 30000);
     expect(first?.id).toBe(inserted.id);
     expect(await store!.prepareTelegramSend(first!)).toBe(true);
     expect(await store!.prepareTelegramSend(first!)).toBe(false);
-    await new Promise<void>((resolve) => setTimeout(resolve, 170));
+    await expireTestLease(first!);
     const next = await new PostgresOutboxStore(database!).claimNext(ACTION_DISPATCH_TOPIC, 30000);
     expect(next).toBeUndefined();
     const state = await database!.query<{ dead_lettered_at: Date|null; published_at: Date|null; provider: string }>(
@@ -146,12 +155,12 @@ describe.skipIf(database === undefined)("Meta durable outbox fence on isolated P
 
   it("quarantines an armed send after lease expiry and never retries an unknown provider outcome", async () => {
     const inserted = await store!.enqueueAction(action("crash-after-arm"));
-    const claimed = await store!.claimNext(ACTION_DISPATCH_TOPIC, 80);
+    const claimed = await store!.claimNext(ACTION_DISPATCH_TOPIC, 30000);
     expect(claimed?.id).toBe(inserted.id);
     expect(await store!.prepareMetaSend(claimed!)).toBe(true);
 
     // Simulate a worker dying after the durable fence but before any reply.
-    await new Promise<void>((resolve) => setTimeout(resolve, 170));
+    await expireTestLease(claimed!);
     const again = await new PostgresOutboxStore(database!).claimNext(ACTION_DISPATCH_TOPIC, 30000);
     expect(again).toBeUndefined();
     const fenced = await database!.query<{
@@ -178,10 +187,10 @@ describe.skipIf(database === undefined)("Meta durable outbox fence on isolated P
   it("releases the conversation partition after quarantining its expired armed predecessor", async () => {
     const first = await store!.enqueueAction(action("ordered-first", "same-conversation"));
     const second = await store!.enqueueAction(action("ordered-second", "same-conversation"));
-    const claimed = await store!.claimNext(ACTION_DISPATCH_TOPIC, 80);
+    const claimed = await store!.claimNext(ACTION_DISPATCH_TOPIC, 30000);
     expect(claimed?.id).toBe(first.id);
     expect(await store!.prepareMetaSend(claimed!)).toBe(true);
-    await new Promise<void>((resolve) => setTimeout(resolve, 170));
+    await expireTestLease(claimed!);
     const next = await new PostgresOutboxStore(database!).claimNext(ACTION_DISPATCH_TOPIC, 30000);
     expect(next?.id).toBe(second.id);
     expect(await store!.prepareMetaSend(next!)).toBe(true);
@@ -214,10 +223,10 @@ describe.skipIf(database === undefined)("Meta durable outbox fence on isolated P
   });
   it("keeps a quarantined provider-unknown send terminal during operator review", async () => {
     const inserted = await store!.enqueueAction(action("manual-unknown-case"));
-    const job = await store!.claimNext(ACTION_DISPATCH_TOPIC, 80);
+    const job = await store!.claimNext(ACTION_DISPATCH_TOPIC, 30000);
     expect(job?.id).toBe(inserted.id);
     expect(await store!.prepareMetaSend(job!)).toBe(true);
-    await new Promise<void>((resolve) => setTimeout(resolve, 170));
+    await expireTestLease(job!);
     expect(await store!.claimNext(ACTION_DISPATCH_TOPIC, 30000)).toBeUndefined();
 
     const ledger = new PostgresMetaUnknownReconciler(database!);

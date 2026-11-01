@@ -1,5 +1,11 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 Phase 2 durable delivered-disclosure correction
+
+- Prior disclosure reader accepted handled inbound events without evidence of published outbound replies; queued, unknown or dead-lettered sends could suppress required automated identity disclosure.
+- Updated reader inspects indexed, bounded recent inbound IDs and checks matching immutable first-part message.send jobs via outbox primary key, requiring published_at in the last 24h. Deliberately rediscloses if evidence missing, avoids raw customer content, requires no migration.
+- Four focused regression scenarios added; isolated Docker Node24/PostgreSQL17 full test suite 594/594 (82 suites), ESLint, TypeScript and build passed, disposal verified. Seven unpublished canonical D: edits preserved, no production messages or booking/payment changes.
+
 ## 2026-11-02 Phase 2 Meta customer disclosure rendering and deterministic outbox integration test
 
 - Post-PR #219 source inspection proved the Messenger/Instagram first-contact disclosure text was double-escaped: `\\\\n\\\\n` appeared as literal backslash characters to plain-text provider recipients rather than two actual paragraph line breaks. The original test incorrectly expected those literal characters. PR #220 changes the source to real JavaScript newline escapes and updates the regression expectation; no other outbound behavior, send policy, database schema or provider account settings are changed.

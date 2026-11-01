@@ -3202,3 +3202,12 @@ Read-only WordPress plugin inventory on 2026-10-29 shows **LatePoint 5.7.5**, **
   containers/volumes/networks verified.
 - **Release hold:** Phase 1 PR #193 remains unmerged, no automatic Hostinger
   production deployment, no changed Meta credentials and no customer sends.
+
+
+## 2026-11-01 — Issue #194 durable worker monitoring follow-up (under review)
+
+- Phase 1 PR #193 was merged and deployed from main commit `3bce44b806367b7f39891a7f543295c0f43f31d1`, Hostinger build `01a19441-a8f7-721a-bdb5-f303876eeae2` completed. Production health/live, health/ready, health/build returned 200 and unauthorized operations readback returned 401/no-store.
+- Separate draft PR #195 proposes instance-aware durable worker heartbeat records in PostgreSQL with no customer identifiers; local in-memory observation remains distinct from cross-process DB evidence. A per-process random identifier and individual worker statuses are written every 15 seconds; only currently observed instances within a 15-minute window are exposed through bearer-protected `/ops/workers/fleet`.
+- Stale threshold is provisional 45 seconds (three intervals). Explicitly disabled and cleanly stopped workers are not classified as stale; unexpected process loss remains stale until the observation window expires. The endpoint does not prove expected-replica count, post-lookback process loss, or an independently running watcher.
+- This branch is NOT production released. Apply a reviewed additive RLS-protected Supabase migration before deployment; verify app CI + isolated PostgreSQL failure-injection tests. No direct customer/provider messages, live token changes or payment/booking effects. Independent operator alert delivery, subscription/approval, dedup and recovery remain in #194.
+- No WordPress premium plugins, provider global policies, Meta App Secret proof rollout, WhatsApp reminder consent, or TikTok messaging approval gates are changed.

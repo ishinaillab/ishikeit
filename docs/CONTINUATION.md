@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — durable per-account provider capability evidence (Phase 2 engineering)
+
+- Additive private Postgres table `provider_account_capability_facts`, primary key `(provider,account_id,evidence_key)`, RLS and revoked client grants; atomic upsert of latest provider evidence including expiry, provider reference and deny-over-grant tie safety. Existing OAuth token/permission secrets remain only in encrypted OAuth store.
+- Live Telegram Business `getBusinessConnection` owner+reply-right readbacks and successful Instagram OAuth account+webhook readbacks supply explicitly bounded, verified facts; do not assert unvalidated OAuth scopes or paid subscriptions. No new external API permissions claimed.
+- Instagram deauthorization and data deletion purge associated provider facts including verified alias accounts. This is observation-only; current live provider send-time checks remain authoritative until complete verified per-account entitlement coverage.
+- Separate migration `migrations/0009_provider_account_capability_facts.sql` must apply before application deploy. See `docs/ACCOUNT_CAPABILITY_EVIDENCE_2026-11-02.md`. Node26 local lint/typecheck/build and 600 non-database tests passed; full Node24/PG17 CI is deployment gate. Keep issue #206 open for live-scope refresh, provider-wide coverage and Phase 3 UI.
+
 ## 2026-11-02 — provider contracts and dynamic per-account capability foundation
 
 - Reviewed provider contract catalog `src/policy/provider-contracts.json` (revision `2026-11-02.1`) centralizes standard reply windows for Messenger, Instagram, WhatsApp and Telegram Business; Meta and Telegram outbound enforcement uses the reviewed data, not literal per-provider 24h values. Unknown policy scope fails closed.

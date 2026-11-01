@@ -35,7 +35,7 @@ describe("Meta first-contact and re-entry bot disclosure", () => {
       ).handle(stored);
       expect(r.actions).toHaveLength(1);
       expect(r.actions[0]?.body).toMatchObject({
-        part: { kind: "text", text: "I'm Ishi Nail Lab's AI assistant.\\n\\n8 AM is currently available." }
+        part: { kind: "text", text: "I'm Ishi Nail Lab's AI assistant.\n\n8 AM is currently available." }
       });
       expect(hasRecentAutomatedReply).toHaveBeenCalledWith(
         stored.partitionKey, new Date(now), stored.id

@@ -33,6 +33,7 @@ import {
 } from "../auth/messenger-page-subscription.js";
 import { PostgresInboundEventRepository, PostgresInboundStore } from "../persistence/inbound.js";
 import { PostgresMetaHandoffStore } from "../persistence/meta-handoff.js";
+import { PostgresMetaDisclosureReader } from "../persistence/meta-disclosure.js";
 import { PostgresWhatsAppConsentStore } from "../persistence/whatsapp-consent.js";
 import { PostgresOutboxStore } from "../persistence/outbox.js";
 import { PostgresMetaUnknownReconciler } from "../persistence/meta-unknown-reconciliation.js";
@@ -721,7 +722,7 @@ if (env.PROCESSOR_ENABLED) {
   if (env.META_APP_ID !== undefined) {
     handlers.register(new MetaRoutingOwnershipHandler(metaHandoffs, env.META_APP_ID));
   }
-  handlers.register(new MessageReceivedHandler(brain, metaHandoffs, whatsappConsents));
+  handlers.register(new MessageReceivedHandler(brain, metaHandoffs, whatsappConsents, new PostgresMetaDisclosureReader(db)));
   if (env.TIKTOK_COMMENT_TO_MESSAGE_ENABLED === true) {
     handlers.register(new TikTokHighIntentCommentHandler(brain));
   }

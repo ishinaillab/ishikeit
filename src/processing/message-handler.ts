@@ -6,6 +6,7 @@ import { isWhatsAppAppointmentOptIn, WHATSAPP_APPOINTMENT_OPT_IN_CONFIRMATION } 
 import type { WhatsAppConsentReader } from "../persistence/whatsapp-consent.js";
 import type { StoredInboundEvent } from "../persistence/inbound.js";
 import type { MetaHandoffReader } from "../persistence/meta-handoff.js";
+import type { MetaDisclosureReader } from "../persistence/meta-disclosure.js";
 import { ProcessingFailure } from "./failure.js";
 import type { EventHandler } from "./registry.js";
 import { standardMetaReplyEligibility } from "../dispatch/meta-customer-window.js";
@@ -59,7 +60,8 @@ export class MessageReceivedHandler implements EventHandler {
   constructor(
     private readonly brain: BrainClient,
     private readonly metaHandoffs?: MetaHandoffReader,
-    private readonly whatsappConsent?: WhatsAppConsentReader
+    private readonly whatsappConsent?: WhatsAppConsentReader,
+    private readonly metaDisclosure?: MetaDisclosureReader
   ) {}
 
   canHandle(stored: StoredInboundEvent): boolean {
@@ -148,8 +150,35 @@ export class MessageReceivedHandler implements EventHandler {
     // The AI writes Markdown links, but the provider APIs below send plain
     // text (Telegram also deliberately omits parse_mode). Give customers an
     // explicit clickable URL instead of a literal [label](url) sequence.
-    const presentationParts = reply.parts.map((part) => part.kind === "text"
-      ? { ...part, text: explicitLinks(part.text) } : part);
+    let disclosureRequired = false;
+    if (event.provider === "meta"
+      && (event.channel === "instagram" || event.channel === "messenger")
+      && this.metaDisclosure !== undefined) {
+      const previous = await this.metaDisclosure.hasRecentAutomatedReply(
+        stored.partitionKey, new Date(event.receivedAt), stored.id
+      );
+      disclosureRequired = !previous;
+    }
+
+    // Meta recommends explicit automated-experience disclosure at first
+    // contact and after a substantial lapse. It is derived from the durable,
+    // account-scoped partition history, not from model self-identification.
+    // Do not insert a duplicate if the AI already gave a clear disclosure.
+    let acknowledged = false;
+    const presentationParts = reply.parts.map((part) => {
+      if (part.kind !== "text") return part;
+      let text = explicitLinks(part.text);
+      if (disclosureRequired && !acknowledged) {
+        acknowledged = true;
+        if (!/Ishi Nail Lab(?:'s|’s)? AI assistant/iu.test(text.slice(0, 250))) {
+          text = "I'm Ishi Nail Lab's AI assistant.\\n\\n" + text;
+        }
+      }
+      return { ...part, text };
+    });
+    if (disclosureRequired && !acknowledged) {
+      presentationParts.unshift({ kind: "text", text: "I'm Ishi Nail Lab's AI assistant." });
+    }
     const parts = event.provider === "meta" && isMetaTextChannel
       ? splitMetaReplyParts(presentationParts, event.channel as MetaTextChannel)
       : presentationParts;

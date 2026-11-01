@@ -31,7 +31,7 @@ export class MetaMessagingAdapter implements ActionAdapter {
       throw new DispatchFailure("Invalid Meta messaging action payload", { retryable: false });
     }
 
-    const eligibility = standardMetaReplyEligibility(body.data.customerMessageAt);
+    const eligibility = standardMetaReplyEligibility(body.data.customerMessageAt, new Date(), target.data.channel);
     if (eligibility !== "eligible") {
       throw new DispatchFailure(`Meta standard reply is not eligible: ${eligibility}`, { retryable: false });
     }

@@ -32,3 +32,12 @@ This file documents verified access, not a grant of new permissions or an overri
 ## Source notes
 Official OpenAI app-permission guidance: https://help.openai.com/en/articles/11487775-connected-apps-in-chatgpt
 Official troubleshooting for explicit safety blocks: https://help.openai.com/en/articles/20001497-troubleshooting-plugins-and-apps-in-chatgpt
+
+## 2026-11-01 readback and recovery findings
+- Native GitHub connector created a feature branch and committed a documentation file. Readback confirmed exact file SHA and contents; production auto-deploy still tracks main, not the feature branch.
+- Later Ishi Local Agent and its Refresh Test connection both returned "The tool failed internally", despite earlier successful file, shell and test operations. Root cause not verified. Full app permissions do not establish a continuously working MCP session.
+- Cloudflare connection answered a read-only identity check.
+- Meta developer tools returned Ishikeit with read/manage permissions. The retired Ishi app is restricted/archived and must not be reactivated as a workaround.
+- Official Supabase connector returned project ishikeit-db status ACTIVE_HEALTHY with existing migrations, with no production schema changes.
+- Ishi EMCP Bridge read published WordPress pages successfully when its required status filter was supplied.
+- Official OpenAI troubleshooting guidance says explicit platform safety blocks cannot be overridden through app permissions, reconnection, or saved approval.

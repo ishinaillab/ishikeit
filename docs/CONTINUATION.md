@@ -1,5 +1,11 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 Phase 2 Instagram provider-613 duplicate webhook readback
+
+- Supabase live account-alias read confirmed the OAuth grant's Professional account identity is exactly the same as the managed studio token's verified Professional identity. The startup process redundantly read/reconciled the same `INSTAGRAM_WEBHOOK_FIELDS` twice, once for OAuth and again for managed, and managed repeatedly received Graph status 500 / provider code 613.
+- New process-local `InstagramWebhookSubscriptionDeduplicator` records only successful provider readbacks by exact Professional account ID. Managed reconciliation reuses the preceding OAuth success for the same ID; different accounts still perform their own verified readback, and failures never count as success. In-flight requests join safely; no added provider calls, private IDs in logs, token sharing or schema migration.
+- This is specifically an in-process duplicate-call correction, not distributed global rate-limit enforcement or a promise that Graph never returns code 613. Verify Hostinger next-deploy logs and the real provider acceptance separately.
+
 ## 2026-11-02 Phase 2 Supabase session-pool capacity root cause
 
 - Live Supabase Supavisor logs at 2026-11-01T20:34:24Z show `(EMAXCONNSESSION) max clients reached in session mode - max clients are limited to pool_size: 15`, followed by SQLSTATE XX000. Hostinger overlapping Node processes each previously used pool max 10.

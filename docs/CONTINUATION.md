@@ -1,12 +1,12 @@
 # Ishikeit continuation handoff
 
-## 2026-11-01 — Single-use Instagram long-lived grant refresh: temporary, owner-approved production proof (PR #200)
+## 2026-11-01 — Temporary private Instagram OAuth refresh proof (PR #200)
 
-- **Release ordering is mandatory:** merge PR #200 only after the RLS-protected `public.ishikeit_instagram_renewal_once` claim table is applied and verified with all anonymous/client access revoked; run GitHub CI including disposable PostgreSQL integration first.
-- Live proof is limited to OAuth subject `28436714725987041`, Professional account `17841438662359631`, and the current version-1/2026-12-28T23:52:32.169Z grant. It requires a 24-hour-old non-expired token, advisory locking, a permanent at-most-once claim before Meta's `ig_refresh_token` request, `/me` identity match and encrypted credential persistence.
-- This is **not** a new public endpoint or recurring customer automation. Standard six-hour maintenance and seven-day renewal threshold stay unchanged. Token plaintext and provider raw errors must not appear in logs or chat.
-- PR starts as draft and may not be merged without valid green checks and production data safeguards. After the exact one-time attempt, read back the claim, version, expiry, aliases and Hostinger logs; then release a second cleanup PR removing the temporary hook/module/schema. Never drop claim table while old binaries may run.
-- Development prerequisites checked: `apps.ishinaillab.com` Hostinger auto-deploy follows GitHub `main`; rollback branch `release-backup/pre-instagram-one-time-2026-11-01` anchors pre-test commit `eaf235ed6249710b7b7aff1775fe7377e9e0c93f`. Issue #176 tracks the broader Instagram OAuth durability gate. Do not start Phase 2 until outcome verified or explicitly released by owner.
+- The production studio OAuth grant is account-scoped: subject `28436714725987041`, Professional ID `17841438662359631`, initial version 1 and expiry 2026-12-28T23:52:32.169Z. The operator has authorized **exactly one** real refresh and secure cleanup before Phase 2.
+- The proof runs only in production on app startup, with a private atomic O_EXCL claim file at `/home/u328762438/domains/apps.ishinaillab.com/hbuilds/config/instagram-renewal-once-20261101.claim`; no new SQL schema or public HTTP route is required. The claim is created before the provider request and persists after failures, preventing repeated attempts during rolling deployment. Verify private claim path is writable and not exposed.
+- It uses the existing account-specific PostgreSQL advisory lock, checks exact credential version, stored expiry and Meta 24h minimum age, verifies Professional identity after the provider refresh, and persists encrypted grant before claiming success. It does not send customer messages or expose credentials in logs.
+- A previously drafted temporary public-schema claim-table migration is **unused and must not be applied**; the connector blocked live DDL. The official Hostinger Node.js documentation confirms a private `hbuilds/config/.env` file for scheduled scripts, but the preferred final approach avoids a new cron job and executes in the app's established runtime env.
+- CI and production-health checks are required before merging; rollback anchor `release-backup/pre-instagram-one-time-2026-11-01` remains fixed at `eaf235ed6249710b7b7aff1775fe7377e9e0c93f`. After confirming exactly one refresh and account identity/expiry/version, immediately remove one-time startup code, tests, unused migration and its private claim marker through authorized cleanup. Do not begin Phase 2 until the proof is verified.
 
 ## 2026-10-30 — Instagram reaction webhook message-ID correlation (release gated)
 

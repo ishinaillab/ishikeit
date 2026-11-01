@@ -17,6 +17,7 @@ import { MediaInterpreterRegistry } from "../media/interpreter.js";
 import { MediaResolverRegistry } from "../media/resolver.js";
 import { createLogger } from "../observability/logger.js";
 import { PostgresOperationalMetrics } from "../observability/operational-metrics.js";
+import { PostgresIncidentMetricsReader } from "../observability/incident-metrics.js";
 import { LocalWorkerDiagnostics } from "../observability/worker-loop-diagnostics.js";
 import { PostgresWorkerHeartbeatStore, DurableWorkerHeartbeatMonitor } from "../observability/durable-worker-heartbeats.js";
 import { PostgresOperationalIncidentStore, OperationalIncidentMonitor, HttpsOperatorWebhook } from "../observability/operational-incident-monitor.js";
@@ -98,7 +99,7 @@ const approvedOperatorSender = env.OPS_ALERT_WEBHOOK_ENABLED
   ? new HttpsOperatorWebhook(env.OPS_ALERT_WEBHOOK_URL!, env.OPS_ALERT_WEBHOOK_SECRET!, env.OPS_ALERT_APPROVED_HOST!)
   : undefined;
 const incidentMonitor = new OperationalIncidentMonitor(
-  new PostgresOperationalMetrics(db), fleetStore, incidentStore, logger,
+  new PostgresIncidentMetricsReader(db), fleetStore, incidentStore, logger,
   approvedOperatorSender, () => instagramOauthMaintenanceFailures,
   { processorEnabled: env.PROCESSOR_ENABLED, actionDispatchEnabled: env.ACTION_DISPATCH_ENABLED_EFFECTIVE }
 );

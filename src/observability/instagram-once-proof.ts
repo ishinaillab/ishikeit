@@ -5,7 +5,7 @@ import type { OAuthCredentialStore } from "../auth/oauth-store.js";
 import type { InstagramOAuthClientLike } from "../auth/instagram-oauth.js";
 
 /** EPHEMERAL verification module. Remove immediately after read-back of the one-time live test. */
-const PRIVATE_CLAIM_PATH = "/home/u328762438/domains/apps.ishinaillab.com/hbuilds/config/instagram-renewal-once-20261101.claim";
+const PRIVATE_CLAIM_PATH = "/home/u328762438/.ishikeit-instagram-renewal-once-20261101.claim";
 const SUBJECT = "28436714725987041";
 const PROFESSIONAL_ID = "17841438662359631";
 const EXPECTED_VERSION = 1;

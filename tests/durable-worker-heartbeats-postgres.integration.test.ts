@@ -28,6 +28,7 @@ describe.skipIf(connectionString === undefined)("durable heartbeat PostgreSQL in
           CHECK (worker_status IN ('disabled','not_started','stopped','idle','working','long_running','stalled')),
         observed_at timestamptz NOT NULL DEFAULT now(),
         last_completed_at timestamptz,
+        process_started_at timestamptz,
         total_iterations bigint NOT NULL DEFAULT 0 CHECK (total_iterations >= 0),
         failed_iterations bigint NOT NULL DEFAULT 0 CHECK (failed_iterations >= 0),
         PRIMARY KEY(instance_id,worker_name)
@@ -39,6 +40,8 @@ describe.skipIf(connectionString === undefined)("durable heartbeat PostgreSQL in
       const snapshot = await store.snapshot();
       expect(Object.fromEntries(snapshot.workers.filter(w=>w.instanceId===id).map(w=>[w.name,w.status]))).toMatchObject({inbound_processor:"idle",outbound_dispatcher:"disabled"});
       expect(snapshot.workers.find(w=>w.instanceId===id && w.name==="inbound_processor")?.totalIterations).toBe(1);
+      expect(snapshot.workers.find(w=>w.instanceId===id && w.name==="inbound_processor")?.instanceStartedAt)
+        .toEqual(diagnostic.snapshot().instanceStartedAt);
       await db.query(`UPDATE public.ishikeit_worker_heartbeats
         SET observed_at=now()-interval '60 seconds'
         WHERE instance_id=$1::uuid AND worker_name='inbound_processor'`,[id]);

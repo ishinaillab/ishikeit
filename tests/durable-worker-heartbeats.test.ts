@@ -9,6 +9,7 @@ function row(status: "idle" | "disabled" | "working", secondsAgo: number) {
   return {
     instance_id: randomUUID(), worker_name: "inbound_processor" as const,
     worker_status: status, observed_at: new Date(Date.now() - secondsAgo * 1000),
+    process_started_at: null as Date | null,
     last_completed_at: null, total_iterations: "1", failed_iterations: "0"
   };
 }
@@ -25,6 +26,21 @@ describe("durable, instance-aware worker observation", () => {
     expect(result.warnings).toEqual([{ code: "stale_worker", count: 1, worker: "inbound_processor" }]);
     expect(result.scope).toBe("observed_instances");
     expect(JSON.stringify(result)).not.toContain("recipient");
+  });
+
+  it("distinguishes rolling-deployment replacement from a genuine replica loss", () => {
+    const now = new Date();
+    const old = row("working", 90);
+    const replacement = row("idle", 5);
+    replacement.process_started_at = new Date(now.getTime() - 25_000);
+    const rolled = classifyFleetHeartbeats([old, replacement], now);
+    expect(rolled.workers.map(w=>w.status)).toEqual(["superseded","idle"]);
+    expect(rolled.warnings).toEqual([]);
+    const existingSurvivor = row("idle", 5);
+    existingSurvivor.process_started_at = new Date(now.getTime() - 190_000);
+    const lostReplica = classifyFleetHeartbeats([old, existingSurvivor],now);
+    expect(lostReplica.workers.map(w=>w.status)).toEqual(["stale","idle"]);
+    expect(lostReplica.warnings).toEqual([{code:"stale_worker",count:1,worker:"inbound_processor"}]);
   });
 
   it("coalesces concurrent heartbeat ticks and swallows persistence failure", async () => {

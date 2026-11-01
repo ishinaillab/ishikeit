@@ -20,6 +20,8 @@ interface WorkerRecord {
 export interface LocalWorkerSnapshot {
   scope: "local_process";
   instanceId: string;
+  /** Birth of this process observation identity; never resets on worker restart. */
+  instanceStartedAt: string;
   generatedAt: string;
   workers: Array<{
     name: WorkerLoopName;
@@ -44,6 +46,7 @@ function iso(timestamp: number | null): string | null {
  */
 export class LocalWorkerDiagnostics {
   readonly #instanceId = randomUUID();
+  readonly #instanceStartedAt: string;
   readonly #now: () => number;
   readonly #records: Record<WorkerLoopName, WorkerRecord>;
 
@@ -52,6 +55,7 @@ export class LocalWorkerDiagnostics {
     now: () => number = Date.now
   ) {
     this.#now = now;
+    this.#instanceStartedAt = new Date(now()).toISOString();
     const initial = (value: boolean): WorkerRecord => ({
       enabled: value,
       startedAt: null,
@@ -130,6 +134,7 @@ export class LocalWorkerDiagnostics {
     return {
       scope: "local_process",
       instanceId: this.#instanceId,
+      instanceStartedAt: this.#instanceStartedAt,
       generatedAt: new Date(now).toISOString(),
       workers
     };

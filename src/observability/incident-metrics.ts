@@ -1,6 +1,7 @@
 import type pg from "pg";
 import type { PostgresDatabase } from "../persistence/postgres.js";
 import type { OperationalAlertInput } from "./operational-alerts.js";
+import type { OperationalMetricsSnapshot } from "./operational-metrics.js";
 
 /**
  * Only data required for the periodic operator incident scanner. Never call the
@@ -9,7 +10,7 @@ import type { OperationalAlertInput } from "./operational-alerts.js";
  */
 export interface IncidentMetricsSnapshot extends OperationalAlertInput {
   attempts: {
-    byRoute: Array<{ provider: string | null; httpStatus: number | null; count: number }>;
+    byRoute: Array<Pick<OperationalMetricsSnapshot["attempts"]["byRoute"][number], "provider" | "httpStatus" | "count"> & Partial<OperationalMetricsSnapshot["attempts"]["byRoute"][number]>>>;
   };
 }
 

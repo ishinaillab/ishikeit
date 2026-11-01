@@ -336,10 +336,39 @@ export class InstagramOAuthClient implements InstagramOAuthClientLike {
     const url = new URL(
       `https://graph.instagram.com/${this.#graphApiVersion}/me/subscribed_apps`
     );
-    url.searchParams.set("subscribed_fields", fields.join(","));
+    const headers = { authorization: `Bearer ${accessToken}` };
+    let existing: string[] = [];
+    try {
+      // Official IGUser Subscribed Apps GET is read-only. Do not repeatedly
+      // POST a subscription already installed on every application restart:
+      // Meta may return provider 613 for excessive calls.
+      const read = await this.#request(url.toString(), {
+        method: "GET",
+        headers
+      });
+      const apps = Array.isArray(read.data) ? read.data : [];
+      const ours = apps.map(record).find((app) =>
+        stringValue(app?.id) === this.#appId
+        || stringValue(record(app?.application)?.id) === this.#appId
+      );
+      existing = Array.isArray(ours?.subscribed_fields)
+        ? ours.subscribed_fields.filter((field): field is string => typeof field === "string")
+        : [];
+      if (fields.every((field) => existing.includes(field))) return;
+    } catch (error) {
+      // Older Instagram Login implementations can lack the read edge.
+      // Preserve their existing POST behavior only for definite unsupported
+      // GETs. Do not retry an upstream failure or throttling with another write.
+      if (!(error instanceof InstagramOAuthRequestError)
+        || (error.status !== 400 && error.status !== 404)) throw error;
+    }
+
+    // Preserve additional existing subscriptions when upgrading the field set.
+    const desired = [...new Set([...existing, ...fields])];
+    url.searchParams.set("subscribed_fields", desired.join(","));
     const body = await this.#request(url.toString(), {
       method: "POST",
-      headers: { authorization: `Bearer ${accessToken}` }
+      headers
     });
     if (body.success !== true) {
       throw new InstagramOAuthRequestError(

@@ -88,17 +88,51 @@ describe("Meta first-contact and re-entry bot disclosure", () => {
     ).handle(makeEvent("messenger"))).rejects.toThrow("DB unavailable");
   });
 
-  it("queries indexed partition-local durable handled history without exposing customer data", async () => {
-    const query = vi.fn<(sql: string, args: readonly unknown[]) => Promise<{rows: {already_disclosed: boolean}[]; rowCount: number}>>()
-      .mockResolvedValue({rows:[{already_disclosed:true}],rowCount:1});
-    const reader = new PostgresMetaDisclosureReader({query} as never);
-    expect(await reader.hasRecentAutomatedReply("partition-1",new Date(now),
+  it("suppresses another disclosure only after a prior AI reply actually published", async () => {
+    const earlier = "22222222-2222-4222-8222-222222222222";
+    const query = vi.fn<(sql: string, args: readonly unknown[]) => Promise<{ rows: ({id?: string; delivered?: boolean})[]; rowCount: number }>>()
+      .mockResolvedValueOnce({ rows: [{ id: earlier }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ delivered: true }], rowCount: 1 });
+    const reader = new PostgresMetaDisclosureReader({ query } as never);
+    expect(await reader.hasRecentAutomatedReply("partition-1", new Date(now),
       "11111111-1111-4111-8111-111111111111")).toBe(true);
+    const [historySql, historyArgs] = query.mock.calls[0]!;
+    expect(historySql).toContain("partition_key = $1");
+    expect(historySql).toContain("processed_at IS NOT NULL");
+    expect(historySql).toContain("ORDER BY received_at DESC LIMIT 256");
+    expect(historyArgs).toEqual(["partition-1", new Date(now),
+      "11111111-1111-4111-8111-111111111111"]);
+    const [deliverySql, deliveryArgs] = query.mock.calls[1]!;
+    expect(deliverySql).toContain("id = ANY($1::uuid[])");
+    expect(deliverySql).toContain("published_at IS NOT NULL");
+    expect(deliverySql).toContain("partition_key = $2");
+    expect(deliveryArgs[0]).toHaveLength(1);
+    expect(deliveryArgs[1]).toBe("partition-1");
+  });
+
+  it("rediscloses if earlier processing was handled but delivery is queued, unknown or dead-lettered", async () => {
+    const query = vi.fn<(sql: string, args: readonly unknown[]) => Promise<{ rows: ({id?: string; delivered?: boolean})[]; rowCount: number }>>()
+      .mockResolvedValueOnce({ rows: [{ id: "22222222-2222-4222-8222-222222222222" }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ delivered: false }], rowCount: 1 });
+    const reader = new PostgresMetaDisclosureReader({ query } as never);
+    expect(await reader.hasRecentAutomatedReply("partition-1", new Date(now),
+      "11111111-1111-4111-8111-111111111111")).toBe(false);
+  });
+
+  it("does not query outbox when no earlier handled inbound exists", async () => {
+    const query = vi.fn<(sql: string, args: readonly unknown[]) => Promise<{ rows: ({id?: string; delivered?: boolean})[]; rowCount: number }>>().mockResolvedValue({ rows: [], rowCount: 0 });
+    const reader = new PostgresMetaDisclosureReader({ query } as never);
+    expect(await reader.hasRecentAutomatedReply("partition-1", new Date(now),
+      "11111111-1111-4111-8111-111111111111")).toBe(false);
     expect(query).toHaveBeenCalledOnce();
-    const [sql, args] = query.mock.calls[0]!;
-    expect(sql).toContain("partition_key = $1");
-    expect(sql).toContain("processed_at IS NOT NULL");
-    expect(sql).toContain("interval '24 hours'");
-    expect(args).toEqual(["partition-1",new Date(now),"11111111-1111-4111-8111-111111111111"]);
+  });
+
+  it("fails closed on missing durable delivery evidence", async () => {
+    const query = vi.fn<(sql: string, args: readonly unknown[]) => Promise<{ rows: ({id?: string; delivered?: boolean})[]; rowCount: number }>>()
+      .mockResolvedValueOnce({ rows: [{ id: "22222222-2222-4222-8222-222222222222" }], rowCount: 1 })
+      .mockRejectedValueOnce(new Error("outbox unavailable"));
+    const reader = new PostgresMetaDisclosureReader({ query } as never);
+    await expect(reader.hasRecentAutomatedReply("partition-1", new Date(now),
+      "11111111-1111-4111-8111-111111111111")).rejects.toThrow("outbox unavailable");
   });
 });

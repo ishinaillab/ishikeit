@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "revision": "2026-11-02.1",
+  "policies": [
+    {
+      "id": "meta.messenger.automated_reply",
+      "provider": "meta",
+      "channel": "messenger",
+      "operation": "message.send",
+      "kind": "customer_reply_window",
+      "maxAgeMs": 86400000,
+      "marginMs": 300000,
+      "maxFutureSkewMs": 300000,
+      "source": "https://developers.facebook.com/devpolicy/",
+      "reviewedOn": "2026-11-02"
+    },
+    {
+      "id": "meta.instagram.automated_reply",
+      "provider": "meta",
+      "channel": "instagram",
+      "operation": "message.send",
+      "kind": "customer_reply_window",
+      "maxAgeMs": 86400000,
+      "marginMs": 300000,
+      "maxFutureSkewMs": 300000,
+      "source": "https://developers.facebook.com/devpolicy/",
+      "reviewedOn": "2026-11-02"
+    },
+    {
+      "id": "meta.whatsapp.customer_reply",
+      "provider": "meta",
+      "channel": "whatsapp",
+      "operation": "message.send",
+      "kind": "customer_reply_window",
+      "maxAgeMs": 86400000,
+      "marginMs": 300000,
+      "maxFutureSkewMs": 300000,
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-messages",
+      "reviewedOn": "2026-11-02"
+    },
+    {
+      "id": "telegram.business.customer_reply",
+      "provider": "telegram",
+      "channel": "business",
+      "operation": "message.send",
+      "kind": "customer_reply_window",
+      "maxAgeMs": 86400000,
+      "marginMs": 0,
+      "maxFutureSkewMs": 300000,
+      "source": "https://core.telegram.org/bots/api#businessbotrights",
+      "reviewedOn": "2026-11-02"
+    }
+  ],
+  "features": [
+    {
+      "provider": "telegram",
+      "id": "bot_replies",
+      "status": "implemented",
+      "requiredEvidence": [
+        "telegram.bot_webhook"
+      ],
+      "source": "https://core.telegram.org/bots/api"
+    },
+    {
+      "provider": "telegram",
+      "id": "official_account_replies",
+      "status": "implemented",
+      "requiredEvidence": [
+        "telegram.business_connection",
+        "telegram.rights.can_reply"
+      ],
+      "source": "https://core.telegram.org/bots/api#businessconnection"
+    },
+    {
+      "provider": "instagram",
+      "id": "direct_messages",
+      "status": "implemented",
+      "accountKinds": [
+        "creator",
+        "business"
+      ],
+      "unsupportedKinds": [
+        "personal"
+      ],
+      "requiredEvidence": [
+        "instagram.oauth",
+        "instagram.app_access",
+        "instagram.scope.instagram_business_manage_messages"
+      ],
+      "source": "https://www.postman.com/meta/instagram/documentation/6yqw8pt/instagram-api"
+    },
+    {
+      "provider": "instagram",
+      "id": "comment_notifications",
+      "status": "implemented",
+      "accountKinds": [
+        "creator",
+        "business"
+      ],
+      "unsupportedKinds": [
+        "personal"
+      ],
+      "requiredEvidence": [
+        "instagram.oauth",
+        "instagram.app_access",
+        "instagram.scope.instagram_business_manage_comments"
+      ],
+      "source": "https://www.postman.com/meta/instagram/documentation/6yqw8pt/instagram-api"
+    },
+    {
+      "provider": "messenger",
+      "id": "page_replies",
+      "status": "implemented",
+      "requiredEvidence": [
+        "messenger.page",
+        "messenger.messaging_authorization"
+      ],
+      "source": "https://developers.facebook.com/devpolicy/"
+    },
+    {
+      "provider": "whatsapp",
+      "id": "customer_replies",
+      "status": "implemented",
+      "requiredEvidence": [
+        "whatsapp.business_account",
+        "whatsapp.messaging_authorization"
+      ],
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api"
+    },
+    {
+      "provider": "whatsapp",
+      "id": "appointment_reminders",
+      "status": "implemented",
+      "requiredEvidence": [
+        "whatsapp.business_account",
+        "whatsapp.messaging_authorization",
+        "whatsapp.recipient_appointment_consent"
+      ],
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api"
+    },
+    {
+      "provider": "tiktok",
+      "id": "business_messaging",
+      "status": "implemented",
+      "requiredEvidence": [
+        "tiktok.business_account",
+        "tiktok.messaging_api_authorization"
+      ],
+      "source": "https://business-api.tiktok.com/portal/docs"
+    }
+  ]
+}

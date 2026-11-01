@@ -1,5 +1,11 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 Phase 2 Instagram account-deletion state cleanup
+
+- Instagram account-level data deletion previously removed inbound/outbox rows but not account-associated hashed handoff blocks and native routing ownership entries; these can retain identity-derived state and stale routing after deletion.
+- Deletion now removes both stores by the exact account-scoped inbound partition keys before deleting inbound records, in the same transaction. Includes existing OAuth account aliases; no other provider's conversation keys are selected.
+- Deletion completion audit includes sanitized row counts for both; failures retain the preexisting failed-state semantics. No production deletion request has been run and no active customer rows or plugin settings have been changed.
+
 ## 2026-11-02 Phase 2 durable delivered-disclosure correction
 
 - Prior disclosure reader accepted handled inbound events without evidence of published outbound replies; queued, unknown or dead-lettered sends could suppress required automated identity disclosure.

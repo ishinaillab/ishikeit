@@ -45,6 +45,27 @@ describe("TelegramSender", () => {
     });
   });
 
+  it("enforces no redirect following on token-bearing Telegram API calls", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ ok: true, result: { message_id: 11 } }), { status: 200 }
+    ));
+    await new TelegramSender({ botToken: token, fetchImpl })
+      .send("7001", { kind: "text", text: "hello" });
+    expect(fetchImpl.mock.calls[0]?.[1]).toMatchObject({
+      method: "POST", redirect: "error", cache: "no-store"
+    });
+  });
+
+  it("bounds maliciously oversized Telegram response without unbounded JSON parsing", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) { controller.enqueue(new Uint8Array(65_537)); }
+    });
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(stream));
+    const sender = new TelegramSender({ botToken: token, fetchImpl });
+    await expect(sender.send("7001", { kind: "text", text: "hello" }))
+      .rejects.toMatchObject({ retryable: true, ambiguous: true });
+  });
+
   it("honors Telegram retry_after for throttling", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
       JSON.stringify({

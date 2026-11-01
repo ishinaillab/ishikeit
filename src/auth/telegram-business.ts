@@ -25,18 +25,26 @@ function record(value: unknown): Record<string, unknown> | undefined {
 export class TelegramBusinessVerifier {
   readonly #botToken: string;
   readonly #expectedUsername: string;
+  readonly #expectedOwnerId: string | undefined;
   readonly #fetch: typeof fetch;
   readonly #timeoutMs: number;
 
   constructor(options: {
     botToken: string;
     expectedUsername: string;
+    expectedOwnerId?: string;
     fetchImpl?: typeof fetch;
     timeoutMs?: number;
   }) {
     if (!/^[A-Za-z0-9_]{5,32}$/u.test(options.expectedUsername.replace(/^@/u, ""))) {
       throw new Error("Invalid Telegram Business username configuration");
     }
+    if (options.expectedOwnerId !== undefined
+      && (!/^[1-9][0-9]{0,15}$/u.test(options.expectedOwnerId)
+        || !Number.isSafeInteger(Number(options.expectedOwnerId)))) {
+      throw new Error("Invalid immutable Telegram owner ID configuration");
+    }
+    this.#expectedOwnerId = options.expectedOwnerId;
     this.#botToken = options.botToken;
     this.#expectedUsername = options.expectedUsername.replace(/^@/u, "").toLowerCase();
     this.#fetch = options.fetchImpl ?? fetch;
@@ -108,9 +116,11 @@ export class TelegramBusinessVerifier {
     const ownerId = owner?.id;
     const ownerUsername = owner?.username;
     if (body?.ok !== true || result?.id !== connectionId || result?.is_enabled !== true
-      || typeof ownerUsername !== "string"
-      || ownerUsername.toLowerCase() !== this.#expectedUsername
       || typeof ownerId !== "number" || !Number.isSafeInteger(ownerId)
+      || (this.#expectedOwnerId === undefined
+        ? typeof ownerUsername !== "string"
+          || ownerUsername.toLowerCase() !== this.#expectedUsername
+        : String(ownerId) !== this.#expectedOwnerId)
       || rights?.can_reply !== true) {
       throw new DispatchFailure("Telegram Business connection not authorized for the studio", {
         retryable: false

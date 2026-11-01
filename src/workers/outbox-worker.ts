@@ -75,14 +75,19 @@ export class OutboxWorker {
       const metaMessageSend = parsed.data.provider === "meta"
         && parsed.data.capability === "messaging"
         && (parsed.data.operation === "message.send" || parsed.data.operation === "message.template.send");
-      if (metaMessageSend) {
-        // Commit the durable fence before *any* provider HTTP call. A crashed
-        // worker cannot reclaim and repeat this POST after the lease expires.
-        if (this.#store.prepareMetaSend === undefined) {
-          throw new DispatchFailure("Meta send fence unavailable", { retryable: false });
+      const telegramMessageSend = parsed.data.provider === "telegram"
+        && parsed.data.capability === "messaging" && parsed.data.operation === "message.send";
+      if (metaMessageSend || telegramMessageSend) {
+        // Non-idempotent providers: arm durably before making the POST.
+        // A lost response or crashed worker must never trigger a second send.
+        const arm = telegramMessageSend
+          ? this.#store.prepareTelegramSend?.bind(this.#store)
+          : this.#store.prepareMetaSend?.bind(this.#store);
+        if (arm === undefined) {
+          throw new DispatchFailure("Durable provider send fence unavailable", { retryable: false });
         }
-        if (!await this.#store.prepareMetaSend(job)) {
-          this.#logger.warn({ outboxId: job.id }, "Meta send fence not acquired; no provider call made");
+        if (!await arm(job)) {
+          this.#logger.warn({ outboxId: job.id }, "Provider send fence not acquired; no provider call made");
           return true;
         }
       }
@@ -167,11 +172,13 @@ export class OutboxWorker {
     // HTTP 5xx and other retryable provider errors may not conclusively rule
     // out acceptance, so they must not repeat the POST automatically.
     const definitelyRejectedThrottle = failure.status === 429 && !failure.ambiguous;
-    const unknownMetaOutcome = metaMessageSend
+    const telegramMessageSend = provider === "telegram"
+      && capability === "messaging" && operation === "message.send";
+    const unknownProviderOutcome = (metaMessageSend || telegramMessageSend)
       && (failure.ambiguous || (failure.retryable && !definitelyRejectedThrottle));
 
-    if (unknownMetaOutcome || !failure.retryable || nextAttemptNumber >= this.#maxAttempts) {
-      const reason = unknownMetaOutcome
+    if (unknownProviderOutcome || !failure.retryable || nextAttemptNumber >= this.#maxAttempts) {
+      const reason = unknownProviderOutcome
         ? `provider_outcome_unknown; manual_reconciliation_required=true; ${this.#failureReason(failure)}`
         : this.#failureReason(failure);
       await this.#store.deadLetter(job, reason, {
@@ -183,7 +190,7 @@ export class OutboxWorker {
         ambiguous: failure.ambiguous,
         ...(failure.status === undefined ? {} : { httpStatus: failure.status }),
         ...(failure.providerCode === undefined ? {} : { providerCode: failure.providerCode }),
-        errorClass: unknownMetaOutcome ? "provider_outcome_unknown" : this.#errorClass(failure)
+        errorClass: unknownProviderOutcome ? "provider_outcome_unknown" : this.#errorClass(failure)
       });
       this.#logger.error({
         outboxId: job.id,
@@ -195,8 +202,8 @@ export class OutboxWorker {
         status: failure.status,
         providerCode: failure.providerCode,
         attempt: nextAttemptNumber
-      }, unknownMetaOutcome
-        ? "Meta outbound outcome unknown; quarantined for manual reconciliation without automatic retry"
+      }, unknownProviderOutcome
+        ? "Provider outbound outcome unknown; quarantined for manual reconciliation without automatic retry"
         : "outbound action dead-lettered");
       return;
     }

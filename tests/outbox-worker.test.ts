@@ -30,8 +30,9 @@ function makeStore(claimed: OutboxJob | undefined) {
   const retry = vi.fn<OutboxDeliveryStore["retry"]>().mockResolvedValue(true);
   const deadLetter = vi.fn<OutboxDeliveryStore["deadLetter"]>().mockResolvedValue(true);
   const prepareMetaSend = vi.fn<NonNullable<OutboxDeliveryStore["prepareMetaSend"]>>().mockResolvedValue(true);
-  const store: OutboxDeliveryStore = { claimNext, complete, retry, deadLetter, prepareMetaSend };
-  return { store, claimNext, complete, retry, deadLetter, prepareMetaSend };
+  const prepareTelegramSend = vi.fn<NonNullable<OutboxDeliveryStore["prepareTelegramSend"]>>().mockResolvedValue(true);
+  const store: OutboxDeliveryStore = { claimNext, complete, retry, deadLetter, prepareMetaSend, prepareTelegramSend };
+  return { store, claimNext, complete, retry, deadLetter, prepareMetaSend, prepareTelegramSend };
 }
 
 function makeDispatcher(
@@ -208,18 +209,33 @@ describe("OutboxWorker", () => {
     expect(deadLetter).not.toHaveBeenCalled();
   });
 
-  it("preserves the generic retry contract for other providers with ambiguous failures", async () => {
-    const { store, retry, deadLetter } = makeStore(job);
+  it("durably fences Telegram before outbound dispatch and quarantines ambiguous results", async () => {
+    const { store, retry, deadLetter, prepareTelegramSend } = makeStore(job);
     const execute = vi.fn<ActionAdapter["execute"]>().mockRejectedValue(
-      new DispatchFailure("Telegram timeout", { retryable: true, ambiguous: true })
+      new DispatchFailure("Telegram HTTP response lost", { retryable: true, ambiguous: true })
     );
     const { dispatcher } = makeDispatcher(execute);
-    const worker = new OutboxWorker({
-      store, dispatcher, logger: pino({ level: "silent" }),
-      now: () => new Date("2026-10-29T00:00:00.000Z")
-    });
-    await worker.runOnce();
+    await new OutboxWorker({ store, dispatcher, logger: pino({ level: "silent" }) }).runOnce();
+    expect(prepareTelegramSend).toHaveBeenCalledExactlyOnceWith(job);
+    expect(prepareTelegramSend.mock.invocationCallOrder[0]).toBeLessThan(execute.mock.invocationCallOrder[0]!);
+    expect(retry).not.toHaveBeenCalled();
+    expect(deadLetter).toHaveBeenCalledWith(job,
+      expect.stringContaining("provider_outcome_unknown"),
+      expect.objectContaining({ provider: "telegram", ambiguous: true, errorClass: "provider_outcome_unknown" }));
+  });
+  it("refuses to send Telegram if durable fence could not be acquired", async () => {
+    const { store, prepareTelegramSend } = makeStore(job);
+    prepareTelegramSend.mockResolvedValue(false);
+    const { dispatcher, execute } = makeDispatcher();
+    await new OutboxWorker({ store, dispatcher, logger: pino({ level: "silent" }) }).runOnce();
+    expect(execute).not.toHaveBeenCalled();
+  });
+  it("retries a definitive Telegram HTTP 429 rejection only", async () => {
+    const { store, retry } = makeStore(job);
+    const { dispatcher } = makeDispatcher(vi.fn<ActionAdapter["execute"]>().mockRejectedValue(
+      new DispatchFailure("Telegram throttled", { retryable: true, ambiguous: false, status: 429 })
+    ));
+    await new OutboxWorker({ store, dispatcher, logger: pino({ level: "silent" }) }).runOnce();
     expect(retry).toHaveBeenCalledOnce();
-    expect(deadLetter).not.toHaveBeenCalled();
   });
 });

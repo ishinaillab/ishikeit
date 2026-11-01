@@ -6,6 +6,7 @@ import { TelegramBusinessVerifier } from "../auth/telegram-business.js";
 interface TelegramSenderOptions {
   botToken: string;
   businessUsername?: string;
+  businessOwnerId?: string;
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
 }
@@ -18,6 +19,40 @@ function retryAfterMs(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? Math.round(value * 1000)
     : undefined;
+}
+
+/** Bound potentially untrusted Telegram API responses, even without Content-Length. */
+async function readTelegramResponse(response: Response): Promise<Record<string, unknown>> {
+  const reader = response.body?.getReader();
+  if (reader === undefined) {
+    throw new DispatchFailure("Telegram API response unavailable", { retryable: true, ambiguous: true });
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      if (part.value === undefined) continue;
+      total += part.value.byteLength;
+      if (total > 65_536) {
+        await reader.cancel().catch(() => undefined);
+        throw new DispatchFailure("Telegram API response oversized", { retryable: true, ambiguous: true });
+      }
+      chunks.push(part.value);
+    }
+  } catch (error) {
+    if (error instanceof DispatchFailure) throw error;
+    throw new DispatchFailure("Telegram API response interrupted", { retryable: true, ambiguous: true });
+  } finally {
+    reader.releaseLock();
+  }
+  try {
+    const value: unknown = JSON.parse(Buffer.concat(chunks, total).toString("utf8"));
+    return asRecord(value) ?? {};
+  } catch {
+    throw new DispatchFailure("Telegram API response invalid", { retryable: true, ambiguous: true });
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -58,6 +93,7 @@ export class TelegramSender {
       : new TelegramBusinessVerifier({
           botToken: options.botToken,
           expectedUsername: options.businessUsername,
+          ...(options.businessOwnerId === undefined ? {} : { expectedOwnerId: options.businessOwnerId }),
           timeoutMs: this.#requestTimeoutMs,
           fetchImpl: this.#fetch
         });
@@ -131,6 +167,8 @@ export class TelegramSender {
         "https://api.telegram.org/bot" + this.#botToken + "/" + method,
         {
           method: "POST",
+          redirect: "error",
+          cache: "no-store",
           headers: { "content-type": "application/json", accept: "application/json" },
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(this.#requestTimeoutMs)
@@ -144,8 +182,7 @@ export class TelegramSender {
       });
     }
 
-    const data: unknown = await response.json().catch(() => ({}));
-    const body = asRecord(data);
+    const body = await readTelegramResponse(response);
     const result = asRecord(body?.result);
     if (response.ok && body?.ok === true && result !== undefined) {
       const messageId = result.message_id;

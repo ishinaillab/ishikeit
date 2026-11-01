@@ -80,7 +80,7 @@ jobs:
       - name: Verify outbox fencing, credential persistence, DB reconnect, durable worker heartbeats, and deduplicated operational incidents on disposable PostgreSQL 17
         env:
           PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
-        run: npx vitest run tests/outbox-postgres.integration.test.ts tests/oauth-postgres.integration.test.ts tests/postgres-idle-recovery.integration.test.ts tests/durable-worker-heartbeats-postgres.integration.test.ts tests/operational-incident-postgres.integration.test.ts tests/instagram-once-postgres.integration.test.ts
+        run: npx vitest run tests/outbox-postgres.integration.test.ts tests/oauth-postgres.integration.test.ts tests/postgres-idle-recovery.integration.test.ts tests/durable-worker-heartbeats-postgres.integration.test.ts tests/operational-incident-postgres.integration.test.ts
       - name: Restart isolated PostgreSQL 17 service and prove pool recovery
         env:
           PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test

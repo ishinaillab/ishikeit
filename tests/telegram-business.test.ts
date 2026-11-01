@@ -77,6 +77,29 @@ describe("official Telegram Business account integration", () => {
     await expect(v.verify(id)).rejects.toMatchObject({ retryable: false });
   });
 
+  it("records only provider-verified Business permissions and survives a proof-store outage", async () => {
+    const record = vi.fn().mockResolvedValue(undefined);
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(() => Promise.resolve(connectionResponse()));
+    const sender = new TelegramSender({
+      botToken: token, businessUsername: username, fetchImpl,
+      onBusinessConnectionVerified: record
+    });
+    await expect(sender.verifyBusiness(id)).resolves.toMatchObject({ ownerId: String(ownerId) });
+    expect(record).toHaveBeenCalledExactlyOnceWith(String(ownerId));
+
+    const disconnected = new TelegramSender({
+      botToken: token, businessUsername: username,
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(connectionResponse({ canReply: false })),
+      onBusinessConnectionVerified: record
+    });
+    await expect(disconnected.verifyBusiness(id)).rejects.toMatchObject({ retryable: false });
+    expect(record).toHaveBeenCalledTimes(1);
+
+    record.mockRejectedValueOnce(new Error("telemetry DB is unavailable"));
+    await expect(sender.verifyBusiness(id)).resolves.toMatchObject({ ownerId: String(ownerId) });
+    expect(record).toHaveBeenCalledTimes(2);
+  });
+
   it("pins a verified immutable owner ID and tolerates safe username changes", async () => {
     const v = new TelegramBusinessVerifier({
       botToken: token, expectedUsername: username,

@@ -82,8 +82,24 @@ $GLOBALS['abilities']['latepoint/check-slot-availability']=new FakeAbility(stati
 $f=Ishi_LatePoint_Automation::execute($slot);
 assert_true($f['status']==='verification_unavailable' && !isset($f['url']),'fail closed when latepoint unavailable');
 
+// Regression: at 00:21 in Manila the customer said "tomorrow" but the
+// assistant's signed link used today's date; fail closed before native tools.
+mock_abilities(true);
+$wrong_day = Ishi_LatePoint_Automation::execute( $slot + [ 'day_offset' => 0 ] );
+assert_true( $wrong_day['status'] === 'verification_unavailable' && ! isset( $wrong_day['url'] ), 'relative-day mismatch cannot generate a URL' );
+assert_true( $GLOBALS['abilities']['latepoint/check-slot-availability']->calls === 0, 'mismatch skips native provider check' );
+assert_true( $GLOBALS['abilities']['ishi/generate-booking-link']->calls === 0, 'mismatch skips link mint' );
+
+mock_abilities(true);
+$correct_day = Ishi_LatePoint_Automation::execute( $slot + [ 'day_offset' => 1 ] );
+assert_true( $correct_day['status'] === 'available' && isset( $correct_day['url'] ), 'valid relative tomorrow can mint verified URL' );
+
+mock_abilities(true);
+$invalid_offset = Ishi_LatePoint_Automation::execute( $slot + [ 'day_offset' => 31 ] );
+assert_true( is_wp_error( $invalid_offset ), 'invalid relative day refused' );
+
 mock_abilities(true);
 $GLOBALS['booking_settings']=['selected_service'=>'','selected_agent'=>'15'];
 $bad=Ishi_LatePoint_Automation::execute($slot);
 assert_true(is_wp_error($bad) && $bad->get_error_code()==='ishi_booking_context_missing','invalid technical service rejected');
-echo "PASS 5 booking safety scenarios (native availability, unavailability, rejected slot, provider failure, missing context).\n";
+echo "PASS 8 booking safety scenarios (native availability, unavailability, rejected slot, provider failure, missing context).\n";

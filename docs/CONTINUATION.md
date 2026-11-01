@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## Nov 2 Phase 2 customer-date mismatch safeguard
+
+- Actual inbound Instagram customer request after Manila midnight on Nov 2 said **tomorrow**, but one AI Engine bot response said tomorrow and sent a signed LatePoint booking link dated **Nov 2** (today), before later resolving tomorrow as Nov 3. This is an observed mismatch even though the link could be valid and 8 AM available. Preserve customer intent and fail closed when relative date contradicts server-local date.
+- `LatePoint Addon - Ishikeit Automation` 0.1.2 adds optional `day_offset` (0 today, 1 tomorrow, max 30) checked against WordPress `wp_timezone()` inside the same availability+link PHP request. If the supplied absolute date conflicts with the relative day, return `verification_unavailable` with no URL and do not call native LatePoint abilities. Eight PHP regression tests passed (wrong day, tomorrow, invalid offset) and 577 Node24/PostgreSQL17 tests, lint/typecheck/build passed. Update active AI Engine bot to pass `day_offset=1` for tomorrow only after WordPress plugin rollout. This does not change a booking, checkout, consent, or any premium plugin.
+- Ongoing owner acceptance: the Easy MCP AI read-only client token shows 13/926 scoped tools despite global enabling the new ability, and still needs a narrow explicit credential permit; no unauthorized scope bypass. Phase 2 all-channel transport canaries passed, but official Telegram postrelease account and complete booking checkout acceptance remain separate. See docs/BOOKING_CONCIERGE_2026-11-01.md and issue #216.
+
+
 ## Booking add-on MCP client exposure (2026-11-01)
 
 - The active addon `LatePoint Addon - Ishikeit Automation` v0.1.0 passed live authenticated ability tests: declined 8 AM, verified 9 AM link and past date blocked. No booking created.

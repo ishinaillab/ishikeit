@@ -9,7 +9,7 @@ import type { OperationalAlertInput } from "./operational-alerts.js";
  */
 export interface IncidentMetricsSnapshot extends OperationalAlertInput {
   attempts: {
-    byRoute: Array<{ provider: "meta"; httpStatus: 429; count: number }>;
+    byRoute: Array<{ provider: string | null; httpStatus: number | null; count: number }>;
   };
 }
 

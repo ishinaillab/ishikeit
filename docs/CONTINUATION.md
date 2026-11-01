@@ -1,5 +1,13 @@
 # Ishikeit continuation handoff
 
+## 2026-11-01 — Phase 2 Meta production hardening: private Graph ownership preflight and bounded decoding
+
+- Phase 2 follows successful one-time Instagram OAuth refresh and cleanup PR #201, and begins from clean production main `228e8aaad086f8f771a69c7701f5f6f525e6bbd3`. Scope: read-only token ownership/proof compatibility, Messenger and Instagram signed interactive event handling, account isolation, retries, limits, and controlled tester-canary verification. Do NOT submit Meta App Review (issue #169 owner hold) or enable proactive WhatsApp templates.
+- Introduced a private, explicitly invoked `src/observability/meta-graph-proof-cli.ts` using the production site's normal environment to run `MetaGraphTokenPreflight`. The output is limited to bounded channel statuses; it does not show credentials/IDs, send messages, refresh tokens, change app settings, or enable global `META_GRAPH_PROOF_ENABLED`.
+- `src/security/meta-graph-preflight.ts` now stream-bounds JSON read size to 16 KiB even with missing/untrusted `Content-Length`, cancels oversized responses and fails closed. Regression test added for oversized chunk without Content-Length.
+- Test from exact isolated Phase2 checkout with `scripts/test-docker.ps1`: **529/529 tests, 76/76 files**, lint/typecheck/build passed in Node.js 24/PostgreSQL 17 disposable Docker lab.
+- Release only after green GitHub CI; then run one private Hostinger Node24 cron invocation of the read-only preflight CLI and remove cron. Treat `wrong_app`, `invalid_token`, `inspection_unavailable`, or `proof_unavailable` as release **holds**, not permission to turn on Meta Require App Secret. Preserve Instagram Login separate app token handling and default-off Graph proof setting until issuer/owner is actually proven.
+
 ## 2026-11-01 — Instagram live OAuth renewal proved and private CLI cleanup (PR #201)
 
 - **VERIFIED LIVE SUCCESS**, not a mock: Hostinger private cron UID `ZVp13fB8RX`, scheduled once for `2026-11-01 03:12 UTC` (11:12 Manila), produced `Instagram one-time renewal proof: succeeded`. The production app ran merged PR #200 commit `0340adf24999a8bb6ebdbdca1d3f9fb27e028b53`; the merged code had no automatic Fastify startup hook or public renewal route.

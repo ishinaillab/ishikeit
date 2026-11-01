@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## Nov 2 Phase 2 — explicit customer-facing links for Meta and Telegram text channels
+
+- Actual customer-origin replies persisted in Supabase across Messenger, Instagram, WhatsApp and Telegram used the AI Engine markdown syntax `[Complete Your Booking](https://www.ishinaillab.com/?ishi_booking_slot=...)` in raw text. The provider senders use ordinary Meta `message.text` or WhatsApp `text.body` and Telegram `sendMessage` without a markdown `parse_mode`; an inline Markdown label is not a provider-supported guaranteed clickable link. This is a practical customer link-opening risk independent of HMAC validity or booked slot.
+- PR #218 implements `src/processing/explicit-links.ts` and applies it at the AI-to-action boundary **before** Meta message chunking and durable outbox creation. For `[label](https://URL)`, output is `label: https://URL` with the signed URL unchanged; ordinary text/media preserved. Applies to Messenger, Instagram, WhatsApp, Telegram and future text senders without altering provider APIs or account rights. Six dedicated tests cover exact URL and all four live text channels; full 583/583 Node24/PG17 tests pass, lint/typecheck/build pass.
+- Production deployment and actual per-client clickable URL rendering still require post-merge verification. Date guard (LatePoint Addon - Ishikeit Automation 0.1.2), global enabled ability and active bot prompt are live, but the Easy MCP AI existing client credential has a separate narrow 13/926 tool allowlist; do not disable safety controls or incorrectly mark booking E2E complete. See docs/PHASE2_LINK_RENDERING_2026-11-02.md and issue #216.
+
+
 ## Nov 2 Phase 2 customer-date mismatch safeguard
 
 - Actual inbound Instagram customer request after Manila midnight on Nov 2 said **tomorrow**, but one AI Engine bot response said tomorrow and sent a signed LatePoint booking link dated **Nov 2** (today), before later resolving tomorrow as Nov 3. This is an observed mismatch even though the link could be valid and 8 AM available. Preserve customer intent and fail closed when relative date contradicts server-local date.

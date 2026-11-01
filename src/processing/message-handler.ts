@@ -10,6 +10,7 @@ import { ProcessingFailure } from "./failure.js";
 import type { EventHandler } from "./registry.js";
 import { standardMetaReplyEligibility } from "../dispatch/meta-customer-window.js";
 import { splitMetaReplyParts, type MetaTextChannel } from "./meta-reply-split.js";
+import { explicitLinks } from "./explicit-links.js";
 
 /**
  * Defense in depth for historical events normalized before the self-message
@@ -144,9 +145,14 @@ export class MessageReceivedHandler implements EventHandler {
     // Extremely long responses go to a human rather than flooding customers.
     const isMetaTextChannel = event.channel === "messenger"
       || event.channel === "instagram" || event.channel === "whatsapp";
+    // The AI writes Markdown links, but the provider APIs below send plain
+    // text (Telegram also deliberately omits parse_mode). Give customers an
+    // explicit clickable URL instead of a literal [label](url) sequence.
+    const presentationParts = reply.parts.map((part) => part.kind === "text"
+      ? { ...part, text: explicitLinks(part.text) } : part);
     const parts = event.provider === "meta" && isMetaTextChannel
-      ? splitMetaReplyParts(reply.parts, event.channel as MetaTextChannel)
-      : reply.parts;
+      ? splitMetaReplyParts(presentationParts, event.channel as MetaTextChannel)
+      : presentationParts;
     if (parts === undefined) {
       return { actions: [], outcome: "handoff", handoffReason: "reply_too_long" };
     }

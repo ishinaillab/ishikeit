@@ -122,15 +122,18 @@ describe("Phase 2 official webhook/provider safety", () => {
       expect(isMetaAutomationOptOut(stored)).toBe(true);
       const brain = { respond: vi.fn() };
       const result = await new MessageReceivedHandler(brain).handle(stored);
-      expect(result).toMatchObject({
+      expect(result).toEqual({
         outcome: "handoff", handoffReason: "customer_automation_opt_out",
-        actions: [{
-          idempotencyKey: "test-event:automation-optout-confirmation",
-          provider: "meta", operation: "message.send",
-          target: { channel, accountId, recipientId: "customer-1" }
-        }]
+        actions: []
       });
-      expect(result.actions).toHaveLength(1);
+      // A handoff block rejects *all* automated outbox sends, including queued
+      // replies and any in-flight confirmation, so opting out is never a dead letter.
+      for (const command of ["STOP", "unsubscribe", "opt out", "stop bot"]) {
+        expect(isMetaAutomationOptOut({
+          ...stored,
+          event: { ...event, content: [{ kind: "text", text: command }] }
+        })).toBe(true);
+      }
       expect(brain.respond).not.toHaveBeenCalled();
       const unrelated = { ...stored, event: { ...event, content: [{ kind: "text" as const, text: "Stop by tomorrow" }] } };
       expect(isMetaAutomationOptOut(unrelated)).toBe(false);

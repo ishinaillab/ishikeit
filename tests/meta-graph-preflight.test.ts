@@ -101,6 +101,30 @@ describe("read-only Meta Graph proof compatibility preflight", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it("bounds untrusted Graph responses even without Content-Length", async () => {
+    const cancelled = vi.fn();
+    const payload = new Uint8Array(16_385).fill(65);
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(payload);
+      },
+      cancel: cancelled
+    });
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(stream, { status: 200 })
+    );
+    const client = new MetaGraphTokenPreflight({
+      appId, appSecret: secret, graphVersion: "v26.0",
+      messengerToken: pageToken, fetchImpl
+    });
+    const result = await client.probe();
+    expect(result.channels).toEqual({
+      messenger: "inspection_unavailable", whatsapp: "not_configured"
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(cancelled).toHaveBeenCalledTimes(1);
+  });
+
   it("protects preflight endpoint with ops bearer and does not echo credentials", async () => {
     const probe = vi.fn().mockResolvedValue({
       checkedAt: "2026-10-29T00:00:00.000Z", graphProofFlagUnchanged:true,

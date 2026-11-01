@@ -1,10 +1,11 @@
 import type pg from "pg";
+import { open, writeFile } from "node:fs/promises";
 import type { PostgresDatabase } from "../persistence/postgres.js";
 import type { OAuthCredentialStore } from "../auth/oauth-store.js";
 import type { InstagramOAuthClientLike } from "../auth/instagram-oauth.js";
 
 /** EPHEMERAL verification module. Remove immediately after read-back of the one-time live test. */
-const RUN_ID = "ishikeit-2026-11-01-owner-approved-instagram-once";
+const PRIVATE_CLAIM_PATH = "/home/u328762438/domains/apps.ishinaillab.com/hbuilds/config/instagram-renewal-once-20261101.claim";
 const SUBJECT = "28436714725987041";
 const PROFESSIONAL_ID = "17841438662359631";
 const EXPECTED_VERSION = 1;
@@ -18,7 +19,6 @@ interface Metadata extends pg.QueryResultRow {
   access_expires_at: Date | null;
   updated_at: Date;
 }
-interface ClaimRow extends pg.QueryResultRow { run_id: string }
 export type OneTimeProofResult =
   | "skipped"
   | "already_attempted"
@@ -30,14 +30,15 @@ export interface OneTimeProofDependencies {
   store: Pick<OAuthCredentialStore, "get" | "aliasesForCredential" | "isRevoked" | "put">;
   client: Pick<InstagramOAuthClientLike, "refresh" | "resolveProfessionalAccountId">;
   now?: () => Date;
+  claimFilePath?: string;
 }
 
 /**
  * Hard-coded, owner-approved, one-grant-only live proof. Never log or return
  * plaintext, aliases, provider errors, or the actual token. No public route.
  *
- * An INSERT-before-request durable claim ensures that even on a provider error
- * or rolling deployment restart Meta receives at most one refresh attempt.
+ * An O_EXCL private filesystem claim made before the Meta request ensures
+ * provider failures and rolling deployments cannot cause repeat attempts.
  * The same advisory lock name as normal maintenance serializes grant writes.
  */
 export async function proveOneTimeInstagramRefresh(
@@ -71,15 +72,16 @@ export async function proveOneTimeInstagramRefresh(
       || currentTime.getTime() <= row.updated_at.getTime()) {
       return "skipped";
     }
-    // Unique durable marker is inserted BEFORE the network request and stays
-    // claimed even on failure. It is in a dedicated RLS-protected temporary table.
-    const claim = await db.query<ClaimRow>(
-      `INSERT INTO public.ishikeit_instagram_renewal_once
-          (run_id,outcome) VALUES ($1,'claimed')
-       ON CONFLICT (run_id) DO NOTHING RETURNING run_id`,
-      [RUN_ID]
-    );
-    if (claim.rowCount !== 1) return "already_attempted";
+    // Private atomic O_EXCL creation is durable across separate server processes.
+    const claimPath = options.claimFilePath ?? PRIVATE_CLAIM_PATH;
+    let claim;
+    try { claim = await open(claimPath, "wx", 0o600); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return "already_attempted";
+      throw error;
+    }
+    try { await claim.writeFile("claimed\n"); }
+    finally { await claim.close(); }
 
     let outcome: "failed" | "succeeded" = "failed";
     try {
@@ -115,14 +117,8 @@ export async function proveOneTimeInstagramRefresh(
       // Never include provider exception text or access tokens in logs.
       return "failed";
     } finally {
-      try {
-        await db.query(
-          "UPDATE public.ishikeit_instagram_renewal_once SET outcome=$2,finished_at=now() WHERE run_id=$1",
-          [RUN_ID, outcome]
-        );
-      } catch {
-        // Durable claim still prevents a second refresh even if result write failed.
-      }
+      try { await writeFile(claimPath, outcome + "\n", { mode: 0o600 }); }
+      catch { /* private atomic claim remains even if status write fails */ }
     }
   });
 }

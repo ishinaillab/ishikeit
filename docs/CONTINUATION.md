@@ -1,5 +1,13 @@
 # Ishikeit continuation handoff
 
+## 2026-11-01 — Single-use Instagram long-lived grant refresh: temporary, owner-approved production proof (PR #200)
+
+- **Release ordering is mandatory:** merge PR #200 only after the RLS-protected `public.ishikeit_instagram_renewal_once` claim table is applied and verified with all anonymous/client access revoked; run GitHub CI including disposable PostgreSQL integration first.
+- Live proof is limited to OAuth subject `28436714725987041`, Professional account `17841438662359631`, and the current version-1/2026-12-28T23:52:32.169Z grant. It requires a 24-hour-old non-expired token, advisory locking, a permanent at-most-once claim before Meta's `ig_refresh_token` request, `/me` identity match and encrypted credential persistence.
+- This is **not** a new public endpoint or recurring customer automation. Standard six-hour maintenance and seven-day renewal threshold stay unchanged. Token plaintext and provider raw errors must not appear in logs or chat.
+- PR starts as draft and may not be merged without valid green checks and production data safeguards. After the exact one-time attempt, read back the claim, version, expiry, aliases and Hostinger logs; then release a second cleanup PR removing the temporary hook/module/schema. Never drop claim table while old binaries may run.
+- Development prerequisites checked: `apps.ishinaillab.com` Hostinger auto-deploy follows GitHub `main`; rollback branch `release-backup/pre-instagram-one-time-2026-11-01` anchors pre-test commit `eaf235ed6249710b7b7aff1775fe7377e9e0c93f`. Issue #176 tracks the broader Instagram OAuth durability gate. Do not start Phase 2 until outcome verified or explicitly released by owner.
+
 ## 2026-10-30 — Instagram reaction webhook message-ID correlation (release gated)
 
 - Meta's [Instagram webhook examples](https://developers.facebook.com/documentation/instagram-platform/webhooks/examples) show `reaction.mid` identifying the original message plus `action=react|unreact` and optional reaction/emoji. Ishikeit's existing normalization recognized `message.reaction` but omitted the canonical `providerMessageId`, limiting UI/audit linkage to the reacted-to message.

@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — provider contracts and dynamic per-account capability foundation
+
+- Reviewed provider contract catalog `src/policy/provider-contracts.json` (revision `2026-11-02.1`) centralizes standard reply windows for Messenger, Instagram, WhatsApp and Telegram Business; Meta and Telegram outbound enforcement uses the reviewed data, not literal per-provider 24h values. Unknown policy scope fails closed.
+- Replaced fixed provider-account entitlement switch with catalog-projected `accountCapabilities`, requiring fresh, attributable account-specific grants AND a registered official integration for `available`; stale, revoked, unknown, unsupported and future features cannot self-enable. Existing provider OAuth/send integrations and 24-hour safeguards were not bypassed.
+- No provider API offers universal discovery of all possible future/paid features; durable per-account evidence collection, refresh, revocation updates and Phase 3 UI remain separate outstanding work. Do not mark #206 fully complete. No production entitlement grants changed or permissions invented.
+- Full disposable Docker Node24/Postgres17 test run, lint/typecheck/build: 612/612 tests, 85 suites. See `docs/PROVIDER_CONTRACTS_2026-11-02.md`.
+
 ## 2026-11-02 Phase 2 Instagram provider-613 duplicate webhook readback
 
 - Supabase live account-alias read confirmed the OAuth grant's Professional account identity is exactly the same as the managed studio token's verified Professional identity. The startup process redundantly read/reconciled the same `INSTAGRAM_WEBHOOK_FIELDS` twice, once for OAuth and again for managed, and managed repeatedly received Graph status 500 / provider code 613.

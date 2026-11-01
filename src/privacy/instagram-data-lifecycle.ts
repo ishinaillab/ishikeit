@@ -82,6 +82,29 @@ export class PostgresInstagramDataLifecycle implements InstagramDataLifecycle {
         "data_deletion"
       );
       const details = await this.db.transaction(async (tx) => {
+        // Partition keys identify a studio account + customer conversation.
+        // Purging inbound/outbox alone leaves hashed Instagram customer state
+        // in human handoff and native routing tables after account deletion.
+        // Resolve those keys BEFORE deleting inbound records. This is strictly
+        // scoped to the same Instagram account and all verified OAuth aliases.
+        const handoffBlocks = await tx.query(
+          `DELETE FROM public.meta_handoff_blocks
+           WHERE partition_key IN (
+             SELECT DISTINCT partition_key FROM public.inbound_events
+             WHERE provider='meta' AND channel='instagram'
+               AND account_id=ANY($1::text[])
+           )`,
+          [accountIds]
+        );
+        const nativeRouting = await tx.query(
+          `DELETE FROM public.meta_native_routing_ownership
+           WHERE partition_key IN (
+             SELECT DISTINCT partition_key FROM public.inbound_events
+             WHERE provider='meta' AND channel='instagram'
+               AND account_id=ANY($1::text[])
+           )`,
+          [accountIds]
+        );
         const attempts = await tx.query(
           `DELETE FROM outbox_attempts
            WHERE outbox_id IN (
@@ -125,7 +148,9 @@ export class PostgresInstagramDataLifecycle implements InstagramDataLifecycle {
         return {
           inboundEvents: inbound.rowCount ?? 0,
           outboxRows: outbox.rowCount ?? 0,
-          outboxAttempts: attempts.rowCount ?? 0
+          outboxAttempts: attempts.rowCount ?? 0,
+          handoffBlocks: handoffBlocks.rowCount ?? 0,
+          nativeRoutingRows: nativeRouting.rowCount ?? 0
         };
       });
 

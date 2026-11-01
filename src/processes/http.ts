@@ -73,6 +73,7 @@ import {
   TikTokBusinessWebhookService
 } from "../messaging/tiktok-webhook-config.js";
 import { INSTAGRAM_WEBHOOK_FIELDS, InstagramOAuthClient, InstagramOAuthService, InstagramOAuthFlowError, InstagramOAuthRequestError, instagramOAuthFailureDiagnostic, type InstagramOAuthFlowStage } from "../auth/instagram-oauth.js";
+import { InstagramWebhookSubscriptionDeduplicator } from "../auth/instagram-webhook-deduplicator.js";
 import { InstagramAccessTokenManager, InstagramAccessTokenRouter } from "../auth/instagram-token-manager.js";
 import { PostgresInstagramDataLifecycle } from "../privacy/instagram-data-lifecycle.js";
 
@@ -222,6 +223,7 @@ const instagramOAuthClient = !instagramOAuthConfigured
       graphApiVersion: env.META_GRAPH_API_VERSION,
       requestTimeoutMs: env.META_INSTAGRAM_OAUTH_REQUEST_TIMEOUT_MS
     });
+const instagramSubscriptionGate = new InstagramWebhookSubscriptionDeduplicator();
 const instagramOAuthService = (
   oauthStore === undefined
   || instagramOAuthClient === undefined
@@ -394,9 +396,11 @@ async function reconcileInstagramOAuthAccounts(): Promise<void> {
         "instagram_professional_account"
       );
       stage = "webhook_subscription";
-      await instagramOAuthClient.ensureWebhookSubscription(
-        accessToken,
-        INSTAGRAM_WEBHOOK_FIELDS
+      await instagramSubscriptionGate.ensure(professionalAccountId, () =>
+        instagramOAuthClient.ensureWebhookSubscription(
+          accessToken!,
+          INSTAGRAM_WEBHOOK_FIELDS
+        )
       );
       logger.info("Instagram OAuth account routing and webhook subscription reconciled");
     } catch (error) {
@@ -435,9 +439,11 @@ async function reconcileInstagramManagedAccount(): Promise<void> {
     const professionalAccountId = await instagramAccessTokenRouter.managedAccountId();
     if (professionalAccountId === undefined) return;
     stage = "webhook_subscription";
-    await instagramOAuthClient.ensureWebhookSubscription(
-      env.META_INSTAGRAM_ACCESS_TOKEN,
-      INSTAGRAM_WEBHOOK_FIELDS
+    const source = await instagramSubscriptionGate.ensure(professionalAccountId, () =>
+      instagramOAuthClient.ensureWebhookSubscription(
+        env.META_INSTAGRAM_ACCESS_TOKEN!,
+        INSTAGRAM_WEBHOOK_FIELDS
+      )
     );
     let inboundMatch = "unavailable";
     try {
@@ -448,8 +454,9 @@ async function reconcileInstagramManagedAccount(): Promise<void> {
       logger.warn("Instagram managed-account webhook subscription succeeded but inbound match check was unavailable");
     }
     logger.info(
-      "Instagram verified managed-account token and webhook subscription reconciled; "
-      + "historical_signed_inbound_account_match=" + inboundMatch
+      "Instagram managed-account subscription verified; "
+      + "verification_source=" + (source === "reused" ? "oauth_same_account" : "managed")
+      + " historical_signed_inbound_account_match=" + inboundMatch
     );
   } catch (error) {
     const diagnostic = instagramOAuthFailureDiagnostic(

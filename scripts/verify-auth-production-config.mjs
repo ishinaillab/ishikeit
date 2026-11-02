@@ -79,7 +79,7 @@ export async function verifyAuthProductionConfiguration({
 if(process.argv[1]!==undefined &&
   import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
   try{
-    const result=await verifyAuthProductionConfiguration({
+    await verifyAuthProductionConfiguration({
       projectUrl:process.env.SUPABASE_AUTH_PROJECT_URL,
       managementToken:process.env.SUPABASE_MANAGEMENT_AUTH_READ_TOKEN
     });

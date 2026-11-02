@@ -28,6 +28,22 @@ function testServer(enabled=true){
       csrfToken:csrf,workspaces:{items:[]}
     });}),
     csrf:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve(csrf);}),
+    listTotpFactors:vi.fn((_cookie:string)=>{
+      void _cookie;return Promise.resolve(["123e4567-e89b-42d3-a456-426614174000"]);
+    }),
+    enrollTotp:vi.fn((_cookie:string)=>{
+      void _cookie;return Promise.resolve({
+        factorId:"123e4567-e89b-42d3-a456-426614174000",
+        secret:"JBSWY3DPEHPK3PXP"
+      });
+    }),
+    verifyTotp:vi.fn((_cookie:string,_factorId:string,_code:string)=>{
+      void _cookie;void _factorId;void _code;
+      return Promise.resolve({
+        sessionId:"session",expiresAt:"2027-01-01T00:00:00Z",
+        csrfToken:csrf,workspaces:{items:[]}
+      });
+    }),
     logout:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve();}),
     assertCsrf:vi.fn((_cookie:string,header:string|undefined)=>{
       void _cookie;
@@ -161,6 +177,42 @@ describe("private cookie-only browser auth routes",()=>{
     expect(cross.statusCode).toBe(403);
     await server.close();
   });
+  it("protects TOTP setup and verification with host/origin/session/CSRF and never returns tokens",async()=>{
+    const {server,controller}=testServer();
+    const base={...headers,cookie:authCookie()};
+    const factors=await server.inject({method:"GET",url:"/app/auth/mfa/factors",
+      headers:{host,cookie:authCookie()}});
+    expect(factors.statusCode).toBe(200);
+    expect(factors.json()).toEqual({factors:["123e4567-e89b-42d3-a456-426614174000"]});
+    for(const path of ["/app/auth/mfa/totp/enroll","/app/auth/mfa/totp/verify"]){
+      const missing=await server.inject({method:"POST",url:path,
+        headers:base,payload:path.endsWith("verify")?{
+          factorId:"123e4567-e89b-42d3-a456-426614174000",code:"123456"
+        }:{}});
+      expect(missing.statusCode).toBe(403);
+    }
+    const enrolled=await server.inject({method:"POST",url:"/app/auth/mfa/totp/enroll",
+      headers:{...base,"x-ishikeit-csrf":csrf},payload:{}});
+    expect(enrolled.statusCode).toBe(200);
+    expect(enrolled.json()).toEqual({
+      factorId:"123e4567-e89b-42d3-a456-426614174000",secret:"JBSWY3DPEHPK3PXP"
+    });
+    expect(enrolled.headers["cache-control"]).toContain("no-store");
+    const verified=await server.inject({method:"POST",url:"/app/auth/mfa/totp/verify",
+      headers:{...base,"x-ishikeit-csrf":csrf},payload:{
+        factorId:"123e4567-e89b-42d3-a456-426614174000",code:"123456"
+      }});
+    expect(verified.statusCode).toBe(200);
+    expect(verified.json()).toMatchObject({status:"mfa_verified",csrfToken:csrf});
+    expect(verified.body).not.toContain("access_token");
+    expect(verified.body).not.toContain("refresh_token");
+    const foreign=await server.inject({method:"POST",url:"/app/auth/mfa/totp/enroll",
+      headers:{...base,origin:"https://evil.test","x-ishikeit-csrf":csrf},payload:{}});
+    expect(foreign.statusCode).toBe(403);
+    expect(controller.enrollTotp).toHaveBeenCalledTimes(1);
+    await server.close();
+  });
+
   it("requires same-site exact CSRF for refresh and logout, and clears session on logout",async()=>{
     const {server,controller}=testServer();
     const base={...headers,cookie:authCookie()};

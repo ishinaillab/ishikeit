@@ -34,6 +34,24 @@ export const privateLoginHtml = `<!doctype html>
       <button type="button" class="secondary" id="sign-out">Sign out</button></div>
     <p class="note">Only workspaces your current membership permits are shown. Conversation management is not yet enabled here.</p>
     <ul id="workspace-list" class="workspaces"></ul>
+    <section class="mfa-panel" aria-labelledby="mfa-heading">
+      <h2 id="mfa-heading">Two-step verification</h2>
+      <p class="note">Protect account connections with an authenticator app. Verify a code to confirm your device before sensitive actions.</p>
+      <div id="mfa-setup" hidden>
+        <button type="button" class="secondary" id="mfa-enroll">Set up an authenticator</button>
+        <div id="mfa-enrollment" hidden>
+          <p class="note">Enter this setup key in your authenticator app. Keep it private. It will disappear after verification or sign-out.</p>
+          <output id="mfa-secret" class="mfa-secret"></output>
+        </div>
+      </div>
+      <form id="mfa-form" hidden>
+        <label for="mfa-factor">Authenticator</label>
+        <select id="mfa-factor" aria-label="Choose verified authenticator"></select>
+        <label for="mfa-code">Six-digit authenticator code</label>
+        <input id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="6" pattern="[0-9]{6}" required>
+        <button type="submit" id="mfa-submit">Verify authenticator</button>
+      </form>
+    </section>
     <button type="button" class="secondary" id="refresh-session">Renew session</button>
   </section>
   <p id="status" class="status" role="status" aria-live="polite"></p>
@@ -66,6 +84,10 @@ button.secondary{background:transparent;color:#8f5365}
 .workspaces strong{display:block}
 .workspaces small{color:#735f65}
 .status{min-height:1.4rem;font-size:.95rem;font-weight:550;color:#774455;margin:20px 0}
+.mfa-panel{margin-top:26px;border-top:1px solid #eadedd;padding-top:24px}
+.mfa-panel h2{font-size:1.12rem}
+.mfa-secret{display:block;overflow-wrap:anywhere;background:#f8ecec;border-radius:9px;padding:12px;margin:12px 0;font-family:ui-monospace,monospace;font-size:.93rem;user-select:all}
+select{width:100%;padding:12px;border:1px solid #cbbdbf;border-radius:10px;background:#fff;color:#332b2d;font:inherit}
 footer{margin-top:58px;font-size:.81rem;color:#89777b;text-align:center}
 [hidden]{display:none!important}
 @media(prefers-reduced-motion:no-preference){button{transition:filter .15s ease}}
@@ -79,6 +101,39 @@ const accountPanel=document.getElementById("account-panel");
 const status=document.getElementById("status");
 const workspaceList=document.getElementById("workspace-list");
 let csrfToken="";
+let enrollmentFactorId="";
+const mfaSetup=document.getElementById("mfa-setup");
+const mfaEnrollment=document.getElementById("mfa-enrollment");
+const mfaSecret=document.getElementById("mfa-secret");
+const mfaForm=document.getElementById("mfa-form");
+const mfaFactor=document.getElementById("mfa-factor");
+function clearMfa(){
+  enrollmentFactorId="";
+  mfaSecret.textContent="";
+  mfaEnrollment.hidden=true;
+  mfaForm.hidden=true;
+  mfaSetup.hidden=true;
+  mfaFactor.replaceChildren();
+  document.getElementById("mfa-code").value="";
+}
+async function loadMfaFactors(){
+  try{
+    const response=await fetch("/app/auth/mfa/factors",{credentials:"same-origin",cache:"no-store"});
+    if(!response.ok)throw Error("No MFA data");
+    const data=await response.json();
+    mfaFactor.replaceChildren();
+    for(const id of data.factors){
+      const option=document.createElement("option");
+      option.value=id;
+      option.textContent="Authenticator "+String(mfaFactor.options.length+1);
+      mfaFactor.append(option);
+    }
+    mfaSetup.hidden=false;
+    mfaForm.hidden=mfaFactor.options.length===0;
+    if(mfaFactor.options.length===0)message("Set up an authenticator to protect account connections.");
+  }catch{clearMfa();}
+}
+
 function message(s){status.textContent=s;}
 async function request(path,body,csrf){
   const headers={"content-type":"application/json"};
@@ -87,7 +142,7 @@ async function request(path,body,csrf){
     body:JSON.stringify(body),cache:"no-store",redirect:"error"});
 }
 function showLogin(){
-  loginPanel.hidden=false;accountPanel.hidden=true;workspaceList.replaceChildren();csrfToken="";
+  loginPanel.hidden=false;accountPanel.hidden=true;workspaceList.replaceChildren();csrfToken="";clearMfa();
 }
 function showAccount(data){
   csrfToken=data.csrfToken;
@@ -101,6 +156,7 @@ function showAccount(data){
     li.append(title,details);workspaceList.append(li);
   }
   accountPanel.hidden=false;loginPanel.hidden=true;message("Signed in.");
+  void loadMfaFactors();
 }
 async function recoverSession(){
   const r=await fetch("/app/auth/csrf",{credentials:"same-origin",cache:"no-store"});
@@ -147,6 +203,46 @@ codeForm.addEventListener("submit",async event=>{
     if(!session.ok)throw Error("session");
     showAccount(await session.json());
   }catch{message("Could not establish a session. Please sign in again.");}
+  finally{button.disabled=false;}
+});
+document.getElementById("mfa-enroll").addEventListener("click",async()=>{
+  if(!csrfToken){message("Session expired. Renew your session first.");return;}
+  const button=document.getElementById("mfa-enroll");
+  button.disabled=true;
+  try{
+    const response=await request("/app/auth/mfa/totp/enroll",{},csrfToken);
+    if(!response.ok)throw Error("MFA enrollment unavailable");
+    const data=await response.json();
+    enrollmentFactorId=data.factorId;
+    mfaSecret.textContent=data.secret;
+    mfaEnrollment.hidden=false;
+    mfaForm.hidden=false;
+    const option=document.createElement("option");
+    option.value=data.factorId;
+    option.textContent="New authenticator";
+    mfaFactor.prepend(option);
+    mfaFactor.value=data.factorId;
+    message("Enter the setup key in your authenticator app, then verify a code.");
+  }catch{message("Unable to enroll an authenticator. Renew your session or contact support.");}
+  finally{button.disabled=false;}
+});
+mfaForm.addEventListener("submit",async event=>{
+  event.preventDefault();
+  const button=document.getElementById("mfa-submit");
+  const factorId=mfaFactor.value;
+  const code=document.getElementById("mfa-code").value.trim();
+  button.disabled=true;
+  try{
+    const response=await request("/app/auth/mfa/totp/verify",{factorId,code},csrfToken);
+    if(!response.ok)throw Error("MFA verification failed");
+    document.getElementById("mfa-code").value="";
+    mfaSecret.textContent="";
+    mfaEnrollment.hidden=true;
+    enrollmentFactorId="";
+    const result=await response.json();
+    showAccount(result);
+    message("Authenticator verified. Your session is protected for privileged actions.");
+  }catch{message("Authenticator code was not accepted. Check the code and try again.");}
   finally{button.disabled=false;}
 });
 document.getElementById("refresh-session").addEventListener("click",async()=>{

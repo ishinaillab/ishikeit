@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import {privateLoginHtml,privateLoginCss,privateLoginJs} from "./private-browser-ui.js";
 import type { PrivateBrowserAuthService } from "../auth/private-browser-auth.js";
 
 export interface BrowserAuthController {
@@ -102,6 +103,25 @@ export function registerPrivateBrowserAuthRoutes(
       return false;
     }
   }
+
+  function privateUi(req:FastifyRequest,reply:FastifyReply,
+    type:"html"|"css"|"js"):FastifyReply {
+    privateResponse(reply);
+    if(req.headers.host!==host)return deny(reply,403).send({status:"forbidden"});
+    if(type==="html"){
+      return reply
+        .header("content-security-policy",
+          "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "+
+          "frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+        .type("text/html; charset=utf-8").send(privateLoginHtml);
+    }
+    if(type==="css")return reply.type("text/css; charset=utf-8").send(privateLoginCss);
+    return reply.type("text/javascript; charset=utf-8").send(privateLoginJs);
+  }
+  server.get("/app", (req,reply)=>privateUi(req,reply,"html"));
+  server.get("/app/login", (req,reply)=>privateUi(req,reply,"html"));
+  server.get("/app/auth/ui.css", (req,reply)=>privateUi(req,reply,"css"));
+  server.get("/app/auth/ui.js", (req,reply)=>privateUi(req,reply,"js"));
 
   server.post("/app/auth/request-otp",{bodyLimit:2048},async(req,reply)=>{
     privateResponse(reply);

@@ -14,6 +14,10 @@ interface WorkspaceRow extends pg.QueryResultRow {
   role: "owner" | "admin" | "agent" | "viewer";
   connected_accounts: number;
 }
+export interface WorkspacePage {
+  items: readonly AccessibleWorkspace[];
+  nextCursor?: string;
+}
 export interface AccessibleWorkspace {
   workspaceId: string;
   displayName: string;
@@ -33,7 +37,9 @@ export class AuthenticatedWorkspacePortfolio {
     private readonly db: Pick<PostgresDatabase,"query">
   ) {}
 
-  async list(accessToken: string): Promise<readonly AccessibleWorkspace[]> {
+  async list(accessToken: string, options: { after?: string; pageSize?: number } = {}): Promise<WorkspacePage> {
+    const cursor = options.after === undefined ? null : z.string().uuid().parse(options.after);
+    const pageSize = z.number().int().min(1).max(50).parse(options.pageSize ?? 20);
     const verified = await this.auth.verifyAccessToken(accessToken);
     const rows = await this.db.query<WorkspaceRow>(
       `SELECT w.workspace_id,w.display_name,m.role,
@@ -45,11 +51,13 @@ export class AuthenticatedWorkspacePortfolio {
        JOIN public.ishikeit_workspaces w ON w.workspace_id=m.workspace_id
        WHERE m.auth_issuer=$1 AND m.auth_subject=$2
          AND m.state='active' AND w.state='active'
-       ORDER BY w.display_name COLLATE "C" ASC,w.workspace_id ASC
-       LIMIT 100`,
-      [verified.principal.issuer,verified.principal.subject]
+         AND ($3::uuid IS NULL OR w.workspace_id > $3::uuid)
+       ORDER BY w.workspace_id ASC
+       LIMIT $4`,
+      [verified.principal.issuer,verified.principal.subject,cursor,pageSize+1]
     );
-    return rows.rows.map(row=>{
+    const hasMore = rows.rows.length > pageSize;
+    const items=rows.rows.slice(0,pageSize).map(row=>{
       const r = resultSchema.parse(row);
       return {
         workspaceId:r.workspace_id,
@@ -58,5 +66,10 @@ export class AuthenticatedWorkspacePortfolio {
         connectedAccounts:r.connected_accounts
       };
     });
+    return {
+      items,
+      ...(hasMore && items.length > 0
+        ? { nextCursor: items[items.length-1]!.workspaceId } : {})
+    };
   }
 }

@@ -60,10 +60,11 @@ const secret=Buffer.alloc(32,39).toString("base64");
 const mfa={
   enroll:vi.fn((_token:string)=>{
     void _token;
+    const id=mfa.enroll.mock.calls.length===1?factorId:randomUUID();
     return db!.query(
       "INSERT INTO auth.mfa_factors(id,user_id,status,factor_type) VALUES($1,$2,'unverified','totp')",
-      [factorId,userId]
-    ).then(()=>({factorId,secret:"JBSWY3DPEHPK3PXP"}));
+      [id,userId]
+    ).then(()=>({factorId:id,secret:"JBSWY3DPEHPK3PXP"}));
   }),
   challengeAndVerify:vi.fn((_token:string,_factorId:string,_code:string)=>{
     void _token;void _factorId;void _code;
@@ -323,8 +324,9 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       "SELECT access_ciphertext FROM public.ishikeit_browser_sessions"
     );
     expect(previous.rows[0]?.access_ciphertext.includes(Buffer.from("mfa_access_"))).toBe(false);
-    await expect(service!.enrollTotp(session.cookieValue))
-      .rejects.toThrow(/multi-factor/i);
+    const backup=await service!.enrollTotp(session.cookieValue);
+    expect(backup.factorId).not.toBe(factorId);
+    expect(auth.verifyPrivilegedAccessToken).toHaveBeenCalled();
     await expect(service!.verifyTotp(session.cookieValue,randomUUID(),"123456"))
       .rejects.toThrow(/not available/i);
   });

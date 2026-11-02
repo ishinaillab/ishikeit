@@ -21,7 +21,9 @@ function safeEqual(a: string, b: string): boolean {
 function encrypted(ciphertext: Buffer, iv: Buffer, tag: Buffer): EncryptedCredentialValue {
   return { ciphertext,iv,tag };
 }
-interface ChallengeRow extends pg.QueryResultRow { email_address:string }
+interface ChallengeRow extends pg.QueryResultRow {
+  email_ciphertext:Buffer; email_iv:Buffer; email_tag:Buffer
+}
 interface RateRow extends pg.QueryResultRow { hits:number }
 interface MemberRow extends pg.QueryResultRow { eligible:boolean }
 interface BrowserSessionRow extends pg.QueryResultRow {
@@ -81,6 +83,14 @@ export class PrivateBrowserAuthService {
     }
   }
 
+  /** HMAC instead of plain SHA-256 keeps common email addresses and remote
+   * network identifiers out of offline dictionary attacks against rate data. */
+  #rateBucket(bucket:string):string {
+    return createHmac("sha256",this.#csrfKey)
+      .update("ishikeit-browser-rate-v1\0"+bucket)
+      .digest("hex");
+  }
+
   async #limit(bucket:string,max:number,seconds:number):Promise<boolean> {
     const result=await this.deps.db.query<RateRow>(
       `INSERT INTO public.ishikeit_browser_auth_limits(bucket_hash,hits,reset_at)
@@ -91,7 +101,7 @@ export class PrivateBrowserAuthService {
          reset_at=CASE WHEN ishikeit_browser_auth_limits.reset_at<=now()
                       THEN now()+$2::integer*interval '1 second'
                       ELSE ishikeit_browser_auth_limits.reset_at END
-       RETURNING hits`,[sha256(bucket),seconds]
+       RETURNING hits`,[this.#rateBucket(bucket),seconds]
     );
     return (result.rows[0]?.hits??max+1)<=max;
   }
@@ -105,11 +115,15 @@ export class PrivateBrowserAuthService {
     ]);
     // Always respond identically to avoid exposing whether a user exists.
     if(passed.every(Boolean)){
+      const hash=sha256(loginCookie);
+      const emailValue=this.deps.cipher.encrypt(
+        email,"ishikeit-browser-v1\0"+hash+"\0email"
+      );
       await this.deps.db.query(
         `INSERT INTO public.ishikeit_browser_login_attempts
-         (challenge_hash,email_address,expires_at)
-         VALUES($1,$2,now()+interval '10 minutes')`,
-        [sha256(loginCookie),email]
+         (challenge_hash,email_ciphertext,email_iv,email_tag,expires_at)
+         VALUES($1,$2,$3,$4,now()+interval '10 minutes')`,
+        [hash,emailValue.ciphertext,emailValue.iv,emailValue.tag]
       );
       const known=await this.deps.db.query<MemberRow>(
         `SELECT EXISTS(
@@ -137,9 +151,14 @@ export class PrivateBrowserAuthService {
         SET tries=tries+1
         WHERE challenge_hash=$1 AND completed_at IS NULL
           AND expires_at>now() AND tries<5
-        RETURNING email_address`,[sha256(cookie)]
+        RETURNING email_ciphertext,email_iv,email_tag`,[sha256(cookie)]
     );
-    return result.rows[0]?.email_address;
+    const row=result.rows[0];
+    if(row===undefined)return undefined;
+    return this.deps.cipher.decrypt(
+      encrypted(row.email_ciphertext,row.email_iv,row.email_tag),
+      "ishikeit-browser-v1\0"+sha256(cookie)+"\0email"
+    );
   }
 
   async verify(loginCookie:string,code:string,networkId:string):Promise<BrowserAuthSuccess> {
@@ -281,9 +300,10 @@ export class PrivateBrowserAuthService {
     // Revoke LOCAL cookie first, regardless of remote provider availability.
     const hash=sha256(cookie);
     const row=await this.deps.db.transaction(async tx=>{
+      // Delete secret-bearing record FIRST: even a failed remote signout
+      // cannot leave usable BFF tokens in storage.
       const previous=await tx.query<BrowserSessionRow>(
-        `UPDATE public.ishikeit_browser_sessions SET revoked_at=now()
-         WHERE session_hash=$1 AND revoked_at IS NULL
+        `DELETE FROM public.ishikeit_browser_sessions WHERE session_hash=$1
          RETURNING user_id,auth_session_id,access_ciphertext,access_iv,access_tag,
                    refresh_ciphertext,refresh_iv,refresh_tag,access_expires_at,session_expires_at`,
         [hash]

@@ -1,5 +1,11 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — Private server-held TOTP enrollment and step-up verification (#230)
+
+- Added `SupabaseTotpMfaClient` with official authenticated GoTrue endpoints for TOTP factor enrollment, challenge, and verify, bounded network responses, no service-role key, no bearer leak, no redirects and no hand-rolled TOTP.
+- `PrivateBrowserAuthService` exposes read-only current verified TOTP factor IDs, factor-type/user ownership checks, current session and workspace validation, encrypted token replacement in a locked PostgreSQL transaction after official MFA verify, and mandatory independent AAL2/current verified-factor proof before acknowledging step-up. AAL1 can enroll an initial authenticator; enrolling a backup requires existing AAL2. MFA account-level rate limits apply. Private same-origin/CSRF POST endpoints and accessible manual-key TOTP setup/verify UI added; **no provider-connect API**.
+- HTTP, fake-provider unit and isolated PG17 regression tests cover challenge flow, token privacy, factor ownership, CSRF, exact Host, no public login flag and MFA data. No schema migrations or production account creation; `BROWSER_AUTH_ENABLED` remains OFF until real verified invitee, SMTP and Hostinger proxy proof. See `docs/TRUSTED_WORKSPACE_AUTH_2026-11-02.md` for limitations and release gates.
+
 ## 2026-11-02 — Step-up MFA gate for privileged provider connections (#230)
 
 - The internal `AuthenticatedWorkspaceConnectionIntents` now requires `verifyPrivilegedAccessToken` rather than ordinary `verifyAccessToken` for both start and callback. This verifies exact issuer/token with official Supabase Auth, live session, `aal2` claim and live `auth.mfa_factors` row with currently verified second factor. An old AAL2 JWT with revoked factor, or a conventional OTP-only AAL1 session, cannot initiate or consume provider account linking. Provider factor type is not hardcoded. Current active owner/admin membership, exact session/nonce and one-use state remain additionally enforced.

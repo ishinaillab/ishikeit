@@ -10,6 +10,7 @@ export interface BrowserAuthController {
   listWorkspaces(cookie:string,after?:string):
     ReturnType<PrivateBrowserAuthService["listWorkspaces"]>;
   refresh(cookie:string):ReturnType<PrivateBrowserAuthService["refresh"]>;
+  csrf(cookie:string):Promise<string>;
   logout(cookie:string):Promise<void>;
   assertCsrf(cookie:string,submitted:string|undefined):void;
 }
@@ -130,6 +131,15 @@ export function registerPrivateBrowserAuthRoutes(
     }catch{
       return deny(reply).send({status:"authentication_failed"});
     }
+  });
+  server.get("/app/auth/csrf",async(req,reply)=>{
+    privateResponse(reply);
+    if(!sameOrigin(req,false))return deny(reply,403).send({status:"forbidden"});
+    const value=session(req,reply);
+    if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+    try {
+      return reply.code(200).send({csrfToken:await deps.controller.csrf(value)});
+    }catch{return deny(reply).send({status:"unauthenticated"});}
   });
   server.get("/app/auth/session",async(req,reply)=>{
     privateResponse(reply);

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { registerPrivateBrowserAuthRoutes, type BrowserAuthController } from "./private-browser-auth-routes.js";
 import Fastify from "fastify";
 import { z } from "zod";
 import type { Logger } from "pino";
@@ -109,6 +110,7 @@ export interface ServerDeps {
   metaGraphPreflight?: MetaGraphPreflightReader;
   metaHandoffs?: MetaHandoffControl;
   opsMetricsToken?: string;
+  browserAuth?: { origin: string; controller: BrowserAuthController };
   runtimeState?: {
     processorEnabled: boolean;
     actionDispatchEnabled: boolean;
@@ -123,6 +125,8 @@ export function buildServer(deps: ServerDeps) {
     loggerInstance: deps.logger,
     bodyLimit: deps.webhookBodyLimit ?? 1_048_576
   });
+
+  if (deps.browserAuth !== undefined) registerPrivateBrowserAuthRoutes(server,deps.browserAuth);
 
   server.get("/health/live", () => ({ status: "ok" }));
   server.get("/health/build", (_req, reply) => {

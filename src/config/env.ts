@@ -18,6 +18,12 @@ const schema = z.object({
   OPS_ALERT_WEBHOOK_SECRET: z.string().min(32).optional(),
   OPS_ALERT_APPROVED_HOST: z.string().min(4).max(255).optional(),
   OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: z.string().min(40).max(64).optional(),
+  BROWSER_AUTH_ENABLED: booleanFromEnv.default(false),
+  BROWSER_AUTH_ORIGIN: z.string().url().optional(),
+  SUPABASE_AUTH_PROJECT_URL: z.string().url().optional(),
+  SUPABASE_AUTH_PUBLISHABLE_KEY: z.string().regex(/^sb_publishable_[A-Za-z0-9_-]{8,200}$/u).optional(),
+  BROWSER_AUTH_ENCRYPTION_KEY_B64: z.string().min(40).max(64).optional(),
+  BROWSER_AUTH_CSRF_KEY_B64: z.string().min(40).max(64).optional(),
 
   PROCESSOR_ENABLED: booleanFromEnv.default(false),
   PROCESSOR_CUTOVER_AT: z.string().datetime({ offset: true }).optional(),
@@ -85,6 +91,21 @@ const schema = z.object({
   TIKTOK_MARKETING_OAUTH_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
 }).superRefine((value, ctx) => {
+  if (value.BROWSER_AUTH_ENABLED) {
+    for (const key of [
+      "BROWSER_AUTH_ORIGIN","SUPABASE_AUTH_PROJECT_URL","SUPABASE_AUTH_PUBLISHABLE_KEY",
+      "BROWSER_AUTH_ENCRYPTION_KEY_B64","BROWSER_AUTH_CSRF_KEY_B64"
+    ] as const) {
+      if (value[key] === undefined) ctx.addIssue({
+        code:"custom",path:[key],message:"Private browser authentication requires this setting"
+      });
+    }
+    if (value.BROWSER_AUTH_ENCRYPTION_KEY_B64 !== undefined
+      && value.BROWSER_AUTH_ENCRYPTION_KEY_B64 === value.BROWSER_AUTH_CSRF_KEY_B64) {
+      ctx.addIssue({code:"custom",path:["BROWSER_AUTH_CSRF_KEY_B64"],
+        message:"Browser CSRF and encryption keys must be independent"});
+    }
+  }
   if (value.OPS_ALERT_WEBHOOK_ENABLED) {
     for (const key of ["OPS_ALERT_WEBHOOK_URL", "OPS_ALERT_WEBHOOK_SECRET", "OPS_ALERT_APPROVED_HOST"] as const) {
       if (value[key] === undefined) {

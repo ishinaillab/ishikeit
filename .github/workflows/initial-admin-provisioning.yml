@@ -77,20 +77,20 @@ jobs:
           DATABASE_URL: ${{ secrets.ISHIKEIT_DATABASE_URL }}
         run: |
           if [[ -z "${DATABASE_URL:-}" ]]; then exit 0; fi
-          node --input-type=module -e "
-            import pg from 'pg';
-            const db=new pg.Client({connectionString:process.env.DATABASE_URL});
-            try {
-              await db.connect();
-              const r=await db.query(`
-                SELECT count(*)::int AS invalid
-                FROM public.ishikeit_platform_administrators p
-                LEFT JOIN auth.users u ON u.id=p.user_id
-                WHERE p.state='active' AND (
-                  u.id IS NULL OR u.email_confirmed_at IS NULL
-                  OR u.is_anonymous=true OR u.deleted_at IS NOT NULL
-                  OR (u.banned_until IS NOT NULL AND u.banned_until>now())
-                )`);
-              if (r.rows[0].invalid!==0) process.exitCode=1;
-            } finally {await db.end();}
-          "
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          const db=new pg.Client({connectionString:process.env.DATABASE_URL});
+          try {
+            await db.connect();
+            const r=await db.query(`
+              SELECT count(*)::int AS invalid
+              FROM public.ishikeit_platform_administrators p
+              LEFT JOIN auth.users u ON u.id=p.user_id
+              WHERE p.state='active' AND (
+                u.id IS NULL OR u.email_confirmed_at IS NULL
+                OR u.is_anonymous=true OR u.deleted_at IS NOT NULL
+                OR (u.banned_until IS NOT NULL AND u.banned_until>now())
+              )`);
+            if (r.rows[0].invalid!==0) process.exitCode=1;
+          } finally {await db.end();}
+          NODE

@@ -133,9 +133,16 @@ export class PrivateBrowserAuthService {
            JOIN public.ishikeit_workspaces w ON w.workspace_id=m.workspace_id
            WHERE lower(u.email)=$2 AND u.is_anonymous=false
              AND m.state='active' AND w.state='active'
+             AND u.email_confirmed_at IS NOT NULL
+             AND u.deleted_at IS NULL
+             AND (u.banned_until IS NULL OR u.banned_until <= now())
          ) AS eligible`,[this.#origin,email]
       );
-      if(known.rows[0]?.eligible===true){
+      // Ishikeit cooldown is independent of Supabase's configurable email
+      // quota and must not be confused with a provider-issued permission.
+      if(known.rows[0]?.eligible===true && await this.#limit(
+        "otp:cooldown:"+email,1,60
+      )){
         try { await this.deps.otp.sendOtp(email); }
         catch { /* Stable public response; provider/transport failures are not exposed. */ }
       }
@@ -155,10 +162,15 @@ export class PrivateBrowserAuthService {
     );
     const row=result.rows[0];
     if(row===undefined)return undefined;
-    return this.deps.cipher.decrypt(
+    const email=this.deps.cipher.decrypt(
       encrypted(row.email_ciphertext,row.email_iv,row.email_tag),
       "ishikeit-browser-v1\0"+sha256(cookie)+"\0email"
     );
+    // Account-wide verification throttle is mandatory in addition to the
+    // cookie's five attempts and network limit. A new nonce or proxy source
+    // cannot reset the total number of guesses against one invited account.
+    if(!await this.#limit("verify:account:"+email,10,900))return undefined;
+    return email;
   }
 
   async verify(loginCookie:string,code:string,networkId:string):Promise<BrowserAuthSuccess> {

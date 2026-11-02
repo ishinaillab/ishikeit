@@ -76,13 +76,16 @@ const mfa={
     }));
   })
 };
+const memberInvites={invite:vi.fn((_token:string,_input:{workspaceId:string;email:string;role:"admin"|"agent"|"viewer"})=>{
+  void _token;void _input;return Promise.resolve({invitationId:randomUUID(),status:"invited" as const});
+})};
 const service=db===undefined?undefined:new PrivateBrowserAuthService({
   projectUrl:"https://abcdefghijklmnopqrst.supabase.co",
   db,cipher,csrfKeyBase64:secret,
   otp:otpClient,
   mfa,
   auth,
-  portfolio
+  portfolio,memberInvites
 });
 
 describe.skipIf(db===undefined)("private browser OTP and session persistence on disposable PG17",()=>{

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { CredentialCipher, EncryptedCredentialValue } from "./credential-cipher.js";
 import type { SupabaseAuthPrincipalVerifier, VerifiedIshikeitSession } from "./supabase-workspace-principal.js";
 import type { SupabaseEmailOtpClient, SupabaseIssuedTokens } from "./supabase-email-otp.js";
+import type { SupabaseTotpMfaClient, TotpEnrollment } from "./supabase-totp-mfa.js";
 import type { AuthenticatedWorkspacePortfolio, WorkspacePage } from "./authenticated-workspace-portfolio.js";
 import type { PostgresDatabase, SqlExecutor } from "../persistence/postgres.js";
 
@@ -25,6 +26,8 @@ interface ChallengeRow extends pg.QueryResultRow {
   email_ciphertext:Buffer; email_iv:Buffer; email_tag:Buffer
 }
 interface RateRow extends pg.QueryResultRow { hits:number }
+interface TotpFactorRow extends pg.QueryResultRow { id:string; status?:string }
+interface CountRow extends pg.QueryResultRow { n:number }
 interface MemberRow extends pg.QueryResultRow { eligible:boolean }
 interface BrowserSessionRow extends pg.QueryResultRow {
   user_id:string; auth_session_id:string;
@@ -55,7 +58,8 @@ export class PrivateBrowserAuthService {
     projectUrl:string;
     db:Pick<PostgresDatabase,"query"|"transaction">;
     cipher:CredentialCipher;
-    auth:Pick<SupabaseAuthPrincipalVerifier,"verifyAccessToken">;
+    auth:Pick<SupabaseAuthPrincipalVerifier,"verifyAccessToken"|"verifyPrivilegedAccessToken">;
+    mfa:Pick<SupabaseTotpMfaClient,"enroll"|"challengeAndVerify">;
     otp:Pick<SupabaseEmailOtpClient,"sendOtp"|"verifyOtp"|"refresh"|"revoke">;
     portfolio:Pick<AuthenticatedWorkspacePortfolio,"list">;
     csrfKeyBase64:string;
@@ -305,6 +309,115 @@ export class PrivateBrowserAuthService {
     if(workspaces.items.length===0)throw new Error("Browser workspace membership unavailable");
     return {sessionId:value.verified.sessionId,expiresAt:value.verified.expiresAt,
       csrfToken:this.csrfForCookie(cookie),workspaces};
+  }
+
+  /**
+   * Enumerate only the currently verified TOTP factor IDs for the exact
+   * bearer-verified user. Factor secrets and provider Auth tokens are never
+   * included in this read-only response.
+   */
+  async listTotpFactors(cookie:string):Promise<readonly string[]> {
+    const {verified}=await this.#bearer(cookie);
+    const rows=await this.deps.db.query<TotpFactorRow>(
+      `SELECT id FROM auth.mfa_factors
+       WHERE user_id=$1::uuid AND status='verified' AND factor_type='totp'
+       ORDER BY created_at ASC,id ASC LIMIT 10`,
+      [verified.principal.subject]
+    );
+    return rows.rows.map(x=>z.string().uuid().parse(x.id));
+  }
+
+  /**
+   * Enroll initial factor after AAL1. Adding another factor to an MFA-protected
+   * account MUST first prove existing aal2 and current second factor.
+   * The returned one-time TOTP secret must never be cached or persisted by UI.
+   */
+  async enrollTotp(cookie:string):Promise<TotpEnrollment> {
+    const {verified}=await this.#bearer(cookie);
+    const rateOk=await this.#limit("mfa:enroll:"+verified.principal.subject,3,900);
+    if(!rateOk)throw new Error("MFA enrollment rate limited");
+    return this.deps.db.transaction(async tx=>{
+      const row=await this.#load(tx,cookie,true);
+      const hash=sha256(cookie);
+      const token=this.deps.cipher.decrypt(
+        encrypted(row.access_ciphertext,row.access_iv,row.access_tag),
+        "ishikeit-browser-v1\0"+hash+"\0access"
+      );
+      const fresh=await this.deps.auth.verifyAccessToken(token);
+      if(fresh.principal.subject!==row.user_id || fresh.sessionId!==row.auth_session_id)
+        throw new Error("Browser session unavailable");
+      const existing=await tx.query<CountRow>(
+        `SELECT count(*)::int AS n FROM auth.mfa_factors
+         WHERE user_id=$1::uuid AND status='verified'`,
+        [row.user_id]
+      );
+      if((existing.rows[0]?.n??0)>0)
+        await this.deps.auth.verifyPrivilegedAccessToken(token);
+      const pages=await this.deps.portfolio.list(token,{pageSize:1});
+      if(pages.items.length===0)throw new Error("Workspace authorization required");
+      return this.deps.mfa.enroll(token);
+    });
+  }
+
+  /**
+   * Create a provider challenge and verify it, while holding an exact
+   * BFF session row lock. Replace rotated tokens in the SAME transaction.
+   * Never let a browser choose a challenge ID or send provider bearer tokens.
+   */
+  async verifyTotp(cookie:string,factorId:string,code:string):Promise<BrowserIdentitySummary> {
+    const id=z.string().uuid().parse(factorId);
+    const passcode=z.string().regex(/^[0-9]{6}$/u).parse(code);
+    const {verified}=await this.#bearer(cookie);
+    if(!await this.#limit("mfa:verify:"+verified.principal.subject,10,900))
+      throw new Error("MFA verification rate limited");
+    const result=await this.deps.db.transaction(async tx=>{
+      const row=await this.#load(tx,cookie,true);
+      const hash=sha256(cookie);
+      const oldAccess=this.deps.cipher.decrypt(
+        encrypted(row.access_ciphertext,row.access_iv,row.access_tag),
+        "ishikeit-browser-v1\0"+hash+"\0access"
+      );
+      const current=await this.deps.auth.verifyAccessToken(oldAccess);
+      if(current.principal.subject!==row.user_id || current.sessionId!==row.auth_session_id)
+        throw new Error("Browser session unavailable");
+      const allowed=await tx.query<TotpFactorRow>(
+        `SELECT id,status::text AS status FROM auth.mfa_factors
+         WHERE user_id=$1::uuid AND id=$2::uuid AND factor_type='totp'
+           AND status IN ('verified','unverified')
+         LIMIT 1`,[row.user_id,id]
+      );
+      if(allowed.rows[0]===undefined)throw new Error("MFA factor not available");
+      const pages=await this.deps.portfolio.list(oldAccess,{pageSize:1});
+      if(pages.items.length===0)throw new Error("Workspace authorization required");
+      const tokens=await this.deps.mfa.challengeAndVerify(oldAccess,id,passcode);
+      const next=await this.deps.auth.verifyAccessToken(tokens.access_token);
+      if(next.principal.subject!==row.user_id || next.sessionId!==row.auth_session_id)
+        throw new Error("MFA session identity mismatch");
+      const accessNew=this.deps.cipher.encrypt(tokens.access_token,
+        "ishikeit-browser-v1\0"+hash+"\0access");
+      const refreshNew=this.deps.cipher.encrypt(tokens.refresh_token,
+        "ishikeit-browser-v1\0"+hash+"\0refresh");
+      await tx.query(
+        `UPDATE public.ishikeit_browser_sessions SET
+           access_ciphertext=$2,access_iv=$3,access_tag=$4,
+           refresh_ciphertext=$5,refresh_iv=$6,refresh_tag=$7,
+           access_expires_at=$8,updated_at=now()
+         WHERE session_hash=$1 AND revoked_at IS NULL`,
+        [hash,accessNew.ciphertext,accessNew.iv,accessNew.tag,
+          refreshNew.ciphertext,refreshNew.iv,refreshNew.tag,new Date(next.expiresAt)]
+      );
+      return {access:tokens.access_token,verified:next};
+    });
+    // Fail closed unless issuer confirms AAL2 and the factor is currently
+    // verified. Tokens have already been stored to avoid replaying a rotated
+    // refresh token on a verification readback/replication error.
+    await this.deps.auth.verifyPrivilegedAccessToken(result.access);
+    const workspaces=await this.deps.portfolio.list(result.access,{pageSize:50});
+    if(workspaces.items.length===0)throw new Error("Workspace authorization required");
+    return {
+      sessionId:result.verified.sessionId,expiresAt:result.verified.expiresAt,
+      csrfToken:this.csrfForCookie(cookie),workspaces
+    };
   }
 
   async logout(cookie:string):Promise<void>{

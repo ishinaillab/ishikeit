@@ -62,7 +62,9 @@ describe.skipIf(db===undefined)("verified initial owner bootstrap on disposable 
       public.ishikeit_connection_audit,public.ishikeit_account_connections,
       public.ishikeit_provider_accounts,public.ishikeit_workspace_memberships,
       public.ishikeit_workspaces`);
-    await db!.query("TRUNCATE auth.users");
+    // auth.users is referenced by the global admin FK; after child cleanup,
+    // use DELETE instead of an independently issued TRUNCATE.
+    await db!.query("DELETE FROM auth.users");
     ownerId=randomUUID();
     await db!.query(
       "INSERT INTO auth.users(id,email,email_confirmed_at) VALUES($1,$2,now())",

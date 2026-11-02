@@ -1,5 +1,10 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — Official Supabase Auth REST contract tests and bounded token responses (#230)
+
+- Security review found the BFF token client used `response.text()` on token endpoints **before** checking response body size; a chunked/unknown-length oversized response could allocate excessive memory. Now enforces a strict 16 KiB byte limit while reading the streamed response, rejects oversized declared lengths and invalid/malformed token structures with sanitized failures. Verifier still checks the actual signed user/session separately.
+- Added `tests/supabase-email-otp.test.ts` for documented `/auth/v1/otp` `create_user:false`, `/verify` email OTP, `/token?grant_type=refresh_token`, `/logout?scope=local`, exact project origin/public key, no redirects/cache, large streamed bodies and generic failure messages. No real user tokens, Supabase Auth account, published keys or provider routes changed. Feature flag `BROWSER_AUTH_ENABLED` remains disabled; real invited-user Auth proof and email OTP delivery must still be completed before public use.
+
 ## 2026-11-02 — Private browser OTP data minimization and bounded cleanup, rollout still OFF (#230)
 
 - Security audit of private browser login code from PR #237/238 found that encrypted Supabase access/refresh tokens were stored in a revocable DB row after logout (until manually cleaned), OTP challenge email was plaintext in a private DB table, and per-email/IP throttle digests were unhashed-secret SHA-256 dictionary targets. New `0015_browser_login_email_encryption.sql` fails closed unless login-attempt table is empty, then replaces plaintext email column with AES-256-GCM ciphertext/IV/tag. Production BFF is OFF; no login attempts existed at last verified migration 0014 readback. Apply 0015 only after CI green and fresh **zero-row preflight**.

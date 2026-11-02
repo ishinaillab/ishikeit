@@ -126,6 +126,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     expect(row.rows[0]?.session_hash).not.toBe(created.cookieValue);
     expect(row.rows[0]?.access_ciphertext.includes(Buffer.from(access))).toBe(false);
     expect(row.rows[0]?.refresh_ciphertext.includes(Buffer.from(refreshOne))).toBe(false);
+    expect(await service!.csrf(created.cookieValue)).toBe(created.csrfToken);
     const summary=await service!.get(created.cookieValue);
     expect(summary.workspaces.items[0]?.workspaceId).toBe(workspaceId);
     expect(summary.csrfToken).toBe(created.csrfToken);
@@ -135,6 +136,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     const current=await service!.get(created.cookieValue);
     expect(current.workspaces.items).toHaveLength(1);
     await service!.logout(created.cookieValue);
+    await expect(service!.csrf(created.cookieValue)).rejects.toThrow(/session/i);
     await expect(service!.get(created.cookieValue)).rejects.toThrow(/session/i);
     expect(otpClient.revoke).toHaveBeenCalledWith(refreshed);
   });

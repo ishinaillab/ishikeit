@@ -4,9 +4,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { PostgresDatabase } from "../src/persistence/postgres.js";
 import { CredentialCipher } from "../src/auth/credential-cipher.js";
 import { PrivateBrowserAuthService } from "../src/auth/private-browser-auth.js";
-import type { SupabaseEmailOtpClient } from "../src/auth/supabase-email-otp.js";
-import type { SupabaseAuthPrincipalVerifier } from "../src/auth/supabase-workspace-principal.js";
-import type { AuthenticatedWorkspacePortfolio } from "../src/auth/authenticated-workspace-portfolio.js";
 
 const connectionString=process.env.PG_OUTBOX_TEST_DATABASE_URL;
 if(connectionString!==undefined){
@@ -26,17 +23,18 @@ const refreshOne="refresh_123456789012345678901234567890";
 const refreshTwo="refresh_987654321098765432109876543210";
 let refreshUses=0;
 const otpClient={
-  sendOtp:vi.fn((_email:string)=>Promise.resolve()),
-  verifyOtp:vi.fn((_email:string,_token:string)=>Promise.resolve({
+  sendOtp:vi.fn((_email:string)=>{void _email;return Promise.resolve();}),
+  verifyOtp:vi.fn((_email:string,_token:string)=>{void _email;void _token;return Promise.resolve({
     access_token:access,refresh_token:refreshOne,token_type:"bearer" as const,expires_in:3600
-  })),
+  });}),
   refresh:vi.fn((_token:string)=>{
+    void _token;
     refreshUses++;
     return Promise.resolve({
       access_token:refreshed,refresh_token:refreshTwo,token_type:"bearer" as const,expires_in:3600
     });
   }),
-  revoke:vi.fn((_token:string)=>Promise.resolve())
+  revoke:vi.fn((_token:string)=>{void _token;return Promise.resolve();})
 };
 const auth={
   verifyAccessToken:vi.fn((token:string)=>Promise.resolve({
@@ -46,18 +44,18 @@ const auth={
   }))
 };
 const portfolio={
-  list:vi.fn((_token:string,_options?:unknown)=>Promise.resolve({
+  list:vi.fn((_token:string,_options?:unknown)=>{void _token;void _options;return Promise.resolve({
     items:[{workspaceId,displayName:"Authorized Studio",role:"owner" as const,connectedAccounts:0}]
-  }))
+  });})
 };
 const cipher=new CredentialCipher(Buffer.alloc(32,37));
 const secret=Buffer.alloc(32,39).toString("base64");
 const service=db===undefined?undefined:new PrivateBrowserAuthService({
   projectUrl:"https://abcdefghijklmnopqrst.supabase.co",
   db,cipher,csrfKeyBase64:secret,
-  otp:otpClient as unknown as SupabaseEmailOtpClient,
-  auth:auth as unknown as SupabaseAuthPrincipalVerifier,
-  portfolio:portfolio as unknown as AuthenticatedWorkspacePortfolio
+  otp:otpClient,
+  auth,
+  portfolio
 });
 
 describe.skipIf(db===undefined)("private browser OTP and session persistence on disposable PG17",()=>{

@@ -58,6 +58,7 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     await db!.query(migration);
     const authMigration = await readFile("migrations/0011_ishikeit_connection_intents.sql", "utf8");
     await db!.query(authMigration);
+    await db!.query(await readFile("migrations/0013_ishikeit_intent_auth_session.sql","utf8"));
   });
 
   beforeEach(async () => {
@@ -353,6 +354,28 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     expect(result.rows[0]).toMatchObject({
       relrowsecurity:true,anon_select:false,authenticated_select:false,num_policies:0
     });
+  });
+
+  it("binds an OAuth intent to the EXACT verified login session, not only user and browser", async () => {
+    const sessionOne=randomUUID();
+    const sessionTwo=randomUUID();
+    const request = {
+      workspaceId:workspaceA,actor:ownerA,sessionId:sessionOne,
+      provider:"instagram",providerApplicationKey:"app-test",
+      redirectUri:"https://apps.example.test/callback"
+    };
+    const mint=await intents!.begin(request);
+    const callback = {...request,state:mint.state,browserNonce:mint.browserNonce};
+    expect(await intents!.consume({...callback,sessionId:sessionTwo})).toBeUndefined();
+    expect(await intents!.consume({...callback,sessionId:undefined})).toBeUndefined();
+    const consumed=await intents!.consume(callback);
+    expect(consumed?.workspaceId).toBe(workspaceA);
+    expect(await intents!.consume(callback)).toBeUndefined();
+    const row=await db!.query<{auth_session_id:string}>(
+      "SELECT auth_session_id FROM public.ishikeit_connection_intents WHERE state_hash=$1",
+      [createHash("sha256").update(mint.state).digest("hex")]
+    );
+    expect(row.rows[0]?.auth_session_id).toBe(sessionOne);
   });
 
 });

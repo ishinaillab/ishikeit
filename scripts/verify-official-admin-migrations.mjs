@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import pg from "pg";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 /**
  * Read-only release gate for migrations already applied via Supabase's
@@ -72,7 +74,7 @@ export async function verifyOfficialAdminMigrations(db,load=readFile){
 }
 
 if(process.argv[1]!==undefined &&
-   import.meta.url===new URL("file://"+process.argv[1]).href){
+   import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
   if(!process.env.DATABASE_URL){
     process.stderr.write("Trusted database connection is required.\n");
     process.exitCode=1;

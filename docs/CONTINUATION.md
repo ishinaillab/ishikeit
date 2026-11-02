@@ -1,5 +1,10 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — Verified-member workspace portfolio for Phase 3 switcher (#230)
+
+- Added a new **internal, read-only** `AuthenticatedWorkspacePortfolio` derived only from a freshly verified Supabase Auth user/session (`SupabaseAuthPrincipalVerifier`) and current **active** workspace membership, never from a client-supplied username, account claim or workspace role. Bounded cursor pagination by immutable workspace UUID, server-owned role and exact count of currently connected provider accounts, without token/secret/message data. Suspended workspaces and revoked memberships are excluded; provider accounts in `verifying` do not count as connected.
+- Extended disposable PostgreSQL17 tenant integration suite to check multi-workspace separation, cross-workspace roles, verified token requirement, paginated results, suspended workspace and membership revocation. No schema migration, no public session/login or dashboard HTTP endpoint yet, and no production data is assigned or exposed. Existing provider messaging, @ishinaillab default and seven unpublished local edits unchanged. Future Phase 3 UI may use a separate authenticated HTTP/BFF transport after secure cookie and CSRF/Origin protections are implemented; do not expose the internal service directly.
+
 ## 2026-11-02 — Verified Supabase Auth principal and exact login-session workspace boundary (#230)
 
 - Add server-private `SupabaseAuthPrincipalVerifier`: exact validated Supabase Auth project origin, public publishable API key, bounded JWT preflight **plus authenticated official `GET /auth/v1/user` readback**, checked immutable user identity, actual permanent user/nonanonymous status and `auth.sessions` row existence for the **same** signed token's UUID session/user. This closes stale sign-out access for sensitive connection actions even while JWT remains unexpired. No JS/user-supplied role, username or account ID trusted. No secret/service role keys or client credentials exposed. Based on current Supabase Auth GET user, sessions, and permanent/anonymous docs.

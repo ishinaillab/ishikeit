@@ -51,6 +51,10 @@ import { OutboxWorker } from "../workers/outbox-worker.js";
 import { TelegramSender } from "../channels/telegram-send.js";
 import { TikTokBusinessSender } from "../channels/tiktok-send.js";
 import { CredentialCipher } from "../auth/credential-cipher.js";
+import { SupabaseAuthPrincipalVerifier } from "../auth/supabase-workspace-principal.js";
+import { AuthenticatedWorkspacePortfolio } from "../auth/authenticated-workspace-portfolio.js";
+import { SupabaseEmailOtpClient } from "../auth/supabase-email-otp.js";
+import { PrivateBrowserAuthService } from "../auth/private-browser-auth.js";
 import { PostgresOAuthCredentialStore } from "../auth/oauth-store.js";
 import { PostgresAccountCapabilityFacts } from "../persistence/account-capability-facts.js";
 import { TikTokOAuthClient, TikTokOAuthService } from "../auth/tiktok-oauth.js";
@@ -560,8 +564,36 @@ async function reconcileMessengerManagedPage(): Promise<void> {
   }
 }
 
+// Browser authentication is deliberately OFF unless separately configured and
+// approved. Existing provider webhooks and private operator APIs are untouched.
+const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
+  projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
+  db,
+  cipher: CredentialCipher.fromBase64(env.BROWSER_AUTH_ENCRYPTION_KEY_B64!),
+  csrfKeyBase64: env.BROWSER_AUTH_CSRF_KEY_B64!,
+  auth: new SupabaseAuthPrincipalVerifier({
+    projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
+    publishableKey: env.SUPABASE_AUTH_PUBLISHABLE_KEY!,
+    db
+  }),
+  otp: new SupabaseEmailOtpClient({
+    projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
+    publishableKey: env.SUPABASE_AUTH_PUBLISHABLE_KEY!
+  }),
+  portfolio: new AuthenticatedWorkspacePortfolio(
+    new SupabaseAuthPrincipalVerifier({
+      projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
+      publishableKey: env.SUPABASE_AUTH_PUBLISHABLE_KEY!,
+      db
+    }),db
+  )
+}) : undefined;
+
 const server = buildServer({
   logger,
+  ...(browserAuth === undefined ? {} : {
+    browserAuth: {origin: env.BROWSER_AUTH_ORIGIN!,controller: browserAuth}
+  }),
   buildIdentity: runtimeBuildIdentity(),
   ready: async () =>
     await db.ready()

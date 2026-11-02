@@ -30,9 +30,14 @@ export class SupabaseAdminInviteClient {
   }
   async inviteUserByEmail(rawEmail:string):Promise<SupabaseAdminInviteResult>{
     const target=email.parse(rawEmail);
+    // Explicit official Auth Admin redirect_to query parameter. The protected
+    // deployment preflight MUST verify this exact URL is allowlisted by
+    // Supabase Auth; otherwise Supabase silently falls back to Site URL.
+    const targetUrl=new URL(this.#origin+"/auth/v1/invite");
+    targetUrl.searchParams.set("redirect_to","https://apps.ishinaillab.com/app/login");
     let r:Response;
     try{
-      r=await this.#fetch(this.#origin+"/auth/v1/invite",{
+      r=await this.#fetch(targetUrl.toString(),{
         method:"POST",redirect:"error",cache:"no-store",
         headers:{
           apikey:this.#secret,

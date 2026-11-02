@@ -142,6 +142,8 @@ describe("private cookie-only browser auth routes",()=>{
     expect(js.headers["content-type"]).toContain("javascript");
     expect(js.body).toContain('document.createElement("li")');
     expect(js.body).not.toContain("innerHTML");
+    expect(js.body).toContain('window.history.replaceState(null,"","/app/login")');
+    expect(js.body).not.toContain("localStorage");
     const css=await server.inject({method:"GET",url:"/app/auth/ui.css",headers:{host}});
     expect(css.statusCode).toBe(200);
     expect(css.headers["content-type"]).toContain("text/css");

@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import pg from "pg";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const files=[
   "migrations/0016_initial_owner_bootstrap_audit.sql",
@@ -69,7 +71,7 @@ export async function migratePrivateAdminSchema(db,read=readFile){
     throw new Error("Private admin migration failed closed");
   }finally{client.release();}
 }
-if(import.meta.url===new URL("file://"+process.argv[1]).href){
+if(process.argv[1]!==undefined && import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
   if(process.argv[2]!=="--execute"||!process.env.DATABASE_URL||
      process.env.ISHIKEIT_ADMIN_MIGRATION_APPROVED!=="true"){
     process.stderr.write("Private admin migration requires trusted deployment approval.\n");

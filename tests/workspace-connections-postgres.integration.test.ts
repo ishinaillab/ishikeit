@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PostgresDatabase } from "../src/persistence/postgres.js";
+import { AuthenticatedWorkspacePortfolio } from "../src/auth/authenticated-workspace-portfolio.js";
 import { PostgresWorkspaceConnectionIntents } from "../src/persistence/workspace-connection-intents.js";
 import {
   PostgresWorkspaceConnectionRegistry, type WorkspacePrincipal,
@@ -376,6 +377,52 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
       [createHash("sha256").update(mint.state).digest("hex")]
     );
     expect(row.rows[0]?.auth_session_id).toBe(sessionOne);
+  });
+
+  it("lists only the verified user's ACTIVE workspaces with exact roles and account totals",async()=>{
+    const verifyAccessToken=vi.fn((token:string)=>{
+      if(token!=="test-signed-session") return Promise.reject(new Error("Invalid login"));
+      return Promise.resolve({
+        principal:ownerA,sessionId:randomUUID(),expiresAt:new Date(Date.now()+3600000).toISOString()
+      });
+    });
+    const portfolio=new AuthenticatedWorkspacePortfolio({verifyAccessToken},db!);
+    const a=await link(workspaceA,ownerA,"instagram","studio-verified-account");
+    await activate(a.connectionId,workspaceA,ownerA,"instagram","studio-verified-account");
+    const aPending=await link(workspaceA,ownerA,"telegram","other-pending-account");
+    expect(aPending.status).toBe("verifying");
+    await link(workspaceB,ownerB,"instagram","foreign-account");
+    const first=await portfolio.list("test-signed-session");
+    expect(first.items).toEqual([{
+      workspaceId:workspaceA,displayName:"Workspace A",role:"owner",connectedAccounts:1
+    }]);
+    expect(first.nextCursor).toBeUndefined();
+    await registry!.addMember({
+      workspaceId:workspaceB,actor:ownerB,member:ownerA,role:"viewer"
+    });
+    const pages=await portfolio.list("test-signed-session",{pageSize:1});
+    expect(pages.items).toHaveLength(1);
+    expect(pages.nextCursor).toBe(pages.items[0]?.workspaceId);
+    const cursor=pages.nextCursor;
+    if(cursor===undefined) throw new Error("Expected a second workspace page");
+    const second=await portfolio.list("test-signed-session",{
+      pageSize:1,after:cursor
+    });
+    expect(second.items).toHaveLength(1);
+    expect(second.nextCursor).toBeUndefined();
+    const all=[...pages.items,...second.items];
+    expect(new Set(all.map(w=>w.workspaceId))).toEqual(new Set([workspaceA,workspaceB]));
+    expect(all.find(w=>w.workspaceId===workspaceB)?.role).toBe("viewer");
+
+    await db!.query("UPDATE public.ishikeit_workspaces SET state='suspended' WHERE workspace_id=$1",
+      [workspaceB]);
+    expect((await portfolio.list("test-signed-session")).items).toHaveLength(1);
+    await db!.query("UPDATE public.ishikeit_workspaces SET state='active' WHERE workspace_id=$1",
+      [workspaceB]);
+    await db!.query("UPDATE public.ishikeit_workspace_memberships SET state='revoked' WHERE workspace_id=$1 AND auth_subject=$2",
+      [workspaceB,ownerA.subject]);
+    expect((await portfolio.list("test-signed-session")).items).toHaveLength(1);
+    await expect(portfolio.list("forged-access-token")).rejects.toThrow(/invalid login/i);
   });
 
 });

@@ -1,5 +1,10 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — Nullable tenant provenance in the durable inbox/outbox, NOT runtime cutover (#230)
+
+- Added additive `migrations/0012_ishikeit_event_tenant_provenance.sql`: optional `workspace_id`, `connection_id`, `connection_generation` to existing `inbound_events` and `outbox`. Combined workspace/connection foreign key and generation shape ensure new tenant-bound records cannot claim another workspace connection. Legacy rows stay unassigned NULL; no provider ID, username, token or signing key can auto-assign an owner. Existing policies, retry, ordering, customer messaging and send safeguards remain untouched.
+- Separate, sequential disposable PG17 migration tests validate cross-workspace denial, legacy NULL compatibility, RLS, and valid tenant pairs. **No production processor currently populates or reads the new tenant columns**; these are only secure storage prerequisites. Do not claim cross-tenant runtime isolation or public onboarding from this alone. Before activation implement authenticated workspace sessions, verified provider account mapping at ingress, tenant-safe AI and outbox dispatcher generation/send-time fences, and account cleanup. See [TENANT_EVENT_PROVENANCE_2026-11-02.md](TENANT_EVENT_PROVENANCE_2026-11-02.md). Migration must be applied only after CI gate and verified production readback.
+
 ## 2026-11-02 — Private workspace-bound OAuth connection intents (issue #230, next increment)
 
 - Added `migrations/0011_ishikeit_connection_intents.sql`, RLS/default-deny and no browser grants: server-private hashed random state + separate hashed browser nonce, exact workspace/principal/provider/app/HTTPS redirect binding, single-use expiry and transactional consume. No existing OAuth, webhook, provider credentials, messaging, queue, paid plugin or @ishinaillab default changed.

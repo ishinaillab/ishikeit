@@ -198,6 +198,7 @@ describe.skipIf(db===undefined)("verified initial owner bootstrap on disposable 
     await db!.query("DELETE FROM public.ishikeit_initial_admin_provisioning");
     await db!.query("DELETE FROM auth.users WHERE id=$1",[ownerId]);
     const invite=vi.fn(async (_address:string)=>{
+      void _address;
       await db!.query(
         "INSERT INTO auth.users(id,email,email_confirmed_at) VALUES($1,$2,NULL)",
         [ownerId,email]

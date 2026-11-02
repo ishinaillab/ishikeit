@@ -131,7 +131,8 @@ describe("Messenger verified Page webhook subscriptions", () => {
     await expect(client(fetchImpl).reconcile(
       "page-access", pageId, knownPage, onVerifiedPage
     )).resolves.toEqual({ changed: false });
-    expect(onVerifiedPage).toHaveBeenCalledExactlyOnceWith(pageId);
+    expect(onVerifiedPage).toHaveBeenCalledTimes(1);
+    expect(onVerifiedPage).toHaveBeenCalledWith(pageId);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
@@ -179,6 +180,7 @@ describe("Messenger verified Page webhook subscriptions", () => {
     await expect(client(fetchImpl).reconcile(
       "page-access", pageId, knownPage, onVerifiedPage
     )).resolves.toEqual({ changed: true });
-    expect(onVerifiedPage).toHaveBeenCalledExactlyOnceWith(pageId);
+    expect(onVerifiedPage).toHaveBeenCalledTimes(1);
+    expect(onVerifiedPage).toHaveBeenCalledWith(pageId);
   });
 });

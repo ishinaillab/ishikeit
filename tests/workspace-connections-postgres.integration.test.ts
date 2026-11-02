@@ -403,8 +403,10 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     const pages=await portfolio.list("test-signed-session",{pageSize:1});
     expect(pages.items).toHaveLength(1);
     expect(pages.nextCursor).toBe(pages.items[0]?.workspaceId);
+    const cursor=pages.nextCursor;
+    if(cursor===undefined) throw new Error("Expected a second workspace page");
     const second=await portfolio.list("test-signed-session",{
-      pageSize:1,after:pages.nextCursor
+      pageSize:1,after:cursor
     });
     expect(second.items).toHaveLength(1);
     expect(second.nextCursor).toBeUndefined();

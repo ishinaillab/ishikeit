@@ -12,6 +12,9 @@ export interface BrowserAuthController {
     ReturnType<PrivateBrowserAuthService["listWorkspaces"]>;
   refresh(cookie:string):ReturnType<PrivateBrowserAuthService["refresh"]>;
   csrf(cookie:string):Promise<string>;
+  listTotpFactors(cookie:string):ReturnType<PrivateBrowserAuthService["listTotpFactors"]>;
+  enrollTotp(cookie:string):ReturnType<PrivateBrowserAuthService["enrollTotp"]>;
+  verifyTotp(cookie:string,factorId:string,code:string):ReturnType<PrivateBrowserAuthService["verifyTotp"]>;
   logout(cookie:string):Promise<void>;
   assertCsrf(cookie:string,submitted:string|undefined):void;
 }
@@ -25,6 +28,7 @@ const secret=z.string().regex(/^[A-Za-z0-9_-]{43}$/u);
 const requestSchema=z.object({email:z.email().max(320)}).strict();
 const verifySchema=z.object({code:z.string().regex(/^[0-9]{6,8}$/u)}).strict();
 const cursorSchema=z.object({after:z.string().uuid().optional()}).strict();
+const verifyTotpSchema=z.object({factorId:z.string().uuid(),code:z.string().regex(/^[0-9]{6}$/u)}).strict();
 
 function parseCookie(req:FastifyRequest,name:string):string|undefined {
   const header=req.headers.cookie;
@@ -196,6 +200,46 @@ export function registerPrivateBrowserAuthRoutes(
       return reply.code(200).send({status:"authenticated",expiresAt:data.expiresAt,
         csrfToken:data.csrfToken,workspaces:data.workspaces});
     }catch{return deny(reply).send({status:"unauthenticated"});}
+  });
+  server.get("/app/auth/mfa/factors",async(req,reply)=>{
+    privateResponse(reply);
+    if(!sameOrigin(req,false))return deny(reply,403).send({status:"forbidden"});
+    const value=session(req,reply);
+    if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+    try{
+      return reply.code(200).send({
+        factors:await deps.controller.listTotpFactors(value)
+      });
+    }catch{return deny(reply).send({status:"unauthenticated"});}
+  });
+  server.post("/app/auth/mfa/totp/enroll",{bodyLimit:256},async(req,reply)=>{
+    privateResponse(reply);
+    if(!mutation(req,reply))return reply;
+    const value=session(req,reply);
+    if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+    if(!csrf(req,reply,value))return reply;
+    const body=z.object({}).strict().safeParse(req.body);
+    if(!body.success)return deny(reply,400).send({status:"invalid_request"});
+    try{
+      const enrollment=await deps.controller.enrollTotp(value);
+      return reply.code(200).send(enrollment);
+    }catch{return deny(reply,403).send({status:"mfa_enrollment_unavailable"});}
+  });
+  server.post("/app/auth/mfa/totp/verify",{bodyLimit:512},async(req,reply)=>{
+    privateResponse(reply);
+    if(!mutation(req,reply))return reply;
+    const value=session(req,reply);
+    if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+    if(!csrf(req,reply,value))return reply;
+    const body=verifyTotpSchema.safeParse(req.body);
+    if(!body.success)return deny(reply,400).send({status:"invalid_request"});
+    try{
+      const data=await deps.controller.verifyTotp(value,body.data.factorId,body.data.code);
+      return reply.code(200).send({
+        status:"mfa_verified",expiresAt:data.expiresAt,csrfToken:data.csrfToken,
+        workspaces:data.workspaces
+      });
+    }catch{return deny(reply,403).send({status:"mfa_verification_failed"});}
   });
   server.post("/app/auth/logout",{bodyLimit:256},async(req,reply)=>{
     privateResponse(reply);

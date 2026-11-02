@@ -1,5 +1,17 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — Production migrations 0016–0018 applied through official Supabase MCP; protected invite gates updated
+
+- Confirmed Supabase production project `vhmrliqemkfxblzsoyaz` now has **all three** official, versioned migrations in `supabase_migrations.schema_migrations`:
+  - `20261102105740 ishikeit_initial_owner_bootstrap_audit` (source `migrations/0016_initial_owner_bootstrap_audit.sql`)
+  - `20261102105818 ishikeit_managed_platform_admin_provisioning` (source `migrations/0017_managed_platform_admin_provisioning.sql`)
+  - `20261102105835 ishikeit_workspace_member_invitations` (source `migrations/0018_workspace_member_invitations.sql`).
+- Each migration succeeded via authorized official `mcp__Supabase__apply_migration` (not SQL editor, not temporary Hostinger cron). Read-only independent Postgres validation confirmed that each of the four new private tables has RLS enabled, no `anon` or `authenticated` SELECT privilege and all are **EMPTY**. `auth.users` and `ishikeit_workspaces` still contain **zero** rows. No invitation, workspace, session or platform admin was invented or assigned.
+- The protected GitHub workflow previously used an independent private SQL checksum ledger to reapply migrations. That would now conflict with official migration provenance. Replaced this step with the read-only `scripts/verify-official-admin-migrations.mjs` gate, verifying exact SQL statements already recorded by Supabase, table RLS and no-client-grant invariants. Official history is now source of truth; no manual DB access is part of the owner-invite flow. Future migrations should continue via official Supabase CLI/MCP tracked history.
+- Workflow must run only from `main`, with explicit repository-level `ISHIKEIT_ADMIN_PROVISIONING_ENABLED=true`, a protected GitHub Environment `ishikeit-provisioning`, and an explicit dispatch authorization for an initial invite. Reconciliation remains independently opt-in. No GitHub repository actions-environment secret or configuration write is available through the installed GitHub connector. Existing local Windows `gh` and `supabase` commands are absent; do NOT claim environment/secrets were set up.
+- Still blocked on an approved and properly guarded GitHub Actions environment with `ISHIKEIT_DATABASE_URL` and `ISHIKEIT_SUPABASE_SECRET_KEY` (stored only as masked secrets), approved Auth project URL, approval identifier, protected initial owner email `admin@ishinaillab.com`, and live custom Supabase SMTP + invitation/OTP template readback. No live invited user yet. Browser auth and workspace invitation flags remain off.
+- Authoritative standards: https://supabase.com/docs/guides/deployment/database-migrations, https://supabase.com/docs/guides/auth/auth-smtp, https://supabase.com/docs/reference/javascript/auth-admin-inviteuserbyemail, https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments .
+
 ## 2026-11-02 — Private owner-managed workspace member invitations, migration 0018
 
 - Added `migrations/0018_workspace_member_invitations.sql` with a non-public, RLS-protected, no-client-grant per-workspace invitation ledger, exact issuer/user identity and unique pending invitation keys. Protected migration runner now includes 0018 with checksums/replay detection, GitHub CI tests it in disposable PG17.

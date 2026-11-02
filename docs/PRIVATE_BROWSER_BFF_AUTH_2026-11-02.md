@@ -168,3 +168,21 @@ scheduled removal of expired, encrypted credential records. **Fix:**
 
 The production browser login remains **disabled** until real authorized
 user enrollment and email-template/Hostinger proxy verification succeed.
+
+## Official Auth API contract and bounded upstream decoding (2026-11-02)
+
+`SupabaseEmailOtpClient` is now covered by independent, local fake-fetch
+unit tests against the **documented** Supabase Auth OTP / verify / refresh /
+local-logout HTTP requests. In particular, `/otp` explicitly sends
+`create_user:false` and does not send any bearer credential, `/verify`
+uses `type:'email'`, refresh specifies `grant_type=refresh_token`, and
+logout uses the authenticated `scope=local` route. Exact origin and
+publishable-key restrictions, no-store/no redirects, generic provider error
+messages, and zero redirect follow-through are independently checked.
+
+For token responses, the client now enforces an upper bound of 16 KiB **as
+bytes arrive** from the response stream, including chunked/unknown-length
+responses, instead of calling `response.text()` before checking its final
+length. The official token values remain server-held and are revalidated
+through `SupabaseAuthPrincipalVerifier` before use. The BFF flag is still
+OFF and no production Supabase Auth HTTP calls are made by the new code.

@@ -22,7 +22,7 @@ const jwtShape = z.string().min(50).max(8192)
 const providerResponse = z.object({
   id,
   role: z.literal("authenticated"),
-  is_anonymous: z.boolean().optional(),
+  is_anonymous: z.literal(false),
   banned_until: z.string().nullable().optional()
 }).passthrough();
 const claimsSchema = z.object({
@@ -141,7 +141,7 @@ export class SupabaseAuthPrincipalVerifier {
       || (claims.aud !== "authenticated"
         && (!Array.isArray(claims.aud) || !claims.aud.includes("authenticated")))
       || claims.exp * 1000 <= now
-      || claims.exp * 1000 > now + 86400_000) {
+) {
       throw new Error("User authentication invalid");
     }
 
@@ -167,7 +167,7 @@ export class SupabaseAuthPrincipalVerifier {
     let user: z.infer<typeof providerResponse>;
     try { user = providerResponse.parse(await smallJson(response)); }
     catch { throw new Error("User authentication invalid"); }
-    if (user.id !== claims.sub || user.is_anonymous === true
+    if (user.id !== claims.sub
       || (user.banned_until !== undefined && user.banned_until !== null
         && (Number.isNaN(Date.parse(user.banned_until))
           || Date.parse(user.banned_until) > now))) {

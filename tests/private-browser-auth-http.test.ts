@@ -115,6 +115,29 @@ describe("private cookie-only browser auth routes",()=>{
     await server.close();
   });
 
+  it("exposes no password login or recovery routes even when BFF is enabled",async()=>{
+    const {server,controller}=testServer(true);
+    const passwordPayload={email:"person@example.com",password:"sensitive_not_for_the_browser"};
+    for(const url of [
+      "/app/auth/password",
+      "/app/auth/login",
+      "/app/auth/recover",
+      "/app/auth/reset-password"
+    ]){
+      const response=await server.inject({
+        method:"POST",url,headers,payload:passwordPayload
+      });
+      expect(response.statusCode).toBe(404);
+    }
+    const rejected=await server.inject({
+      method:"POST",url:"/app/auth/request-otp",
+      headers,payload:passwordPayload
+    });
+    expect(rejected.statusCode).toBe(400);
+    expect(controller.begin).not.toHaveBeenCalled();
+    await server.close();
+  });
+
   it("registers no login/session endpoints when production gate is absent",async()=>{
     const {server}=testServer(false);
     const r=await server.inject({method:"GET",url:"/app/auth/session",headers:{host}});

@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
+import { Buffer } from "node:buffer";
 
 /** Supabase Management API credential is NOT the Supabase Auth project
  * sb_secret key. Requires a separate read-only scoped personal access token

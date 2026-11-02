@@ -41,14 +41,14 @@ function fakeResponse(status = 200, overrides: Record<string,unknown> = {}) {
 }
 function verifier(opts: {
   status?:number;user?:Record<string,unknown>;active?:boolean;
-  dbFail?:boolean; fetchFail?:boolean; calls?: ReturnType<typeof vi.fn>;
+  dbFail?:boolean; fetchFail?:boolean;
+  calls?: (url: string | URL | Request, options?: RequestInit) => void;
 } = {}) {
-  const observed = opts.calls ?? vi.fn();
   return new SupabaseAuthPrincipalVerifier({
     projectUrl:origin,publishableKey:key,db:fakeDb(opts.active ?? true,opts.dbFail),
     now:()=>now,
     fetchImpl: (url,options) => {
-      observed(url,options);
+      opts.calls?.(url,options);
       if(opts.fetchFail) return Promise.reject(new Error("secret upstream content"));
       return Promise.resolve(fakeResponse(opts.status ?? 200,opts.user));
     }

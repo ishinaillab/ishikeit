@@ -1,5 +1,11 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — Login eligibility and distributed OTP attack defenses (#230)
+
+- Account login security check confirmed that OTP dispatch previously allowed unconfirmed, deleted or banned Supabase Auth users when workspace membership was active. The private BFF now requires verified email confirmation and a nondeleted, nonbanned permanent Supabase Auth user before dispatch. It already requires current active membership, server-only provider identity proof, and prohibits public signup.
+- Added per-email dispatch cooldown and distributed OTP verification counter keyed by email (private HMAC bucket), in addition to network-wide limits and five tries per cookie. These are independent Ishikeit security controls; Supabase's rate limits are separately configurable and no Meta provider messaging policy is hardcoded here. Isolated PG17 regression now tests ban/deletion/unconfirmed denial and multi-nonce/network guessing. No DB schema/config secrets, workspace assignments, provider routing, production feature flag, customer records or 7 dirty local Windows files changed. Browser login remains OFF and requires the verified account holder enrollment/SMTP/template + real browser test.
+- Authority: https://supabase.com/docs/guides/auth/rate-limits and https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
+
 ## 2026-11-02 — Official Supabase Auth REST contract tests and bounded token responses (#230)
 
 - Security review found the BFF token client used `response.text()` on token endpoints **before** checking response body size; a chunked/unknown-length oversized response could allocate excessive memory. Now enforces a strict 16 KiB byte limit while reading the streamed response, rejects oversized declared lengths and invalid/malformed token structures with sanitized failures. Verifier still checks the actual signed user/session separately.

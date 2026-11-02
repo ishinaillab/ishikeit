@@ -186,3 +186,14 @@ responses, instead of calling `response.text()` before checking its final
 length. The official token values remain server-held and are revalidated
 through `SupabaseAuthPrincipalVerifier` before use. The BFF flag is still
 OFF and no production Supabase Auth HTTP calls are made by the new code.
+
+## Account-level OTP anti-abuse hardening (2026-11-02)
+
+Based on Supabase Auth's [email OTP/rate-limit documentation](https://supabase.com/docs/guides/auth/rate-limits) and the [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html), Ishikeit applies its **own** server-side safeguards in addition to, not instead of, configurable Supabase Auth quotas:
+
+- The invite-only OTP flow verifies a current active workspace membership **and** that the corresponding trusted Supabase Auth user has a confirmed email, is not deleted, is not anonymous, and is not currently banned. No public signup or unverified invite bypass.
+- A separate Ishikeit email cooldown prevents repeated OTP dispatch to the same address during an initial 60-second interval. Supabase's actual provider quota is independently configurable in the Auth dashboard; the application must not imply this local value is a provider contract.
+- OTP verification now uses a **per-account** rolling-window cap across network sources and new browser login nonces. This complements the existing per-nonce five guesses and network-level throttling, addressing distributed guessing with independent IPs. All bucket identifiers remain keyed HMAC values in the server-private table.
+- Negative PostgreSQL 17 tests use realistic Auth user confirmation/ban/deletion fields and prove requests are denied even if a workspace membership exists; cross-nonce/cross-network verification attempts stop before hitting the official provider once the account cap is met.
+
+This is an application-level security policy, not a provider entitlement or a permanent hardcoded interpretation of Meta/Instagram/WhatsApp messaging policies. The BROWSER_AUTH_ENABLED feature flag remains OFF pending real verified owner enrollment, production SMTP/OTP template and independent Hostinger BFF configuration.

@@ -63,7 +63,8 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
   beforeAll(async()=>{
     await db!.query(`CREATE SCHEMA IF NOT EXISTS auth;
       CREATE TABLE IF NOT EXISTS auth.users (
-        id uuid PRIMARY KEY,email text,is_anonymous boolean NOT NULL DEFAULT false
+        id uuid PRIMARY KEY,email text,is_anonymous boolean NOT NULL DEFAULT false,
+        email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz
       );`);
     await db!.query(await readFile("migrations/0010_ishikeit_workspace_connections.sql","utf8"));
     await db!.query(await readFile("migrations/0014_private_browser_auth.sql","utf8"));
@@ -73,7 +74,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       "INSERT INTO public.ishikeit_workspace_memberships(workspace_id,auth_issuer,auth_subject,role) VALUES($1,$2,$3,'owner')",
       [workspaceId,origin,userId]
     );
-    await db!.query("INSERT INTO auth.users(id,email,is_anonymous) VALUES($1,$2,false)",
+    await db!.query("INSERT INTO auth.users(id,email,is_anonymous,email_confirmed_at) VALUES($1,$2,false,now())",
       [userId,"invited@example.com"]);
   });
   beforeEach(async()=>{
@@ -81,6 +82,10 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
        public.ishikeit_browser_login_attempts,public.ishikeit_browser_auth_limits`);
     vi.clearAllMocks();
     refreshUses=0;
+    await db!.query(
+      "UPDATE auth.users SET email_confirmed_at=now(),deleted_at=NULL,banned_until=NULL WHERE id=$1",
+      [userId]
+    );
   });
   afterAll(async()=>{
     try {
@@ -171,7 +176,9 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     await service!.begin("invited@example.com","test-network-b");
     await service!.begin("invited@example.com","test-network-c");
     await service!.begin("invited@example.com","test-network-d");
-    expect(otpClient.sendOtp).toHaveBeenCalledTimes(3);
+    // The app enforces an independent email cooldown even if Supabase's
+    // provider quota is configured more permissively.
+    expect(otpClient.sendOtp).toHaveBeenCalledTimes(1);
     await service!.verify(login,"123456","test-network-a");
     await expect(service!.verify(login,"123456","test-network-a"))
       .rejects.toThrow(/verification rejected/i);
@@ -224,6 +231,51 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     const expired=await cleaner.runOnce();
     expect(expired.expiredSessions).toBe(1);
     await expect(service!.csrf(session.cookieValue)).rejects.toThrow(/session/i);
+  });
+
+  it("refuses unconfirmed, banned and deleted Auth users even if their membership is active",async()=>{
+    const cases=[
+      "UPDATE auth.users SET email_confirmed_at=NULL WHERE id=$1",
+      "UPDATE auth.users SET banned_until=now()+interval '1 day' WHERE id=$1",
+      "UPDATE auth.users SET deleted_at=now() WHERE id=$1"
+    ];
+    for(let i=0;i<cases.length;i++){
+      await db!.query(
+        "UPDATE auth.users SET email_confirmed_at=now(),deleted_at=NULL,banned_until=NULL WHERE id=$1",
+        [userId]
+      );
+      await db!.query(cases[i]!,[userId]);
+      await service!.begin("invited@example.com","network-"+i);
+      await db!.query("TRUNCATE public.ishikeit_browser_auth_limits");
+    }
+    expect(otpClient.sendOtp).not.toHaveBeenCalled();
+    await db!.query(
+      "UPDATE auth.users SET email_confirmed_at=now(),deleted_at=NULL,banned_until=NULL WHERE id=$1",
+      [userId]
+    );
+    await service!.begin("invited@example.com","valid-network");
+    expect(otpClient.sendOtp).toHaveBeenCalledTimes(1);
+  });
+
+  it("throttles OTP verification across different nonces and remote addresses for one account",async()=>{
+    const nonces=[
+      await service!.begin("invited@example.com","network-x"),
+      await service!.begin("invited@example.com","network-y"),
+      await service!.begin("invited@example.com","network-z")
+    ];
+    for(let i=0;i<10;i++){
+      otpClient.verifyOtp.mockRejectedValueOnce(new Error("simulated rejected OTP"));
+      await expect(service!.verify(
+        nonces[Math.floor(i/5)]!,"111111","remote-"+i
+      )).rejects.toThrow("simulated rejected OTP");
+    }
+    await expect(service!.verify(nonces[2]!,"111111","new-remote"))
+      .rejects.toThrow(/verification rejected/i);
+    expect(otpClient.verifyOtp).toHaveBeenCalledTimes(10);
+    const count=await db!.query<{hits:number}>(
+      "SELECT hits FROM public.ishikeit_browser_auth_limits WHERE hits>10"
+    );
+    expect(count.rows.some(row=>row.hits===11)).toBe(true);
   });
 
   it("enforces private RLS and prevents Data API access to all sensitive tables",async()=>{

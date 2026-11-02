@@ -1,5 +1,10 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — Exact modern Supabase Admin API key header correction
+
+- Audited official Supabase current JavaScript SDK source: modern `sb_secret_...` project keys are opaque API keys, **not JWTs**. The initial invitation adapter must supply the secret only in the `apikey` header, never as `Authorization: Bearer`. Updated the transport and added a negative test asserting `Authorization` is absent. Source: https://github.com/supabase/supabase-js/blob/master/packages/core/supabase-js/src/lib/fetch.ts and https://supabase.com/docs/guides/getting-started/api-keys.
+- No live Supabase secret has been injected, no invitation issued, and browser login stays OFF; original PR #245 remains otherwise unchanged. Full CI and release proof required before any protected invitation run.
+
 ## 2026-11-02 — Managed initial platform administrator and protected automatic invitations (#230)
 
 - Replaced the proposed routine **manual database / manual Dashboard invite** workflow with an **application-managed first-admin provisioning state machine**, invoked only from the protected deployment environment. A verified root provisioning approval is still required; an open signup or unauthenticated public bootstrap endpoint is never allowed.

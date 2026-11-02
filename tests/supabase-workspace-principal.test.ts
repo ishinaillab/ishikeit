@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import { SupabaseAuthPrincipalVerifier } from "../src/auth/supabase-workspace-principal.js";
 import { AuthenticatedWorkspaceConnectionIntents } from "../src/auth/authenticated-workspace-connection.js";
 import type { PostgresDatabase } from "../src/persistence/postgres.js";
-import type { PostgresWorkspaceConnectionIntents } from "../src/persistence/workspace-connection-intents.js";
 
 const project = "abcdefghijklmnopqrst";
 const origin = `https://${project}.supabase.co`;
@@ -24,11 +23,11 @@ function jwt(overrides: Record<string,unknown> = {}): string {
 }
 function fakeDb(active: boolean, fail = false): Pick<PostgresDatabase,"query"> {
   return {
-    query: vi.fn(async (sql: string, params?: readonly unknown[]) => {
+    query: vi.fn((sql: string, params?: readonly unknown[]) => {
       if(fail) throw new Error("db secret must never appear");
       expect(sql).toContain("auth.sessions");
       expect(params).toEqual([sessionId,subject]);
-      return {rows:[{active}],rowCount:1};
+      return Promise.resolve({rows:[{active}],rowCount:1});
     })
   } as unknown as Pick<PostgresDatabase,"query">;
 }
@@ -48,11 +47,11 @@ function verifier(opts: {
   return new SupabaseAuthPrincipalVerifier({
     projectUrl:origin,publishableKey:key,db:fakeDb(opts.active ?? true,opts.dbFail),
     now:()=>now,
-    fetchImpl: (async (url,options) => {
+    fetchImpl: (url,options) => {
       observed(url,options);
-      if(opts.fetchFail) throw new Error("secret upstream content");
-      return fakeResponse(opts.status ?? 200,opts.user);
-    }) as typeof fetch
+      if(opts.fetchFail) return Promise.reject(new Error("secret upstream content"));
+      return Promise.resolve(fakeResponse(opts.status ?? 200,opts.user));
+    }
   });
 }
 
@@ -68,12 +67,10 @@ describe("trusted Supabase Auth user and live session workspace boundary", () =>
       expiresAt:new Date(now+3600000).toISOString()
     });
     expect(calls).toHaveBeenCalledTimes(1);
-    const [url,options] = calls.mock.calls[0]!;
-    expect(url).toBe(issuer+"/user");
-    expect(options).toMatchObject({
+    expect(calls).toHaveBeenCalledWith(issuer+"/user",expect.objectContaining({
       method:"GET",redirect:"error",cache:"no-store",
       headers:{Authorization:"Bearer "+token,apikey:key,Accept:"application/json"}
-    });
+    }));
   });
 
   it("rejects expired, foreign issuer, unsupported audience/role and malformed tokens BEFORE fetch",async()=>{
@@ -142,19 +139,19 @@ describe("trusted Supabase Auth user and live session workspace boundary", () =>
 
   it("never accepts principal or role from an untrusted connect request",async()=>{
     const identity=verifier();
-    const begin=vi.fn(async (input: unknown) => {
+    const begin=vi.fn((input: unknown) => {
       expect(input).toMatchObject({
         actor:{issuer,subject},sessionId,workspaceId:"123e4567-e89b-42d3-a456-426614174000"
       });
-      return {state:"s",browserNonce:"n",codeChallenge:"c",expiresAt:"2027-01-01T00:00:00Z"};
+      return Promise.resolve({state:"s",browserNonce:"n",codeChallenge:"c",expiresAt:"2027-01-01T00:00:00Z"});
     });
-    const consume=vi.fn(async (input:unknown)=>{
+    const consume=vi.fn((input:unknown)=>{
       expect(input).toMatchObject({actor:{issuer,subject},sessionId});
-      return undefined;
+      return Promise.resolve(undefined);
     });
     const facade = new AuthenticatedWorkspaceConnectionIntents(identity,{
       begin,consume
-    } as unknown as PostgresWorkspaceConnectionIntents);
+    });
     const req={
       accessToken:jwt(),workspaceId:"123e4567-e89b-42d3-a456-426614174000",
       provider:"instagram",providerApplicationKey:"test-app",
@@ -171,7 +168,7 @@ describe("trusted Supabase Auth user and live session workspace boundary", () =>
   it("does not call intent storage without a valid live session",async()=>{
     const fakeIntents={begin:vi.fn(),consume:vi.fn()};
     const facade = new AuthenticatedWorkspaceConnectionIntents(
-      verifier({active:false}),fakeIntents as unknown as PostgresWorkspaceConnectionIntents
+      verifier({active:false}),fakeIntents
     );
     await expect(facade.begin({
       accessToken:jwt(),workspaceId:randomUUID(),provider:"instagram",

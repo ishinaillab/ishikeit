@@ -10,6 +10,10 @@ on:
         options:
           - invite
           - reconcile
+      authorization:
+        description: 'For the initial invite, enter APPROVE_FIRST_ISHIKEIT_INVITE (reconcile may use the same value)'
+        required: true
+        type: string
   schedule:
     # Optional automation; the job runs only when explicitly enabled in
     # the protected environment or repository variable below.
@@ -25,8 +29,10 @@ concurrency:
 jobs:
   provision:
     if: >-
-      github.event_name == 'workflow_dispatch'
-      || vars.ISHIKEIT_AUTO_ADMIN_RECONCILIATION == 'true'
+      github.ref == 'refs/heads/main'
+      && vars.ISHIKEIT_ADMIN_PROVISIONING_ENABLED == 'true'
+      && (github.event_name == 'workflow_dispatch'
+        || vars.ISHIKEIT_AUTO_ADMIN_RECONCILIATION == 'true')
     runs-on: ubuntu-latest
     environment: ishikeit-provisioning
     timeout-minutes: 10
@@ -42,16 +48,23 @@ jobs:
           APPROVED_EMAIL: ${{ vars.ISHIKEIT_INITIAL_ADMIN_EMAIL }}
           APPROVED_BY: ${{ vars.ISHIKEIT_INITIAL_ADMIN_APPROVED_BY }}
           APPROVAL_REFERENCE: ${{ vars.ISHIKEIT_INITIAL_ADMIN_APPROVAL_REFERENCE }}
+          PROVISIONING_ALLOWED: ${{ vars.ISHIKEIT_ADMIN_PROVISIONING_ENABLED }}
+          AUTHORIZATION: ${{ inputs.authorization }}
+          OPERATION: ${{ inputs.operation }}
         run: |
           set -euo pipefail
+          test "$PROVISIONING_ALLOWED" = 'true'
           test "$APPROVED_EMAIL" = 'admin@ishinaillab.com'
           test -n "$APPROVED_BY"
           test -n "$APPROVAL_REFERENCE"
-      - name: Apply versioned private administrator migrations atomically
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            test "$AUTHORIZATION" = 'APPROVE_FIRST_ISHIKEIT_INVITE'
+            [[ "$OPERATION" == "invite" || "$OPERATION" == "reconcile" ]]
+          fi
+      - name: Verify official Supabase migration history and private RBAC schema
         env:
           DATABASE_URL: ${{ secrets.ISHIKEIT_DATABASE_URL }}
-          ISHIKEIT_ADMIN_MIGRATION_APPROVED: 'true'
-        run: node scripts/apply-private-admin-migrations.mjs --execute
+        run: node scripts/verify-official-admin-migrations.mjs
       - name: Invite owner through official Supabase Auth Admin or reconcile email acceptance
         env:
           DATABASE_URL: ${{ secrets.ISHIKEIT_DATABASE_URL }}

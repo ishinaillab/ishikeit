@@ -1,0 +1,96 @@
+name: Initial Ishikeit Admin — protected automated provisioning
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Issue the first official invitation or reconcile the accepted invitation'
+        required: true
+        type: choice
+        options:
+          - invite
+          - reconcile
+  schedule:
+    # Optional automation; the job runs only when explicitly enabled in
+    # the protected environment or repository variable below.
+    - cron: '17 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ishikeit-first-administrator
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || vars.ISHIKEIT_AUTO_ADMIN_RECONCILIATION == 'true'
+    runs-on: ubuntu-latest
+    environment: ishikeit-provisioning
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - name: Verify protected approval and exact nominated administrator
+        env:
+          APPROVED_EMAIL: ${{ vars.ISHIKEIT_INITIAL_ADMIN_EMAIL }}
+          APPROVED_BY: ${{ vars.ISHIKEIT_INITIAL_ADMIN_APPROVED_BY }}
+          APPROVAL_REFERENCE: ${{ vars.ISHIKEIT_INITIAL_ADMIN_APPROVAL_REFERENCE }}
+        run: |
+          set -euo pipefail
+          test "$APPROVED_EMAIL" = 'admin@ishinaillab.com'
+          test -n "$APPROVED_BY"
+          test -n "$APPROVAL_REFERENCE"
+      - name: Apply versioned private administrator migrations atomically
+        env:
+          DATABASE_URL: ${{ secrets.ISHIKEIT_DATABASE_URL }}
+          ISHIKEIT_ADMIN_MIGRATION_APPROVED: 'true'
+        run: node scripts/apply-private-admin-migrations.mjs --execute
+      - name: Invite owner through official Supabase Auth Admin or reconcile email acceptance
+        env:
+          DATABASE_URL: ${{ secrets.ISHIKEIT_DATABASE_URL }}
+          SUPABASE_AUTH_PROJECT_URL: ${{ vars.ISHIKEIT_SUPABASE_PROJECT_URL }}
+          SUPABASE_AUTH_SECRET_KEY: ${{ secrets.ISHIKEIT_SUPABASE_SECRET_KEY }}
+          ISHIKEIT_INITIAL_ADMIN_EMAIL: ${{ vars.ISHIKEIT_INITIAL_ADMIN_EMAIL }}
+          ISHIKEIT_INITIAL_ADMIN_WORKSPACE: ${{ vars.ISHIKEIT_INITIAL_ADMIN_WORKSPACE }}
+          ISHIKEIT_INITIAL_ADMIN_APPROVED_BY: ${{ vars.ISHIKEIT_INITIAL_ADMIN_APPROVED_BY }}
+          ISHIKEIT_INITIAL_ADMIN_APPROVAL_REFERENCE: ${{ vars.ISHIKEIT_INITIAL_ADMIN_APPROVAL_REFERENCE }}
+          ISHIKEIT_INITIAL_ADMIN_CONFIRMATION: 'APPROVE_ISHIKEIT_ADMIN:admin@ishinaillab.com'
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          npm run build
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" || "${OPERATION}" == "reconcile" ]]; then
+            node dist/operations/provision-platform-admin.js --reconcile
+          else
+            node dist/operations/provision-platform-admin.js --invite
+          fi
+      - name: Confirm the database did not grant an unverified identity
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.ISHIKEIT_DATABASE_URL }}
+        run: |
+          if [[ -z "${DATABASE_URL:-}" ]]; then exit 0; fi
+          node --input-type=module -e "
+            import pg from 'pg';
+            const db=new pg.Client({connectionString:process.env.DATABASE_URL});
+            try {
+              await db.connect();
+              const r=await db.query(`
+                SELECT count(*)::int AS invalid
+                FROM public.ishikeit_platform_administrators p
+                LEFT JOIN auth.users u ON u.id=p.user_id
+                WHERE p.state='active' AND (
+                  u.id IS NULL OR u.email_confirmed_at IS NULL
+                  OR u.is_anonymous=true OR u.deleted_at IS NOT NULL
+                  OR (u.banned_until IS NOT NULL AND u.banned_until>now())
+                )`);
+              if (r.rows[0].invalid!==0) process.exitCode=1;
+            } finally {await db.end();}
+          "

@@ -1,5 +1,13 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — Initial owner invitation and controlled bootstrap preparation (#230)
+
+- Current production preflight: Supabase Auth has zero users, zero Ishikeit workspaces/memberships/factors; Hostinger exposes no BROWSER_AUTH or SUPABASE_AUTH environment keys. Do not infer or assign a first owner. Login remains disabled.
+- Added private audit table in migration 0016 and an internal-only, one-time bootstrap service with operator confirmation and an executable that never runs automatically. It requires a specific existing Supabase Auth UUID and matching confirmed email, a non-banned/nondeleted permanent user, an independently recorded approval reference and an empty first-workspace database. Transactions lock workspace tables and write exactly one workspace, one owner membership and an immutable singleton approval audit atomically. It will not invite users, make provider grants, or create an HTTP route.
+- Added isolated PostgreSQL 17 security tests for valid bootstrap, missing/unconfirmed/wrong user, banned/deleted/anonymous, spoofed project origin, concurrent bootstrap, replay, preexisting workspace and private audit visibility. Run tests before deploying migration. Seven unpublished local Windows files remain untouched.
+- Required real-world hold: Supabase administrator must use official invitation flow and configured production SMTP plus distinct invitation/email-code templates; intended business owner must accept invite and confirm mailbox, then an authorized operator verifies ownership independently before running the private bootstrap. Afterward, Hostinger BFF secrets/proxy must be configured and a genuine OTP-to-MFA-to-logout canary passed before activating private login. Public registration and provider-connection/self-service remain restricted.
+- Authority: https://supabase.com/docs/guides/auth/users, https://supabase.com/docs/guides/auth/auth-smtp, https://supabase.com/docs/guides/auth/auth-email-passwordless, https://supabase.com/docs/guides/auth/auth-mfa/totp.
+
 ## 2026-11-02 — Private server-held TOTP enrollment and step-up verification (#230)
 
 - Added `SupabaseTotpMfaClient` with official authenticated GoTrue endpoints for TOTP factor enrollment, challenge, and verify, bounded network responses, no service-role key, no bearer leak, no redirects and no hand-rolled TOTP.

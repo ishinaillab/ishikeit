@@ -87,6 +87,12 @@ jobs:
         # Run AFTER other suites complete; those suites own inbound_events/outbox
         # test tables and cannot safely share them in parallel.
         run: npx vitest run tests/tenant-event-provenance-postgres.integration.test.ts
+      - name: Verify private BFF OTP and encrypted browser sessions on disposable PostgreSQL 17
+        env:
+          PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
+        # Run sequentially: this fixture owns the disposable auth/users and
+        # workspace tables that other integration tests also construct.
+        run: npx vitest run tests/private-browser-auth-postgres.integration.test.ts
       - name: Restart isolated PostgreSQL 17 service and prove pool recovery
         env:
           PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test

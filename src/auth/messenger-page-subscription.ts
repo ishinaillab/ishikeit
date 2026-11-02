@@ -63,7 +63,8 @@ export class MessengerPageSubscriptionClient {
   async reconcile(
     accessToken: string,
     pageId: string,
-    isKnownSignedInboundPage: (pageId: string) => Promise<boolean>
+    isKnownSignedInboundPage: (pageId: string) => Promise<boolean>,
+    onVerifiedPage?: (verifiedPageId: string) => Promise<void>
   ): Promise<{ changed: boolean }> {
     if (accessToken.trim().length === 0) {
       throw new MessengerPageSubscriptionError("access_token_missing");
@@ -82,7 +83,12 @@ export class MessengerPageSubscriptionClient {
 
     const current = await this.#readFields(pageId, accessToken);
     const missing = MESSENGER_PAGE_WEBHOOK_FIELDS.filter((field) => !current.includes(field));
-    if (missing.length === 0) return { changed: false };
+    if (missing.length === 0) {
+      // Only a successfully authenticated, identity-bound provider readback
+      // may feed the server's per-account observation layer.
+      await onVerifiedPage?.(pageId);
+      return { changed: false };
+    }
 
     // Preserve any previously configured fields. A subsequent startup must
     // never silently remove a Page's unrelated existing subscriptions.
@@ -102,6 +108,7 @@ export class MessengerPageSubscriptionClient {
     if (!MESSENGER_PAGE_WEBHOOK_FIELDS.every((field) => confirmed.includes(field))) {
       throw new MessengerPageSubscriptionError("readback_mismatch");
     }
+    await onVerifiedPage?.(pageId);
     return { changed: true };
   }
 

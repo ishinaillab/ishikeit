@@ -1,5 +1,11 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — Messenger verified Page account evidence (Phase 2 incremental #206)
+
+- After the existing signed-inbound Page identity check and successful authenticated Meta `/{page-id}/subscribed_apps` reconciliation, a **verified Messenger Page account** observation is persisted as `messenger.page` under the exact Page ID. An upgrade is observed only after confirmed provider readback; rejected/foreign subscriptions never create evidence. Store failure is logged without changing provider send-time policy.
+- This proves provider Page access **only**. It does **not** imply `pages_messaging`, an approved app permission, universal messaging authorization, subscription tier, or recipient consent. The capability registry must still report Messenger sending as unverified when `messenger.messaging_authorization` is absent. The existing message sender, provider policy windows, and permissions are unchanged. Facts still expire according to the existing five-minute internal observation TTL; full read-only refresh, actual Meta scope grant verification and all-provider coverage remain open in #206.
+- No migration or new provider API endpoint is required; bounded fake-provider regression tests exercise exact identity, denied/foreign subscription and confirmed upgrade.
+
 ## 2026-11-02 — Telegram Business permission changes and future rights discovery
 
 - Official Bot API `BusinessConnection` has `is_enabled` and extensible `BusinessBotRights` `can_*` booleans. A studio-owner-verified `getBusinessConnection` readback now returns enabled/disabled and all supplied boolean rights, not just `can_reply`. No action becomes callable from right discovery alone: installed official adapter and reviewed contract still required.

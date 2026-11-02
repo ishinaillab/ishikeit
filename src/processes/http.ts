@@ -530,7 +530,21 @@ async function reconcileMessengerManagedPage(): Promise<void> {
     const result = await client.reconcile(
       env.META_MESSENGER_ACCESS_TOKEN,
       recentPageId,
-      (pageId) => messengerManagedPageMatchesInbound(db, pageId)
+      (pageId) => messengerManagedPageMatchesInbound(db, pageId),
+      async (verifiedPageId) => {
+        // The exact Page was confirmed through independently signed inbound
+        // history AND Meta's authenticated subscribed_apps readback. This
+        // proves Page access, NOT pages_messaging or an app-level scope grant.
+        // Evidence is observation-only and never changes outbound eligibility.
+        try {
+          await capabilityFacts.record(latestObservedProof(
+            "messenger", verifiedPageId, ["messenger.page"],
+            "provider_api", "page_subscribed_apps_readback"
+          ));
+        } catch {
+          logger.warn("Messenger verified Page evidence persistence unavailable");
+        }
+      }
     );
     logger.info(
       "Messenger verified Page webhook subscription reconciled; changed=" + String(result.changed)

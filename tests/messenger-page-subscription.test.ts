@@ -122,4 +122,65 @@ describe("Messenger verified Page webhook subscriptions", () => {
     expect(message).not.toContain("private-page-access");
     expect(message).not.toContain(pageId);
   });
+
+  it("emits only the exact verified Page after successful subscribed-app readback", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(json({ data: [{
+      id: appId, subscribed_fields: [...MESSENGER_PAGE_WEBHOOK_FIELDS]
+    }] }));
+    const onVerifiedPage = vi.fn(() => Promise.resolve());
+    await expect(client(fetchImpl).reconcile(
+      "page-access", pageId, knownPage, onVerifiedPage
+    )).resolves.toEqual({ changed: false });
+    expect(onVerifiedPage).toHaveBeenCalledTimes(1);
+    expect(onVerifiedPage).toHaveBeenCalledWith(pageId);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("never emits an account grant from foreign app subscriptions or unverified Pages", async () => {
+    const onVerifiedPage = vi.fn(() => Promise.resolve());
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(json({ data: [{
+      id: "999999999999", subscribed_fields: [...MESSENGER_PAGE_WEBHOOK_FIELDS]
+    }] }));
+    await expect(client(fetchImpl).reconcile(
+      "page-access", pageId, knownPage, onVerifiedPage
+    )).rejects.toMatchObject({ stage: "app_not_subscribed_to_page" });
+    await expect(client(fetchImpl).reconcile(
+      "page-access", pageId, () => Promise.resolve(false), onVerifiedPage
+    )).rejects.toMatchObject({ stage: "page_identity_mismatch" });
+    expect(onVerifiedPage).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("never emits a verified Page when a provider write lacks confirmed readback", async () => {
+    const onVerifiedPage = vi.fn(() => Promise.resolve());
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ data: [{
+        id: appId, subscribed_fields: ["messages"]
+      }] }))
+      .mockResolvedValueOnce(json({ success: true }))
+      .mockResolvedValueOnce(json({ data: [{
+        id: appId, subscribed_fields: ["messages"]
+      }] }));
+    await expect(client(fetchImpl).reconcile(
+      "page-access", pageId, knownPage, onVerifiedPage
+    )).rejects.toMatchObject({ stage: "readback_mismatch" });
+    expect(onVerifiedPage).not.toHaveBeenCalled();
+  });
+
+  it("emits Page evidence only after confirmed subscription upgrade", async () => {
+    const onVerifiedPage = vi.fn(() => Promise.resolve());
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ data: [{
+        id: appId, subscribed_fields: ["messages"]
+      }] }))
+      .mockResolvedValueOnce(json({ success: true }))
+      .mockResolvedValueOnce(json({ data: [{
+        id: appId, subscribed_fields: [...MESSENGER_PAGE_WEBHOOK_FIELDS]
+      }] }));
+    await expect(client(fetchImpl).reconcile(
+      "page-access", pageId, knownPage, onVerifiedPage
+    )).resolves.toEqual({ changed: true });
+    expect(onVerifiedPage).toHaveBeenCalledTimes(1);
+    expect(onVerifiedPage).toHaveBeenCalledWith(pageId);
+  });
 });

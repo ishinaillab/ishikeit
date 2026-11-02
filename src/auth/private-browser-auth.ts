@@ -7,6 +7,7 @@ import type { SupabaseEmailOtpClient, SupabaseIssuedTokens } from "./supabase-em
 import type { SupabaseTotpMfaClient, TotpEnrollment } from "./supabase-totp-mfa.js";
 import type { AuthenticatedWorkspacePortfolio, WorkspacePage } from "./authenticated-workspace-portfolio.js";
 import type { PostgresDatabase, SqlExecutor } from "../persistence/postgres.js";
+import type { PostgresWorkspaceInvitations, InviteSummary } from "./workspace-member-invitations.js";
 
 const bearer = z.string().min(20).max(4096).regex(/^[A-Za-z0-9_-]+$/u);
 const normalizedEmail = z.email().min(3).max(320).transform(x=>x.trim().toLowerCase());
@@ -45,6 +46,7 @@ export interface BrowserIdentitySummary {
   expiresAt:string;
   csrfToken:string;
   workspaces:WorkspacePage;
+  memberInvitationsEnabled?:boolean;
 }
 
 /** Server-held Supabase tokens. The browser receives ONLY a random opaque cookie
@@ -62,6 +64,7 @@ export class PrivateBrowserAuthService {
     mfa:Pick<SupabaseTotpMfaClient,"enroll"|"challengeAndVerify">;
     otp:Pick<SupabaseEmailOtpClient,"sendOtp"|"verifyOtp"|"refresh"|"revoke">;
     portfolio:Pick<AuthenticatedWorkspacePortfolio,"list">;
+    memberInvites?:Pick<PostgresWorkspaceInvitations,"invite">;
     csrfKeyBase64:string;
   }){
     const origin=new URL(deps.projectUrl);
@@ -265,7 +268,8 @@ export class PrivateBrowserAuthService {
     const workspaces=await this.deps.portfolio.list(access,{pageSize:50});
     if(workspaces.items.length===0)throw new Error("Browser workspace membership unavailable");
     return {sessionId:verified.sessionId,expiresAt:verified.expiresAt,
-      csrfToken:this.csrfForCookie(cookie),workspaces};
+      csrfToken:this.csrfForCookie(cookie),workspaces,
+      memberInvitationsEnabled:this.deps.memberInvites!==undefined};
   }
 
   async listWorkspaces(cookie:string,after?:string):Promise<WorkspacePage> {
@@ -308,7 +312,8 @@ export class PrivateBrowserAuthService {
     const workspaces=await this.deps.portfolio.list(value.access,{pageSize:50});
     if(workspaces.items.length===0)throw new Error("Browser workspace membership unavailable");
     return {sessionId:value.verified.sessionId,expiresAt:value.verified.expiresAt,
-      csrfToken:this.csrfForCookie(cookie),workspaces};
+      csrfToken:this.csrfForCookie(cookie),workspaces,
+      memberInvitationsEnabled:this.deps.memberInvites!==undefined};
   }
 
   /**
@@ -416,8 +421,29 @@ export class PrivateBrowserAuthService {
     if(workspaces.items.length===0)throw new Error("Workspace authorization required");
     return {
       sessionId:result.verified.sessionId,expiresAt:result.verified.expiresAt,
-      csrfToken:this.csrfForCookie(cookie),workspaces
+      csrfToken:this.csrfForCookie(cookie),workspaces,
+      memberInvitationsEnabled:this.deps.memberInvites!==undefined
     };
+  }
+
+  /**
+   * Browser sends only its opaque BFF session cookie, CSRF and non-owner
+   * workspace invitation details. Supabase bearer remains server-private.
+   * The workspace invitation service independently checks current MFA,
+   * session, and exact active workspace ownership before inviting.
+   */
+  async inviteWorkspaceMember(cookie:string,input:{
+    workspaceId:string;email:string;role:"admin"|"agent"|"viewer";
+  }):Promise<InviteSummary>{
+    if(this.deps.memberInvites===undefined)
+      throw new Error("Workspace invitations unavailable");
+    const {access,verified}=await this.#bearer(cookie);
+    const privileged=await this.deps.auth.verifyPrivilegedAccessToken(access);
+    if(privileged.principal.subject!==verified.principal.subject
+      || privileged.principal.issuer!==verified.principal.issuer
+      || privileged.sessionId!==verified.sessionId)
+      throw new Error("Browser privilege session mismatch");
+    return this.deps.memberInvites.invite(access,input);
   }
 
   async logout(cookie:string):Promise<void>{

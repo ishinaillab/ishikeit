@@ -9,7 +9,7 @@ const host="apps.ishinaillab.com";
 const token="A".repeat(43);
 const login="B".repeat(43);
 const csrf="C".repeat(43);
-function testServer(enabled=true){
+function testServer(enabled=true,invitesEnabled=false){
   const controller={
     begin:vi.fn((_email:string,_ip:string)=>{void _email;void _ip;return Promise.resolve(login);}),
     verify:vi.fn((_nonce:string,_code:string,_ip:string)=>{void _nonce;void _code;void _ip;return Promise.resolve({
@@ -44,6 +44,10 @@ function testServer(enabled=true){
         csrfToken:csrf,workspaces:{items:[]}
       });
     }),
+    inviteWorkspaceMember:vi.fn((_cookie:string,_input:{workspaceId:string;email:string;role:"admin"|"agent"|"viewer"})=>{
+      void _cookie;void _input;
+      return Promise.resolve({invitationId:"123e4567-e89b-42d3-a456-426614174000",status:"invited" as const});
+    }),
     logout:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve();}),
     assertCsrf:vi.fn((_cookie:string,header:string|undefined)=>{
       void _cookie;
@@ -54,7 +58,7 @@ function testServer(enabled=true){
     logger:pino({level:"silent"}),
     inbound:{ingest:vi.fn<InboundStore["ingest"]>()},
     ready:()=>Promise.resolve(true),appSecret:"secret",verifyToken:"test-verify",
-    ...(enabled?{browserAuth:{origin,controller}}:{})
+    ...(enabled?{browserAuth:{origin,controller,allowWorkspaceInvitations:invitesEnabled}}:{})
   });
   return {server,controller};
 }
@@ -66,6 +70,51 @@ function authCookie(){return "__Host-ishikeit-session="+token;}
 function loginCookie(){return "__Host-ishikeit-login="+login;}
 
 describe("private cookie-only browser auth routes",()=>{
+  it("does not expose invitations without the separate explicit feature enable",async()=>{
+    const {server}=testServer();
+    const r=await server.inject({
+      method:"POST",
+      url:"/app/auth/workspaces/123e4567-e89b-42d3-a456-426614174000/invitations",
+      headers:{...headers,"x-ishikeit-csrf":csrf,cookie:authCookie()},
+      payload:{email:"member@example.com",role:"agent"}
+    });
+    expect(r.statusCode).toBe(404);
+    await server.close();
+  });
+  it("requires exact host/origin, BFF cookie, CSRF and non-owner role for invite",async()=>{
+    const {server,controller}=testServer(true,true);
+    const path="/app/auth/workspaces/123e4567-e89b-42d3-a456-426614174000/invitations";
+    const body={email:"member@example.com",role:"viewer"};
+    const base={...headers,cookie:authCookie(),"x-ishikeit-csrf":csrf};
+    for(const header of [
+      {...base,origin:"https://attacker.example"},
+      {...base,host:"evil.example"},
+      {...base,"x-ishikeit-csrf":"wrong"},
+      {...base,cookie:""}
+    ]){
+      const response=await server.inject({method:"POST",url:path,headers:header,payload:body});
+      expect(response.statusCode).toBeGreaterThanOrEqual(400);
+    }
+    for(const role of ["owner","super_admin"]){
+      const response=await server.inject({
+        method:"POST",url:path,headers:base,payload:{...body,role}
+      });
+      expect(response.statusCode).toBe(400);
+    }
+    expect(controller.inviteWorkspaceMember).not.toHaveBeenCalled();
+    const valid=await server.inject({method:"POST",url:path,headers:base,payload:body});
+    expect(valid.statusCode).toBe(202);
+    expect(valid.json()).toEqual({
+      status:"invited",invitationId:"123e4567-e89b-42d3-a456-426614174000"
+    });
+    expect(valid.headers["cache-control"]).toContain("no-store");
+    expect(controller.inviteWorkspaceMember).toHaveBeenCalledWith(token,{
+      workspaceId:"123e4567-e89b-42d3-a456-426614174000",
+      email:"member@example.com",role:"viewer"
+    });
+    await server.close();
+  });
+
   it("registers no login/session endpoints when production gate is absent",async()=>{
     const {server}=testServer(false);
     const r=await server.inject({method:"GET",url:"/app/auth/session",headers:{host}});

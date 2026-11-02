@@ -15,6 +15,8 @@ export interface BrowserAuthController {
   listTotpFactors(cookie:string):ReturnType<PrivateBrowserAuthService["listTotpFactors"]>;
   enrollTotp(cookie:string):ReturnType<PrivateBrowserAuthService["enrollTotp"]>;
   verifyTotp(cookie:string,factorId:string,code:string):ReturnType<PrivateBrowserAuthService["verifyTotp"]>;
+  inviteWorkspaceMember(cookie:string,input:{workspaceId:string;email:string;role:"admin"|"agent"|"viewer"}):
+    ReturnType<PrivateBrowserAuthService["inviteWorkspaceMember"]>;
   logout(cookie:string):Promise<void>;
   assertCsrf(cookie:string,submitted:string|undefined):void;
 }
@@ -29,6 +31,7 @@ const requestSchema=z.object({email:z.email().max(320)}).strict();
 const verifySchema=z.object({code:z.string().regex(/^[0-9]{6,8}$/u)}).strict();
 const cursorSchema=z.object({after:z.string().uuid().optional()}).strict();
 const verifyTotpSchema=z.object({factorId:z.string().uuid(),code:z.string().regex(/^[0-9]{6}$/u)}).strict();
+const inviteSchema=z.object({email:z.email().max(320),role:z.enum(["admin","agent","viewer"])}).strict();
 
 function parseCookie(req:FastifyRequest,name:string):string|undefined {
   const header=req.headers.cookie;
@@ -63,7 +66,7 @@ function clearCookie(name:string):string {
 
 export function registerPrivateBrowserAuthRoutes(
   server:FastifyInstance,
-  deps:{origin:string;controller:BrowserAuthController}
+  deps:{origin:string;controller:BrowserAuthController;allowWorkspaceInvitations?:boolean}
 ):void {
   const url=new URL(deps.origin);
   if(url.protocol!=="https:" || url.pathname!=="/" || url.search || url.hash
@@ -241,6 +244,30 @@ export function registerPrivateBrowserAuthRoutes(
       });
     }catch{return deny(reply,403).send({status:"mfa_verification_failed"});}
   });
+  if(deps.allowWorkspaceInvitations===true){
+    server.post("/app/auth/workspaces/:workspaceId/invitations",{bodyLimit:2048},async(req,reply)=>{
+      privateResponse(reply);
+      if(!mutation(req,reply))return reply;
+      const value=session(req,reply);
+      if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+      if(!csrf(req,reply,value))return reply;
+      const params=z.object({workspaceId:z.string().uuid()}).strict().safeParse(req.params);
+      const parsed=inviteSchema.safeParse(req.body);
+      if(!params.success || !parsed.success)
+        return deny(reply,400).send({status:"invalid_request"});
+      try{
+        const result=await deps.controller.inviteWorkspaceMember(value,{
+          workspaceId:params.data.workspaceId,
+          email:parsed.data.email,role:parsed.data.role
+        });
+        return reply.code(202).send({
+          status:result.status,invitationId:result.invitationId
+        });
+      }catch{
+        return deny(reply,403).send({status:"invitation_not_permitted"});
+      }
+    });
+  }
   server.post("/app/auth/logout",{bodyLimit:256},async(req,reply)=>{
     privateResponse(reply);
     if(!mutation(req,reply))return reply;

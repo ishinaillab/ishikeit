@@ -55,6 +55,8 @@ import { SupabaseAuthPrincipalVerifier } from "../auth/supabase-workspace-princi
 import { AuthenticatedWorkspacePortfolio } from "../auth/authenticated-workspace-portfolio.js";
 import { SupabaseEmailOtpClient } from "../auth/supabase-email-otp.js";
 import { SupabaseTotpMfaClient } from "../auth/supabase-totp-mfa.js";
+import { SupabaseAdminInviteClient } from "../auth/supabase-admin-invite.js";
+import { PostgresWorkspaceInvitations } from "../auth/workspace-member-invitations.js";
 import { PrivateBrowserAuthService } from "../auth/private-browser-auth.js";
 import { PostgresBrowserAuthMaintenance } from "../auth/private-browser-auth-maintenance.js";
 import { PostgresOAuthCredentialStore } from "../auth/oauth-store.js";
@@ -568,11 +570,24 @@ async function reconcileMessengerManagedPage(): Promise<void> {
 
 // Browser authentication is deliberately OFF unless separately configured and
 // approved. Existing provider webhooks and private operator APIs are untouched.
+const workspaceInvites = env.BROWSER_WORKSPACE_INVITES_ENABLED
+  ? new PostgresWorkspaceInvitations({
+    db,
+    principal:new SupabaseAuthPrincipalVerifier({
+      projectUrl:env.SUPABASE_AUTH_PROJECT_URL!,
+      publishableKey:env.SUPABASE_AUTH_PUBLISHABLE_KEY!,db
+    }),
+    provider:new SupabaseAdminInviteClient({
+      projectUrl:env.SUPABASE_AUTH_PROJECT_URL!,
+      secretKey:env.SUPABASE_AUTH_SECRET_KEY!
+    })
+  }):undefined;
 const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
   projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
   db,
   cipher: CredentialCipher.fromBase64(env.BROWSER_AUTH_ENCRYPTION_KEY_B64!),
   csrfKeyBase64: env.BROWSER_AUTH_CSRF_KEY_B64!,
+  ...(workspaceInvites===undefined?{}:{memberInvites:workspaceInvites}),
   auth: new SupabaseAuthPrincipalVerifier({
     projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
     publishableKey: env.SUPABASE_AUTH_PUBLISHABLE_KEY!,
@@ -598,7 +613,8 @@ const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
 const server = buildServer({
   logger,
   ...(browserAuth === undefined ? {} : {
-    browserAuth: {origin: env.BROWSER_AUTH_ORIGIN!,controller: browserAuth}
+    browserAuth: {origin: env.BROWSER_AUTH_ORIGIN!,controller: browserAuth,
+      allowWorkspaceInvitations:workspaceInvites!==undefined}
   }),
   buildIdentity: runtimeBuildIdentity(),
   ready: async () =>
@@ -850,6 +866,7 @@ let shuttingDown = false;
 // An asynchronous Hostinger SIGTERM may arrive before startup has finished.
 let instagramMaintenanceTimer: NodeJS.Timeout | undefined;
 let browserAuthCleanupTimer: NodeJS.Timeout | undefined;
+let memberInvitationTimer: NodeJS.Timeout | undefined;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -858,6 +875,7 @@ async function shutdown(signal: string): Promise<void> {
   await startupPromise;
   if (instagramMaintenanceTimer !== undefined) clearInterval(instagramMaintenanceTimer);
   if (browserAuthCleanupTimer !== undefined) clearInterval(browserAuthCleanupTimer);
+  if (memberInvitationTimer !== undefined) clearInterval(memberInvitationTimer);
   await latePointReminderClock.stop();
   if (processorWorker !== undefined) await processorWorker.stop();
   if (outboundWorker !== undefined) await outboundWorker.stop();
@@ -915,6 +933,20 @@ async function main(): Promise<void> {
       instagramMaintenanceTimer = setInterval(() => { void maintainInstagram(); }, 6 * 60 * 60 * 1000);
       instagramMaintenanceTimer.unref();
       void maintainInstagram();
+    }
+    if(workspaceInvites!==undefined){
+      // Only the explicitly enabled private-admin feature runs a bounded,
+      // non-sending, tenant-scoped confirmation reconciliation. Each run
+      // rechecks official Supabase Auth user identity and workspace owner.
+      const reconcileInvites=async()=>{
+        try{await workspaceInvites.activateConfirmedBatch(25);}
+        catch{logger.warn("Workspace invitation reconciliation unavailable");}
+      };
+      memberInvitationTimer=setInterval(()=>{
+        if(!shuttingDown)void reconcileInvites();
+      },5*60*1000);
+      memberInvitationTimer.unref();
+      void reconcileInvites();
     }
     if (browserAuth !== undefined) {
       const cleanup=new PostgresBrowserAuthMaintenance(db);

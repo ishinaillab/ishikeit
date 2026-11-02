@@ -6,7 +6,8 @@ import { pathToFileURL } from "node:url";
 
 const files=[
   "migrations/0016_initial_owner_bootstrap_audit.sql",
-  "migrations/0017_managed_platform_admin_provisioning.sql"
+  "migrations/0017_managed_platform_admin_provisioning.sql",
+  "migrations/0018_workspace_member_invitations.sql"
 ];
 export function unwrapMigration(sql){
   const match=/^([\s\S]*?)\bBEGIN;([\s\S]*)\bCOMMIT;\s*$/u.exec(sql);
@@ -51,7 +52,8 @@ export async function migratePrivateAdminSchema(db,read=readFile){
         continue;
       }
       const object=file.includes("0016")?"ishikeit_initial_owner_bootstrap"
-        :"ishikeit_platform_administrators";
+        :file.includes("0017")?"ishikeit_platform_administrators"
+        :"ishikeit_workspace_invitations";
       const present=await client.query(
         "SELECT to_regclass($1) IS NOT NULL AS present",["public."+object]
       );

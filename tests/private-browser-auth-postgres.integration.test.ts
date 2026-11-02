@@ -76,13 +76,16 @@ const mfa={
     }));
   })
 };
+const memberInvites={invite:vi.fn((_token:string,_input:{workspaceId:string;email:string;role:"admin"|"agent"|"viewer"})=>{
+  void _token;void _input;return Promise.resolve({invitationId:randomUUID(),status:"invited" as const});
+})};
 const service=db===undefined?undefined:new PrivateBrowserAuthService({
   projectUrl:"https://abcdefghijklmnopqrst.supabase.co",
   db,cipher,csrfKeyBase64:secret,
   otp:otpClient,
   mfa,
   auth,
-  portfolio
+  portfolio,memberInvites
 });
 
 describe.skipIf(db===undefined)("private browser OTP and session persistence on disposable PG17",()=>{
@@ -307,6 +310,20 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       "SELECT hits FROM public.ishikeit_browser_auth_limits WHERE hits>10"
     );
     expect(count.rows.some(row=>row.hits===11)).toBe(true);
+  });
+
+  it("requires MFA step-up before inviting workspace members through BFF",async()=>{
+    const nonce=await service!.begin("invited@example.com","one-ip");
+    const logged=await service!.verify(nonce,"123456","one-ip");
+    const input={workspaceId,email:"new-member@example.com",role:"viewer" as const};
+    await expect(service!.inviteWorkspaceMember(logged.cookieValue,input))
+      .rejects.toThrow(/multi-factor/i);
+    expect(memberInvites.invite).not.toHaveBeenCalled();
+    await service!.enrollTotp(logged.cookieValue);
+    await service!.verifyTotp(logged.cookieValue,factorId,"123456");
+    expect((await service!.inviteWorkspaceMember(logged.cookieValue,input)).status).toBe("invited");
+    expect(memberInvites.invite).toHaveBeenCalledTimes(1);
+    expect((await service!.get(logged.cookieValue)).memberInvitationsEnabled).toBe(true);
   });
 
   it("enrolls only for a freshly verified workspace user, verifies TOTP and rotates tokens",async()=>{

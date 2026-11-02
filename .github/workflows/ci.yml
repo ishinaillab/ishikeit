@@ -11,6 +11,7 @@ permissions:
 jobs:
   node:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -20,8 +21,10 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run check
       - name: Verify dedicated-token WordPress bridge health probe (mock only)
+        timeout-minutes: 2
         run: node --test scripts/test-probe-wordpress-ai-bridge.mjs
       - name: Verify non-mutating TikTok Business Messaging preflight (mock only)
+        timeout-minutes: 2
         run: node --test scripts/test-probe-tiktok-messaging-preflight.mjs
       - name: Verify compiled artifact fingerprint
         run: |
@@ -99,6 +102,11 @@ jobs:
         # Separate process: this fixture owns temporary auth.users and private
         # workspace tables and must not overlap other PG integration suites.
         run: npx vitest run tests/first-owner-bootstrap-postgres.integration.test.ts
+      - name: Verify tenant-scoped owner MFA invitations and confirmed user activation on disposable PostgreSQL 17
+        env:
+          PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
+        # Separate fixture: creates and cleans disposable auth.users/tenant tables.
+        run: npx vitest run tests/workspace-member-invitations-postgres.integration.test.ts
       - name: Verify automated private admin migrations and integrity on disposable PostgreSQL 17
         env:
           PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test

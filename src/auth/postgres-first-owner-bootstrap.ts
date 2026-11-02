@@ -99,7 +99,7 @@ export class PostgresFirstOwnerBootstrap {
       const eligible=await tx.query<VerifiedUserRow>(
         `SELECT id FROM auth.users
          WHERE id=$1::uuid AND lower(email)=$2
-           AND email_confirmed_at IS NOT NULL
+           AND email_confirmed_at IS NOT NULL AND invited_at IS NOT NULL
            AND is_anonymous=false AND deleted_at IS NULL
            AND (banned_until IS NULL OR banned_until<=now())
          FOR SHARE`,

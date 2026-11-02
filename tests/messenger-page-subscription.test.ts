@@ -127,7 +127,7 @@ describe("Messenger verified Page webhook subscriptions", () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(json({ data: [{
       id: appId, subscribed_fields: [...MESSENGER_PAGE_WEBHOOK_FIELDS]
     }] }));
-    const onVerifiedPage = vi.fn(async (_verifiedPageId: string) => undefined);
+    const onVerifiedPage = vi.fn(() => Promise.resolve());
     await expect(client(fetchImpl).reconcile(
       "page-access", pageId, knownPage, onVerifiedPage
     )).resolves.toEqual({ changed: false });
@@ -137,7 +137,7 @@ describe("Messenger verified Page webhook subscriptions", () => {
   });
 
   it("never emits an account grant from foreign app subscriptions or unverified Pages", async () => {
-    const onVerifiedPage = vi.fn(async (_verifiedPageId: string) => undefined);
+    const onVerifiedPage = vi.fn(() => Promise.resolve());
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(json({ data: [{
       id: "999999999999", subscribed_fields: [...MESSENGER_PAGE_WEBHOOK_FIELDS]
     }] }));
@@ -152,7 +152,7 @@ describe("Messenger verified Page webhook subscriptions", () => {
   });
 
   it("never emits a verified Page when a provider write lacks confirmed readback", async () => {
-    const onVerifiedPage = vi.fn(async (_verifiedPageId: string) => undefined);
+    const onVerifiedPage = vi.fn(() => Promise.resolve());
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json({ data: [{
         id: appId, subscribed_fields: ["messages"]
@@ -168,7 +168,7 @@ describe("Messenger verified Page webhook subscriptions", () => {
   });
 
   it("emits Page evidence only after confirmed subscription upgrade", async () => {
-    const onVerifiedPage = vi.fn(async (_verifiedPageId: string) => undefined);
+    const onVerifiedPage = vi.fn(() => Promise.resolve());
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json({ data: [{
         id: appId, subscribed_fields: ["messages"]

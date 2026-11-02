@@ -36,7 +36,6 @@ export class SupabaseAdminInviteClient {
         method:"POST",redirect:"error",cache:"no-store",
         headers:{
           apikey:this.#secret,
-          authorization:"Bearer "+this.#secret,
           accept:"application/json",
           "content-type":"application/json"
         },

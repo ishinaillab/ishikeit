@@ -29,9 +29,10 @@ describe("private Supabase Auth Admin invitation transport",()=>{
     expect(await client.inviteUserByEmail(email)).toEqual({userId:id,email});
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe(project+"/auth/v1/invite");
+    expect(new Headers(calls[0]?.opts.headers).has("Authorization")).toBe(false);
     expect(calls[0]?.opts).toMatchObject({
       method:"POST",redirect:"error",cache:"no-store",
-      headers:{apikey:key,authorization:"Bearer "+key,"content-type":"application/json"}
+      headers:{apikey:key,"content-type":"application/json"}
     });
     const body=calls[0]?.opts.body;
     expect(typeof body==="string"?JSON.parse(body):undefined).toEqual({email});

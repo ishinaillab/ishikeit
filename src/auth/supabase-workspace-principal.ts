@@ -31,10 +31,12 @@ const claimsSchema = z.object({
   sub: id,
   session_id: id,
   role: z.literal("authenticated"),
+  aal: z.enum(["aal1","aal2"]).optional(),
   exp: z.number().int().positive()
 }).passthrough();
 
 interface SessionRow extends pg.QueryResultRow { active: boolean }
+interface MfaRow extends pg.QueryResultRow { verified: boolean }
 export interface VerifiedIshikeitSession {
   principal: WorkspacePrincipal;
   sessionId: string;
@@ -197,4 +199,37 @@ export class SupabaseAuthPrincipalVerifier {
       expiresAt: new Date(claims.exp * 1000).toISOString()
     };
   }
+  /**
+   * Require a currently verified second factor for privileged account-linking
+   * operations. This is independent of ordinary read-only workspace access.
+   *
+   * Official Supabase Auth JWT's aal=aal2 is authoritative ONLY AFTER the
+   * exact bearer is verified with /auth/v1/user and the live auth.sessions row.
+   * The additional current MFA factor readback closes stale-aal2 grants after
+   * factor unenrollment, while allowing any provider-supported verified factor
+   * rather than hardcoding a specific MFA technology.
+   */
+  async verifyPrivilegedAccessToken(token: string): Promise<VerifiedIshikeitSession> {
+    const verified=await this.verifyAccessToken(token);
+    const claims=parseJwtClaims(token);
+    if(claims.aal!=="aal2") {
+      throw new Error("Multi-factor authentication required");
+    }
+    let factors:pg.QueryResult<MfaRow>;
+    try {
+      factors=await this.#db.query<MfaRow>(
+        `SELECT EXISTS(
+          SELECT 1 FROM auth.mfa_factors
+          WHERE user_id=$1::uuid AND status='verified'
+        ) AS verified`,
+        [verified.principal.subject]
+      );
+    } catch {
+      throw new Error("MFA verification unavailable");
+    }
+    if(factors.rows[0]?.verified!==true)
+      throw new Error("Multi-factor authentication required");
+    return verified;
+  }
+
 }

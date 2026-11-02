@@ -167,15 +167,20 @@ describe.skipIf(db===undefined)("verified initial owner bootstrap on disposable 
   });
   it("keeps approval audit inaccessible to public/client Supabase roles",async()=>{
     const result=await db!.query<{
-      relrowsecurity:boolean;anon_access:boolean;auth_access:boolean;policy_count:number
+      relrowsecurity:boolean;client_access:boolean;policy_count:number
     }>(`SELECT c.relrowsecurity,
-        has_table_privilege('anon',c.oid,'SELECT,INSERT,UPDATE,DELETE') anon_access,
-        has_table_privilege('authenticated',c.oid,'SELECT,INSERT,UPDATE,DELETE') auth_access,
+        EXISTS(
+          SELECT 1 FROM aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) acl
+          WHERE acl.privilege_type IN ('SELECT','INSERT','UPDATE','DELETE')
+            AND (acl.grantee=0 OR acl.grantee IN (
+              SELECT oid FROM pg_roles WHERE rolname IN ('anon','authenticated')
+            ))
+        ) AS client_access,
         (SELECT count(*)::int FROM pg_policies p
           WHERE p.schemaname='public' AND p.tablename=c.relname) policy_count
        FROM pg_class c WHERE c.oid='public.ishikeit_initial_owner_bootstrap'::regclass`);
     expect(result.rows[0]).toMatchObject({
-      relrowsecurity:true,anon_access:false,auth_access:false,policy_count:0
+      relrowsecurity:true,client_access:false,policy_count:0
     });
   });
 });

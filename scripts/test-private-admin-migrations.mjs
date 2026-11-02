@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import pg from "pg";
 import { migratePrivateAdminSchema } from "./apply-private-admin-migrations.mjs";
+import { verifyOfficialAdminMigrations } from "./verify-official-admin-migrations.mjs";
 
 const url=process.env.PG_OUTBOX_TEST_DATABASE_URL;
 if(!url)throw new Error("Disposable test database not configured");
@@ -51,6 +52,45 @@ try{
       )`);
   assert.equal(rls.rows.length,4);
   assert.ok(rls.rows.every(x=>x.relrowsecurity===true && x.client_access===false));
+  // Emulate the exact official Supabase migration history on disposable PG17.
+  // Production verifier is strictly READ ONLY; no artificial migration insert
+  // or shadow ledger is used in production.
+  await pool.query(`CREATE SCHEMA supabase_migrations;
+    CREATE TABLE supabase_migrations.schema_migrations (
+      version text PRIMARY KEY,name text,statements text[]
+    )`);
+  const fileRecords=[
+    ["0016_initial_owner_bootstrap_audit.sql","ishikeit_initial_owner_bootstrap_audit"],
+    ["0017_managed_platform_admin_provisioning.sql","ishikeit_managed_platform_admin_provisioning"],
+    ["0018_workspace_member_invitations.sql","ishikeit_workspace_member_invitations"]
+  ];
+  for(let i=0;i<fileRecords.length;i++){
+    const [filename,name]=fileRecords[i];
+    const sql=await readFile("migrations/"+filename,"utf8");
+    await pool.query(
+      "INSERT INTO supabase_migrations.schema_migrations(version,name,statements) VALUES($1,$2,ARRAY[$3])",
+      ["20261102110"+i,name,sql]
+    );
+  }
+  assert.deepEqual(await verifyOfficialAdminMigrations(pool),
+    fileRecords.map(x=>x[1]));
+  let mismatched=false;
+  try{
+    await verifyOfficialAdminMigrations(pool,async(file,encoding)=>{
+      const raw=await readFile(file,encoding);
+      return file.includes("0018")?raw+"\\n--tampered":raw;
+    });
+  }catch{mismatched=true;}
+  assert.equal(mismatched,true,"Official migration verifier must reject source mismatch");
+  await pool.query(
+    "UPDATE supabase_migrations.schema_migrations SET statements=ARRAY['different SQL'] WHERE name=$1",
+    ["ishikeit_workspace_member_invitations"]
+  );
+  await assert.rejects(
+    verifyOfficialAdminMigrations(pool),
+    /migration verification failed closed/i
+  );
+  process.stdout.write("Official Supabase migration history matching and tamper rejection verified.\\n");
   process.stdout.write("Private admin migration: initial application, replay, checksum and RLS verified.\n");
 }finally{
   if(started){
@@ -66,6 +106,8 @@ try{
       public.ishikeit_workspace_memberships,
       public.ishikeit_workspaces;`);
   }
+  await pool.query("DROP TABLE IF EXISTS supabase_migrations.schema_migrations");
+  await pool.query("DROP SCHEMA IF EXISTS supabase_migrations");
   await pool.query("DROP TABLE IF EXISTS auth.users");
   await pool.query("DROP SCHEMA IF EXISTS auth");
   await pool.end();

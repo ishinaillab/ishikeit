@@ -34,6 +34,23 @@ export const privateLoginHtml = `<!doctype html>
       <button type="button" class="secondary" id="sign-out">Sign out</button></div>
     <p class="note">Only workspaces your current membership permits are shown. Conversation management is not yet enabled here.</p>
     <ul id="workspace-list" class="workspaces"></ul>
+    <section class="mfa-panel" id="member-invite-panel" aria-labelledby="member-invite-heading" hidden>
+      <h2 id="member-invite-heading">Invite a workspace member</h2>
+      <p class="note">Workspace owners can invite new teammates after verifying an authenticator. Invitations cannot grant owner or platform administrator privileges.</p>
+      <form id="member-invite-form">
+        <label for="member-invite-workspace">Workspace</label>
+        <select id="member-invite-workspace" required></select>
+        <label for="member-invite-email">Teammate email</label>
+        <input id="member-invite-email" type="email" autocomplete="off" required maxlength="320">
+        <label for="member-invite-role">Workspace role</label>
+        <select id="member-invite-role">
+          <option value="viewer">Viewer</option>
+          <option value="agent">Agent</option>
+          <option value="admin">Workspace admin</option>
+        </select>
+        <button type="submit" id="member-invite-send">Send invitation</button>
+      </form>
+    </section>
     <section class="mfa-panel" aria-labelledby="mfa-heading">
       <h2 id="mfa-heading">Two-step verification</h2>
       <p class="note">Protect account connections with an authenticator app. Verify a code to confirm your device before sensitive actions.</p>
@@ -100,6 +117,9 @@ const loginPanel=document.getElementById("login-panel");
 const accountPanel=document.getElementById("account-panel");
 const status=document.getElementById("status");
 const workspaceList=document.getElementById("workspace-list");
+const invitePanel=document.getElementById("member-invite-panel");
+const inviteWorkspace=document.getElementById("member-invite-workspace");
+const inviteForm=document.getElementById("member-invite-form");
 let csrfToken="";
 let enrollmentFactorId="";
 const mfaSetup=document.getElementById("mfa-setup");
@@ -143,11 +163,19 @@ async function request(path,body,csrf){
 }
 function showLogin(){
   loginPanel.hidden=false;accountPanel.hidden=true;workspaceList.replaceChildren();csrfToken="";clearMfa();
+  inviteWorkspace.replaceChildren();invitePanel.hidden=true;
 }
 function showAccount(data){
   csrfToken=data.csrfToken;
   workspaceList.replaceChildren();
+  inviteWorkspace.replaceChildren();
   for(const workspace of data.workspaces.items){
+    if(data.memberInvitationsEnabled===true && workspace.role==="owner"){
+      const option=document.createElement("option");
+      option.value=workspace.workspaceId;
+      option.textContent=workspace.displayName;
+      inviteWorkspace.append(option);
+    }
     const li=document.createElement("li");
     const title=document.createElement("strong");
     title.textContent=workspace.displayName;
@@ -155,6 +183,7 @@ function showAccount(data){
     details.textContent=workspace.role+" · "+workspace.connectedAccounts+" connected accounts";
     li.append(title,details);workspaceList.append(li);
   }
+  invitePanel.hidden=inviteWorkspace.options.length===0;
   accountPanel.hidden=false;loginPanel.hidden=true;message("Signed in.");
   void loadMfaFactors();
 }
@@ -204,6 +233,31 @@ codeForm.addEventListener("submit",async event=>{
     showAccount(await session.json());
   }catch{message("Could not establish a session. Please sign in again.");}
   finally{button.disabled=false;}
+});
+inviteForm.addEventListener("submit",async event=>{
+  event.preventDefault();
+  if(!csrfToken || !inviteWorkspace.value){
+    message("An authorized workspace session is required.");return;
+  }
+  const button=document.getElementById("member-invite-send");
+  button.disabled=true;
+  try{
+    const workspaceId=inviteWorkspace.value;
+    const email=document.getElementById("member-invite-email").value.trim();
+    const role=document.getElementById("member-invite-role").value;
+    const response=await request(
+      "/app/auth/workspaces/"+encodeURIComponent(workspaceId)+"/invitations",
+      {email,role},csrfToken
+    );
+    if(!response.ok)throw Error("invitation rejected");
+    const result=await response.json();
+    document.getElementById("member-invite-email").value="";
+    message(result.status==="invited"
+      ? "Invitation requested. Workspace access begins only after email confirmation."
+      : "Invitation status requires administrator review; it will not be automatically resent.");
+  }catch{
+    message("Invitation unavailable. Verify your authenticator, workspace ownership, and recipient.");
+  }finally{button.disabled=false;}
 });
 document.getElementById("mfa-enroll").addEventListener("click",async()=>{
   if(!csrfToken){message("Session expired. Renew your session first.");return;}

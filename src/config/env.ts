@@ -19,9 +19,11 @@ const schema = z.object({
   OPS_ALERT_APPROVED_HOST: z.string().min(4).max(255).optional(),
   OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: z.string().min(40).max(64).optional(),
   BROWSER_AUTH_ENABLED: booleanFromEnv.default(false),
+  BROWSER_WORKSPACE_INVITES_ENABLED: booleanFromEnv.default(false),
   BROWSER_AUTH_ORIGIN: z.string().url().optional(),
   SUPABASE_AUTH_PROJECT_URL: z.string().url().optional(),
   SUPABASE_AUTH_PUBLISHABLE_KEY: z.string().regex(/^sb_publishable_[A-Za-z0-9_-]{8,200}$/u).optional(),
+  SUPABASE_AUTH_SECRET_KEY: z.string().regex(/^sb_secret_[A-Za-z0-9_-]{8,200}$/u).optional(),
   BROWSER_AUTH_ENCRYPTION_KEY_B64: z.string().min(40).max(64).optional(),
   BROWSER_AUTH_CSRF_KEY_B64: z.string().min(40).max(64).optional(),
 
@@ -91,6 +93,16 @@ const schema = z.object({
   TIKTOK_MARKETING_OAUTH_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
 }).superRefine((value, ctx) => {
+  if (value.BROWSER_WORKSPACE_INVITES_ENABLED) {
+    if(!value.BROWSER_AUTH_ENABLED) ctx.addIssue({
+      code:"custom",path:["BROWSER_AUTH_ENABLED"],
+      message:"Member invitation management requires enabled private browser authentication"
+    });
+    if(value.SUPABASE_AUTH_SECRET_KEY===undefined) ctx.addIssue({
+      code:"custom",path:["SUPABASE_AUTH_SECRET_KEY"],
+      message:"Member invitation management requires server-only Supabase Auth Admin key"
+    });
+  }
   if (value.BROWSER_AUTH_ENABLED) {
     for (const key of [
       "BROWSER_AUTH_ORIGIN","SUPABASE_AUTH_PROJECT_URL","SUPABASE_AUTH_PUBLISHABLE_KEY",

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { registerPrivateBrowserAuthRoutes, type BrowserAuthController } from "./private-browser-auth-routes.js";
-import Fastify from "fastify";
+import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Logger } from "pino";
 import type { InboundStore } from "../persistence/inbound.js";
@@ -126,7 +126,10 @@ export function buildServer(deps: ServerDeps) {
     bodyLimit: deps.webhookBodyLimit ?? 1_048_576
   });
 
-  if (deps.browserAuth !== undefined) registerPrivateBrowserAuthRoutes(server,deps.browserAuth);
+  // The server is specialized to Pino's Logger; Fastify route registration is
+  // runtime-identical to the default FastifyInstance logger generic.
+  if (deps.browserAuth !== undefined)
+    registerPrivateBrowserAuthRoutes(server as unknown as FastifyInstance,deps.browserAuth);
 
   server.get("/health/live", () => ({ status: "ok" }));
   server.get("/health/build", (_req, reply) => {

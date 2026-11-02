@@ -27,6 +27,7 @@ function testServer(enabled=true){
       sessionId:"session",expiresAt:"2027-01-01T00:00:00Z",
       csrfToken:csrf,workspaces:{items:[]}
     });}),
+    csrf:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve(csrf);}),
     logout:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve();}),
     assertCsrf:vi.fn((_cookie:string,header:string|undefined)=>{
       void _cookie;
@@ -120,6 +121,12 @@ describe("private cookie-only browser auth routes",()=>{
     });
     expect(valid.body).not.toContain(token);
     expect(controller.get).toHaveBeenCalledWith(token);
+    const recovered=await server.inject({
+      method:"GET",url:"/app/auth/csrf",headers:{host,cookie:authCookie()}
+    });
+    expect(recovered.statusCode).toBe(200);
+    expect(recovered.json()).toEqual({csrfToken:csrf});
+    expect(controller.csrf).toHaveBeenCalledWith(token);
     const cross=await server.inject({
       method:"GET",url:"/app/auth/workspaces",headers:{host:"evil.test",cookie:authCookie()}
     });

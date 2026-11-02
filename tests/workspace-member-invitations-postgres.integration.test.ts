@@ -143,6 +143,25 @@ describe.skipIf(db===undefined)("tenant member invitation authentication & activ
     expect(provider.inviteUserByEmail).toHaveBeenCalledTimes(1);
     expect(await service!.activateConfirmedBatch()).toBe(0);
   });
+  it("does not starve confirmed recipients behind older unconfirmed invitation backlog",async()=>{
+    await service!.invite("aal2",invite());
+    for(let index=0;index<26;index++){
+      const id=randomUUID();
+      const address="unconfirmed-"+index+"@example.com";
+      await db!.query("INSERT INTO auth.users(id,email,email_confirmed_at) VALUES($1,$2,NULL)",[id,address]);
+      await db!.query(
+        `INSERT INTO public.ishikeit_workspace_invitations(
+          invitation_id,workspace_id,auth_issuer,invitee_email,requested_role,
+          inviter_subject,state,auth_user_id,requested_at,invited_at
+        ) VALUES($1,$2,$3,$4,'viewer',$5,'invited',$6,now()-interval '2 days',
+          now()-interval '1 day')`,
+        [randomUUID(),workspace,issuer,address,owner,id]
+      );
+    }
+    await db!.query("UPDATE auth.users SET email_confirmed_at=now() WHERE id=$1",[invitee]);
+    expect(await service!.activateConfirmedBatch(5)).toBe(1);
+    expect((await state()).filter(x=>x.state==="activated")).toHaveLength(1);
+  });
   it("fails closed when inviter loses ownership after delivery",async()=>{
     await service!.invite("aal2",invite());
     await db!.query("UPDATE auth.users SET email_confirmed_at=now() WHERE id=$1",[invitee]);

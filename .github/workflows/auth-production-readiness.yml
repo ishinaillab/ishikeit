@@ -1,0 +1,44 @@
+name: Ishikeit Auth — protected read-only production preflight
+
+on:
+  workflow_dispatch:
+
+# This workflow deliberately cannot invite, create or alter Auth users.
+# It reads production configuration and independently verifies the private schema.
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ishikeit-auth-readiness-preflight
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: ishikeit-provisioning
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact main commit
+        uses: actions/checkout@v7
+      - name: Set up supported Node runtime
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Verify required human-reviewed environment and main-only deployment policy
+        env:
+          ISHIKEIT_PROVISIONING_GITHUB_READ_TOKEN: ${{ github.token }}
+        run: node scripts/verify-protected-provisioning-environment.mjs
+      - name: Verify official database migrations, RLS and private administrator grants
+        env:
+          DATABASE_URL: ${{ secrets.ISHIKEIT_DATABASE_URL }}
+        run: node scripts/verify-official-admin-migrations.mjs
+      - name: Verify production Auth SMTP, invite/OTP templates, redirect, signup, TOTP, and sessions
+        env:
+          SUPABASE_AUTH_PROJECT_URL: ${{ vars.ISHIKEIT_SUPABASE_PROJECT_URL }}
+          SUPABASE_MANAGEMENT_AUTH_READ_TOKEN: ${{ secrets.ISHIKEIT_SUPABASE_MANAGEMENT_AUTH_READ_TOKEN }}
+        run: node scripts/verify-auth-production-config.mjs

@@ -54,6 +54,7 @@ import { CredentialCipher } from "../auth/credential-cipher.js";
 import { SupabaseAuthPrincipalVerifier } from "../auth/supabase-workspace-principal.js";
 import { AuthenticatedWorkspacePortfolio } from "../auth/authenticated-workspace-portfolio.js";
 import { SupabaseEmailOtpClient } from "../auth/supabase-email-otp.js";
+import { SupabaseTotpMfaClient } from "../auth/supabase-totp-mfa.js";
 import { PrivateBrowserAuthService } from "../auth/private-browser-auth.js";
 import { PostgresBrowserAuthMaintenance } from "../auth/private-browser-auth-maintenance.js";
 import { PostgresOAuthCredentialStore } from "../auth/oauth-store.js";
@@ -576,6 +577,10 @@ const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
     projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
     publishableKey: env.SUPABASE_AUTH_PUBLISHABLE_KEY!,
     db
+  }),
+  mfa: new SupabaseTotpMfaClient({
+    projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
+    publishableKey: env.SUPABASE_AUTH_PUBLISHABLE_KEY!
   }),
   otp: new SupabaseEmailOtpClient({
     projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,

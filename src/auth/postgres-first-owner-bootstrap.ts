@@ -42,6 +42,7 @@ interface ExistsRow extends pg.QueryResultRow {
 interface VerifiedUserRow extends pg.QueryResultRow {
   id:string;
 }
+interface ApprovedInvitationRow extends pg.QueryResultRow { auth_user_id:string }
 function verifiedIssuer(projectUrl:string):string {
   const parsed=new URL(projectUrl);
   if(parsed.protocol!=="https:"
@@ -85,7 +86,9 @@ export class PostgresFirstOwnerBootstrap {
       await tx.query(
         `LOCK TABLE public.ishikeit_workspaces,
             public.ishikeit_workspace_memberships,
-            public.ishikeit_initial_owner_bootstrap
+            public.ishikeit_initial_owner_bootstrap,
+            public.ishikeit_initial_admin_provisioning,
+            public.ishikeit_platform_administrators
           IN SHARE ROW EXCLUSIVE MODE`
       );
       await assertUnbootstrapped(tx);
@@ -105,6 +108,20 @@ export class PostgresFirstOwnerBootstrap {
       if(eligible.rows.length!==1 || eligible.rows[0]?.id!==input.approvedUserId)
         throw new Error("Owner is not a verified and explicitly approved Auth user");
 
+      // No raw, unproven email or arbitrary CLI user UUID can grant the
+      // initial platform role. Invite state must have been recorded through
+      // the server-private authenticated Supabase Admin invitation service.
+      const approved=await tx.query<ApprovedInvitationRow>(
+        `SELECT auth_user_id FROM public.ishikeit_initial_admin_provisioning
+         WHERE singleton=true AND state='invited'
+           AND auth_user_id=$1::uuid AND email_address=$2
+           AND approved_by=$3 AND approval_reference=$4
+         FOR UPDATE`,
+        [input.approvedUserId,input.expectedEmail,input.approvedBy,input.approvalReference]
+      );
+      if(approved.rows[0]?.auth_user_id!==input.approvedUserId)
+        throw new Error("Initial owner requires a recorded, approved Auth invitation");
+
       await tx.query(
         `INSERT INTO public.ishikeit_workspaces(workspace_id,display_name)
          VALUES($1,$2)`,
@@ -123,6 +140,22 @@ export class PostgresFirstOwnerBootstrap {
         [workspaceId,input.approvedUserId,authIssuer,
           input.approvedBy,input.approvalReference]
       );
+      await tx.query(
+        `INSERT INTO public.ishikeit_platform_administrators
+           (user_id,auth_issuer,role,state,approval_reference)
+         VALUES($1,$2,'super_admin','active',$3)`,
+        [input.approvedUserId,authIssuer,input.approvalReference]
+      );
+      const updated=await tx.query(
+        `UPDATE public.ishikeit_initial_admin_provisioning
+          SET state='activated',activated_at=now()
+         WHERE singleton=true AND state='invited' AND auth_user_id=$1::uuid
+           AND email_address=$2 AND approval_reference=$3
+         RETURNING singleton`,
+        [input.approvedUserId,input.expectedEmail,input.approvalReference]
+      );
+      if(updated.rowCount!==1)
+        throw new Error("Initial administrator activation approval lost");
       return {workspaceId,ownerUserId:input.approvedUserId,authIssuer};
     });
   }

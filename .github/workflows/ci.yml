@@ -99,6 +99,10 @@ jobs:
         # Separate process: this fixture owns temporary auth.users and private
         # workspace tables and must not overlap other PG integration suites.
         run: npx vitest run tests/first-owner-bootstrap-postgres.integration.test.ts
+      - name: Verify automated private admin migrations and integrity on disposable PostgreSQL 17
+        env:
+          PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
+        run: node scripts/test-private-admin-migrations.mjs
       - name: Restart isolated PostgreSQL 17 service and prove pool recovery
         env:
           PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test

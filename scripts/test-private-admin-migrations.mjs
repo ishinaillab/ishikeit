@@ -18,7 +18,7 @@ try{
   await pool.query(await readFile("migrations/0010_ishikeit_workspace_connections.sql","utf8"));
   started=true;
   const first=await migratePrivateAdminSchema(pool);
-  assert.equal(first.length,2);
+  assert.equal(first.length,3);
   assert.ok(first.every(x=>x.status==="applied"));
   const repeat=await migratePrivateAdminSchema(pool);
   assert.ok(repeat.every(x=>x.status==="already_applied"));
@@ -27,7 +27,7 @@ try{
       (SELECT count(*)::int FROM public.ishikeit_initial_owner_bootstrap) owners,
       (SELECT count(*)::int FROM public.ishikeit_initial_admin_provisioning) pending,
       (SELECT count(*)::int FROM public.ishikeit_platform_administrators) admins`);
-  assert.deepEqual(rows.rows[0],{migrations:2,owners:0,pending:0,admins:0});
+  assert.deepEqual(rows.rows[0],{migrations:3,owners:0,pending:0,admins:0});
   let rejected=false;
   try{
     await migratePrivateAdminSchema(pool,async(path,encoding)=>{
@@ -44,16 +44,18 @@ try{
             SELECT oid FROM pg_roles WHERE rolname IN ('anon','authenticated')
           ))) AS client_access
       FROM pg_class c WHERE c.oid IN (
+        'public.ishikeit_workspace_invitations'::regclass,
         'public.ishikeit_platform_administrators'::regclass,
         'public.ishikeit_initial_admin_provisioning'::regclass,
         'public.ishikeit_private_admin_migrations'::regclass
       )`);
-  assert.equal(rls.rows.length,3);
+  assert.equal(rls.rows.length,4);
   assert.ok(rls.rows.every(x=>x.relrowsecurity===true && x.client_access===false));
   process.stdout.write("Private admin migration: initial application, replay, checksum and RLS verified.\n");
 }finally{
   if(started){
     await pool.query(`DROP TABLE IF EXISTS
+      public.ishikeit_workspace_invitations,
       public.ishikeit_platform_administrators,
       public.ishikeit_initial_admin_provisioning,
       public.ishikeit_initial_owner_bootstrap,

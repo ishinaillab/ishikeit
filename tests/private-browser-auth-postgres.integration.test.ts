@@ -219,7 +219,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       [createHash("sha256").update(session.cookieValue).digest("hex")]
     )).rowCount).toBe(1);
     await db!.query(
-      "UPDATE public.ishikeit_browser_sessions SET session_expires_at=now()-interval '1 second'"
+      "UPDATE public.ishikeit_browser_sessions SET created_at=now()-interval '13 hours',session_expires_at=now()-interval '1 second'"
     );
     const expired=await cleaner.runOnce();
     expect(expired.expiredSessions).toBe(1);

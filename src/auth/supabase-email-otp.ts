@@ -60,11 +60,31 @@ export class SupabaseEmailOtpClient {
     if (!response.ok) throw new Error("Supabase authentication rejected");
     let payload: unknown;
     try {
-      const len = Number(response.headers.get("content-length") ?? "0");
-      if (len > 16384) throw Error("large");
-      const text=await response.text();
-      if (text.length > 16384) throw Error("large");
-      payload=JSON.parse(text) as unknown;
+      // A remote response with chunked encoding may have no Content-Length.
+      // Bound the BYTES while streaming, rather than only checking after
+      // response.text() has already allocated an arbitrarily large body.
+      const declared=response.headers.get("content-length");
+      const len=declared===null ? 0 : Number(declared);
+      if(!Number.isFinite(len) || len<0 || len>16384)
+        throw new Error("Invalid response size");
+      const reader=response.body?.getReader();
+      if(reader===undefined)throw new Error("Missing response body");
+      const chunks:Uint8Array[]=[];
+      let total=0;
+      try {
+        for(;;){
+          const result=await reader.read();
+          if(result.done)break;
+          if(result.value===undefined)continue;
+          total+=result.value.byteLength;
+          if(total>16384){
+            await reader.cancel().catch(()=>undefined);
+            throw new Error("Response exceeds byte limit");
+          }
+          chunks.push(result.value);
+        }
+      }finally{reader.releaseLock();}
+      payload=JSON.parse(Buffer.concat(chunks,total).toString("utf8")) as unknown;
     } catch {
       throw new Error("Supabase authentication response invalid");
     }

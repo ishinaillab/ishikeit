@@ -1,5 +1,11 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — Private workspace-bound OAuth connection intents (issue #230, next increment)
+
+- Added `migrations/0011_ishikeit_connection_intents.sql`, RLS/default-deny and no browser grants: server-private hashed random state + separate hashed browser nonce, exact workspace/principal/provider/app/HTTPS redirect binding, single-use expiry and transactional consume. No existing OAuth, webhook, provider credentials, messaging, queue, paid plugin or @ishinaillab default changed.
+- Internal `PostgresWorkspaceConnectionIntents` checks owner/admin role in an active workspace before beginning. Callback consume checks exact identifiers, current membership, expiry and nonce. An optional PKCE S256 challenge is derived from a state- and cookie-specific HMAC verifier, without storing verifier or disclosing nonce to the provider. **No cookie transport, auth session validator, public endpoint, provider code exchange or UI is wired yet; do not claim public onboarding.** PKCE is only to be sent after official provider-specific support is verified, and immutable account/scope proof is still required later.
+- Added disposable PostgreSQL 17 regression tests for one-use concurrent state, replay, foreign workspace/actor/provider/app, wrong callback/nonce, revoked membership, expired state, hash-only storage and RLS. See [WORKSPACE_CONNECT_INTENTS_2026-11-02.md](WORKSPACE_CONNECT_INTENTS_2026-11-02.md) and [#230](https://github.com/ishinaillab/ishikeit/issues/230). Next: real trusted member sessions plus official provider-bound onboarding; cross-tenant ingress/outbox/consent and actual disconnect fencing are still incomplete. **Migration must pass CI and be applied before any use.**
+
 ## 2026-11-02 — Issue #230 staged private workspace and account connection foundation
 
 - Additive schema `migrations/0010_ishikeit_workspace_connections.sql` introduces server-private workspace identities, verified membership roles, immutable provider-account IDs, connection records with partial unique active ownership, generation fencing and redacted audit. All five tables have RLS/default-deny plus no anon/authenticated grants. No historical ownership backfill or old schema changes.

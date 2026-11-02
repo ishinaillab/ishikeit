@@ -100,7 +100,7 @@ export class PostgresInitialAdminProvisioning {
       // Read the exact user from Supabase Auth before considering any retry.
       const users=await this.deps.db.query<AuthUserRow>(
         `SELECT id,email_confirmed_at FROM auth.users
-          WHERE lower(email)=$1 AND is_anonymous=false
+          WHERE lower(email)=$1 AND invited_at IS NOT NULL AND is_anonymous=false
             AND deleted_at IS NULL
           LIMIT 2`,[this.#approval.email]
       );
@@ -129,14 +129,45 @@ export class PostgresInitialAdminProvisioning {
   }
   async reconcile():Promise<InitialAdminProgress>{
     const row=await this.#reconcile();
-    if(row.state==="activated")return {status:"already_activated"};
+    if(row.state==="activated"){
+      // A historical activation record is not proof of current authorization.
+      // Fail closed if the account was revoked, deleted or its grants drifted.
+      const issuer=new URL(this.#approval.projectUrl).origin+"/auth/v1";
+      const integrity=await this.deps.db.query<CheckRow>(
+        `SELECT EXISTS(
+          SELECT 1 FROM public.ishikeit_initial_owner_bootstrap b
+          JOIN auth.users u ON u.id=b.owner_user_id
+          JOIN public.ishikeit_platform_administrators a
+            ON a.user_id=u.id AND a.auth_issuer=b.auth_issuer
+          JOIN public.ishikeit_workspaces w ON w.workspace_id=b.workspace_id
+          JOIN public.ishikeit_workspace_memberships m
+            ON m.workspace_id=w.workspace_id AND m.auth_issuer=b.auth_issuer
+              AND m.auth_subject=u.id::text
+          WHERE b.singleton=true AND b.owner_user_id=$1::uuid
+            AND b.auth_issuer=$2 AND b.approved_by=$3
+            AND b.approval_reference=$4 AND w.state='active'
+            AND m.role='owner' AND m.state='active'
+            AND a.role='super_admin' AND a.state='active'
+            AND a.approval_reference=$4
+            AND lower(u.email)=$5 AND u.email_confirmed_at IS NOT NULL
+            AND u.invited_at IS NOT NULL AND u.is_anonymous=false
+            AND u.deleted_at IS NULL
+            AND (u.banned_until IS NULL OR u.banned_until<=now())
+        ) AS established`,
+        [row.auth_user_id,issuer,this.#approval.approvedBy,
+          this.#approval.approvalReference,this.#approval.email]
+      );
+      if(integrity.rows[0]?.established!==true)
+        throw new Error("Activated administrator authorization integrity failed");
+      return {status:"already_activated"};
+    }
     if(row.state==="invite_requested")return {status:"ambiguous_invitation"};
     if(row.state!=="invited" || row.auth_user_id===null)
       return {status:"invitation_requested"};
     const eligible=await this.deps.db.query<AuthUserRow>(
       `SELECT id,email_confirmed_at FROM auth.users
          WHERE id=$1::uuid AND lower(email)=$2
-           AND is_anonymous=false AND deleted_at IS NULL
+           AND invited_at IS NOT NULL AND is_anonymous=false AND deleted_at IS NULL
            AND (banned_until IS NULL OR banned_until<=now())`,
       [row.auth_user_id,this.#approval.email]
     );

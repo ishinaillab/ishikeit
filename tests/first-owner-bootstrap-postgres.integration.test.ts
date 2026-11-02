@@ -48,7 +48,7 @@ describe.skipIf(db===undefined)("verified initial owner bootstrap on disposable 
     await db!.query(`CREATE SCHEMA IF NOT EXISTS auth;
       CREATE TABLE auth.users(
         id uuid PRIMARY KEY,email text,
-        email_confirmed_at timestamptz,
+        email_confirmed_at timestamptz,invited_at timestamptz,
         is_anonymous boolean NOT NULL DEFAULT false,
         deleted_at timestamptz,banned_until timestamptz
       );`);
@@ -67,7 +67,7 @@ describe.skipIf(db===undefined)("verified initial owner bootstrap on disposable 
     await db!.query("DELETE FROM auth.users");
     ownerId=randomUUID();
     await db!.query(
-      "INSERT INTO auth.users(id,email,email_confirmed_at) VALUES($1,$2,now())",
+      "INSERT INTO auth.users(id,email,email_confirmed_at,invited_at) VALUES($1,$2,now(),now())",
       [ownerId,email]
     );
     await db!.query(
@@ -121,6 +121,11 @@ describe.skipIf(db===undefined)("verified initial owner bootstrap on disposable 
     );
     expect(admin.rows[0]).toEqual({role:"super_admin",state:"active"});
   });
+  it("rejects a confirmed account that was never invited via Auth Admin",async()=>{
+    await db!.query("UPDATE auth.users SET invited_at=NULL WHERE id=$1",[ownerId]);
+    await expect(service!.execute(input())).rejects.toThrow(/verified/i);
+    expect(await counts()).toMatchObject({workspaces:0,members:0,audits:0});
+  });
   it("rejects missing invitation acceptance/confirmed email, deleted, banned and anonymous accounts",async()=>{
     const updates=[
       "UPDATE auth.users SET email_confirmed_at=NULL",
@@ -169,7 +174,7 @@ describe.skipIf(db===undefined)("verified initial owner bootstrap on disposable 
     const invite=vi.fn(async (address:string)=>{
       expect(address).toBe(email);
       await db!.query(
-        "INSERT INTO auth.users(id,email,email_confirmed_at) VALUES($1,$2,NULL)",
+        "INSERT INTO auth.users(id,email,email_confirmed_at,invited_at) VALUES($1,$2,NULL,now())",
         [ownerId,email]
       );
       return {userId:ownerId,email};
@@ -202,7 +207,7 @@ describe.skipIf(db===undefined)("verified initial owner bootstrap on disposable 
     const invite=vi.fn(async (_address:string)=>{
       void _address;
       await db!.query(
-        "INSERT INTO auth.users(id,email,email_confirmed_at) VALUES($1,$2,NULL)",
+        "INSERT INTO auth.users(id,email,email_confirmed_at,invited_at) VALUES($1,$2,NULL,now())",
         [ownerId,email]
       );
       throw new Error("transport lost after sending");
@@ -220,6 +225,47 @@ describe.skipIf(db===undefined)("verified initial owner bootstrap on disposable 
     expect(invite).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects a previously activated state if its platform role is revoked",async()=>{
+    const provisioning=new PostgresInitialAdminProvisioning({
+      db:db!,invitation:{inviteUserByEmail:vi.fn()},
+      approval:{
+        projectUrl:origin,email,workspaceName:"Owner-approved workspace",
+        approvedBy:"operator:verified-human",approvalReference:"approval-ticket-20261102"
+      }
+    });
+    expect((await provisioning.reconcile()).status).toBe("activated");
+    expect(await provisioning.reconcile()).toEqual({status:"already_activated"});
+    await db!.query(
+      "UPDATE public.ishikeit_platform_administrators SET state='revoked',revoked_at=now() WHERE user_id=$1",
+      [ownerId]
+    );
+    await expect(provisioning.reconcile()).rejects.toThrow(/integrity failed/i);
+    const r=await db!.query<{state:string}>(
+      "SELECT state FROM public.ishikeit_platform_administrators WHERE user_id=$1",[ownerId]);
+    expect(r.rows[0]?.state).toBe("revoked");
+  });
+  it("never binds an uninvited account after ambiguous invite transport",async()=>{
+    await db!.query("DELETE FROM public.ishikeit_initial_admin_provisioning");
+    await db!.query("DELETE FROM auth.users WHERE id=$1",[ownerId]);
+    const invitation=vi.fn(async()=>{
+      await db!.query(
+        "INSERT INTO auth.users(id,email,email_confirmed_at) VALUES($1,$2,now())",
+        [ownerId,email]
+      );
+      throw new Error("ambiguous provider response");
+    });
+    const provisioning=new PostgresInitialAdminProvisioning({
+      db:db!,invitation:{inviteUserByEmail:invitation},
+      approval:{
+        projectUrl:origin,email,workspaceName:"Owner-approved workspace",
+        approvedBy:"operator:verified-human",approvalReference:"approval-ticket-20261102"
+      }
+    });
+    expect(await provisioning.run()).toEqual({status:"ambiguous_invitation"});
+    expect(await provisioning.reconcile()).toEqual({status:"ambiguous_invitation"});
+    expect(invitation).toHaveBeenCalledTimes(1);
+    expect(await counts()).toMatchObject({workspaces:0,members:0,audits:0});
+  });
   it("denies replay and cannot create a second initial owner after bootstrap",async()=>{
     await service!.execute(input());
     await expect(service!.execute(input()))

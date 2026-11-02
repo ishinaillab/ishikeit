@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 const REPOSITORY="ishinaillab/ishikeit";
 const ENVIRONMENT="ishikeit-provisioning";
 const BRANCH="main";
+const REQUIRED_REVIEWER="ishinaillab";
 
 /**
  * Read-only GitHub REST verification. This protects the first production
@@ -69,7 +70,7 @@ export async function verifyProtectedProvisioningEnvironment({
   const reviewers=Array.isArray(env.protection_rules)
     ?env.protection_rules.find(x=>x?.type==="required_reviewers"):null;
   if(!reviewers||!Array.isArray(reviewers.reviewers)||
-      !reviewers.reviewers.some(x=>x?.type==="User"||x?.type==="Team"))
+      !reviewers.reviewers.some(x=>x?.type==="User" && x.reviewer?.login===REQUIRED_REVIEWER))
     throw new Error("Human approval protection missing for super-admin provisioning");
 
   const policy=env.deployment_branch_policy;
@@ -82,8 +83,8 @@ export async function verifyProtectedProvisioningEnvironment({
     // Explicit main only. A permissive '*' pattern must not enable this
     // privileged workflow on pull requests or arbitrary branches.
     if(!Array.isArray(branches.branch_policies)||
-      !branches.branch_policies.some(x=>x?.name===BRANCH)||
-      branches.total_count>branches.branch_policies.length)
+      branches.total_count!==1 || branches.branch_policies.length!==1 ||
+      branches.branch_policies[0]?.name!==BRANCH)
       throw new Error("GitHub environment main-only deployment policy missing");
   }else if(policy.protected_branches===true && policy.custom_branch_policies===false){
     const branch=await get(base+"/branches/"+BRANCH);

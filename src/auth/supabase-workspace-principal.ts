@@ -140,8 +140,7 @@ export class SupabaseAuthPrincipalVerifier {
     if (claims.iss !== this.#issuer
       || (claims.aud !== "authenticated"
         && (!Array.isArray(claims.aud) || !claims.aud.includes("authenticated")))
-      || claims.exp * 1000 <= now
-) {
+      || claims.exp * 1000 <= now) {
       throw new Error("User authentication invalid");
     }
 

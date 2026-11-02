@@ -112,13 +112,32 @@ export class PostgresWorkspaceInvitations {
   async activateConfirmedBatch(limit=25):Promise<number>{
     const page=z.number().int().min(1).max(100).parse(limit);
     return this.deps.db.transaction(async tx=>{
+      // Filter eligible rows BEFORE the page limit: large backlogs of
+      // unconfirmed invitations must not starve later confirmed recipients.
+      // Explicit OF i prevents row locks on provider Auth user records.
       const pending=await tx.query<InvitationRow>(
-        `SELECT invitation_id,workspace_id,auth_issuer,invitee_email,
-            requested_role,inviter_subject,auth_user_id,state
-           FROM public.ishikeit_workspace_invitations
-          WHERE state='invited' AND auth_user_id IS NOT NULL
-          ORDER BY invited_at ASC,invitation_id ASC
-          LIMIT $1 FOR UPDATE SKIP LOCKED`,[page]
+        `SELECT i.invitation_id,i.workspace_id,i.auth_issuer,i.invitee_email,
+            i.requested_role,i.inviter_subject,i.auth_user_id,i.state
+           FROM public.ishikeit_workspace_invitations i
+           JOIN auth.users u ON u.id=i.auth_user_id
+             AND lower(u.email)=i.invitee_email
+             AND u.email_confirmed_at IS NOT NULL
+             AND u.is_anonymous=false AND u.deleted_at IS NULL
+             AND (u.banned_until IS NULL OR u.banned_until<=now())
+           JOIN public.ishikeit_workspaces w
+             ON w.workspace_id=i.workspace_id AND w.state='active'
+           JOIN public.ishikeit_workspace_memberships owner
+             ON owner.workspace_id=i.workspace_id
+               AND owner.auth_issuer=i.auth_issuer
+               AND owner.auth_subject=i.inviter_subject::text
+               AND owner.role='owner' AND owner.state='active'
+          WHERE i.state='invited' AND i.auth_user_id IS NOT NULL
+            AND NOT EXISTS(SELECT 1 FROM public.ishikeit_workspace_memberships current
+              WHERE current.workspace_id=i.workspace_id
+                AND current.auth_issuer=i.auth_issuer
+                AND current.auth_subject=u.id::text)
+          ORDER BY i.invited_at ASC,i.invitation_id ASC
+          LIMIT $1 FOR UPDATE OF i SKIP LOCKED`,[page]
       );
       let activated=0;
       for(const row of pending.rows){

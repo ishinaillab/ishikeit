@@ -28,7 +28,8 @@ describe("private Supabase Auth Admin invitation transport",()=>{
     const {client,calls}=fake(()=>response());
     expect(await client.inviteUserByEmail(email)).toEqual({userId:id,email});
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe(project+"/auth/v1/invite");
+    expect(calls[0]?.url).toBe(project+"/auth/v1/invite?redirect_to="+
+      encodeURIComponent("https://apps.ishinaillab.com/app/login"));
     expect(new Headers(calls[0]?.opts.headers).has("Authorization")).toBe(false);
     expect(calls[0]?.opts).toMatchObject({
       method:"POST",redirect:"error",cache:"no-store",

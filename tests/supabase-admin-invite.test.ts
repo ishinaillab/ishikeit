@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { SupabaseAdminInviteClient } from "../src/auth/supabase-admin-invite.js";
 

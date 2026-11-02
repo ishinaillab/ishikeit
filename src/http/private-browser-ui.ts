@@ -151,7 +151,11 @@ codeForm.addEventListener("submit",async event=>{
 });
 document.getElementById("refresh-session").addEventListener("click",async()=>{
   try{
-    if(!csrfToken && !await recoverSession())throw Error("missing session");
+    if(!csrfToken){
+      if(!await recoverSession())throw Error("missing session");
+      message("Session renewed.");
+      return;
+    }
     const r=await request("/app/auth/refresh",{},csrfToken);
     if(!r.ok)throw Error("session expired");
     showAccount(await r.json());message("Session renewed.");

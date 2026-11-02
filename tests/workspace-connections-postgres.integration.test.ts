@@ -214,7 +214,12 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     const rows = await db!.query<{
       relname: string; relrowsecurity: boolean; public_select: boolean;
     }>(`SELECT c.relname,c.relrowsecurity,
-         has_table_privilege('public', c.oid, 'SELECT') AS public_select
+         EXISTS (
+           SELECT 1 FROM aclexplode(
+             coalesce(c.relacl,acldefault('r',c.relowner))
+           ) priv
+           WHERE priv.grantee=0 AND priv.privilege_type='SELECT'
+         ) AS public_select
        FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
        WHERE ns.nspname='public' AND c.relname IN (
          'ishikeit_workspaces','ishikeit_workspace_memberships',

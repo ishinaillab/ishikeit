@@ -56,6 +56,34 @@ describe("private cookie-only browser auth routes",()=>{
     expect(r.statusCode).toBe(404);
     await server.close();
   });
+  it("serves a CSP-restricted, accessible, same-origin login and workspace shell only when enabled",async()=>{
+    const disabled=testServer(false);
+    expect((await disabled.server.inject({method:"GET",url:"/app",headers:{host}}))
+      .statusCode).toBe(404);
+    await disabled.server.close();
+
+    const {server}=testServer();
+    const html=await server.inject({method:"GET",url:"/app/login",headers:{host}});
+    expect(html.statusCode).toBe(200);
+    expect(html.headers["content-type"]).toContain("text/html");
+    expect(html.headers["content-security-policy"]).toContain("script-src 'self'");
+    expect(html.headers["content-security-policy"]).toContain("form-action 'none'");
+    expect(html.body).toContain("Your workspaces");
+    expect(html.body).toContain('autocomplete="one-time-code"');
+    expect(html.body).not.toContain("access_token");
+    expect(html.body).not.toContain("localStorage");
+    const js=await server.inject({method:"GET",url:"/app/auth/ui.js",headers:{host}});
+    expect(js.statusCode).toBe(200);
+    expect(js.headers["content-type"]).toContain("javascript");
+    expect(js.body).toContain('document.createElement("li")');
+    expect(js.body).not.toContain("innerHTML");
+    const css=await server.inject({method:"GET",url:"/app/auth/ui.css",headers:{host}});
+    expect(css.statusCode).toBe(200);
+    expect(css.headers["content-type"]).toContain("text/css");
+    expect((await server.inject({method:"GET",url:"/app/login",
+      headers:{host:"evil.test"}})).statusCode).toBe(403);
+    await server.close();
+  });
   it("checks exact Host and Origin for every authentication mutation",async()=>{
     const {server,controller}=testServer();
     for(const h of [

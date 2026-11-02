@@ -16,7 +16,7 @@ function issued(refresh=refreshOne): Response {
 function setup(reply:(url:string,init:RequestInit)=>Response|Promise<Response>){
   const calls:{url:string;init:RequestInit}[]=[];
   const fetchImpl:typeof fetch=(input,init)=>{
-    const url=String(input);
+    const url=typeof input==="string" ? input : input instanceof URL ? input.toString() : input.url;
     if(init===undefined)return Promise.reject(new Error("missing request config"));
     calls.push({url,init});
     return Promise.resolve(reply(url,init));
@@ -36,7 +36,7 @@ describe("official Supabase Auth REST BFF transport",()=>{
       method:"POST",redirect:"error",cache:"no-store",
       headers:{"content-type":"application/json",accept:"application/json",apikey:key}
     });
-    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+    expect(JSON.parse(typeof calls[0]?.init.body==="string" ? calls[0].init.body : "null")).toEqual({
       email:"invited@example.com",create_user:false
     });
     expect(calls[0]?.init.headers).not.toHaveProperty("authorization");
@@ -49,7 +49,7 @@ describe("official Supabase Auth REST BFF transport",()=>{
       access_token:access,refresh_token:refreshOne,expires_in:3600
     });
     expect(calls[0]?.url).toBe(origin+"/auth/v1/verify");
-    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+    expect(JSON.parse(typeof calls[0]?.init.body==="string" ? calls[0].init.body : "null")).toEqual({
       email:"invited@example.com",token:"654321",type:"email"
     });
   });
@@ -59,7 +59,7 @@ describe("official Supabase Auth REST BFF transport",()=>{
     const result=await client.refresh(refreshOne);
     expect(result.refresh_token).toBe(refreshTwo);
     expect(calls[0]?.url).toBe(origin+"/auth/v1/token?grant_type=refresh_token");
-    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+    expect(JSON.parse(typeof calls[0]?.init.body==="string" ? calls[0].init.body : "null")).toEqual({
       refresh_token:refreshOne
     });
   });

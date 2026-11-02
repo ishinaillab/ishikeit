@@ -6,12 +6,14 @@ const repository="ishinaillab/ishikeit";
 const ref="refs/heads/main";
 const jobToken="github_actions_ephemeral_token_1234567890123456";
 const api="https://api.github.com/repos/"+repository;
+
+
 const protectedEnv={
   name:"ishikeit-provisioning",
   protection_rules:[{
     type:"required_reviewers",
     prevent_self_review:false,
-    reviewers:[{type:"User",reviewer:{login:"approved-human"}}]
+    reviewers:[{type:"User",reviewer:{login:"ishinaillab"}}]
   }],
   deployment_branch_policy:{protected_branches:false,custom_branch_policies:true}
 };
@@ -59,6 +61,22 @@ test("accepts protected main only when GitHub verifies main branch is protected"
     deployment_branch_policy:{protected_branches:true,custom_branch_policies:false}
   },mainProtected:false});
   await assert.rejects(bad.verify(),/not protected/);
+});
+test("refuses the wrong required human reviewer",async()=>{
+  await assert.rejects(client({env:{
+    ...protectedEnv,protection_rules:[{
+      type:"required_reviewers",
+      reviewers:[{type:"User",reviewer:{login:"unapproved-human"}}]
+    }]
+  }}).verify(),/Human approval/);
+});
+test("refuses a second GitHub branch pattern alongside main",async()=>{
+  await assert.rejects(client({branches:{
+    total_count:2,branch_policies:[{name:"main"},{name:"feature/*"}]
+  }}).verify(),/main-only/);
+  await assert.rejects(client({branches:{
+    total_count:2,branch_policies:[{name:"main"}]
+  }}).verify(),/main-only/);
 });
 test("rejects unreviewed or missing GitHub Actions environments",async()=>{
   await assert.rejects(client({env:{

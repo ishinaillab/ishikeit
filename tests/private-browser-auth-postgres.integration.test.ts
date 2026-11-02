@@ -16,7 +16,7 @@ if(connectionString!==undefined){
   }
 }
 const db=connectionString===undefined?undefined:new PostgresDatabase(connectionString);
-const userId=randomUUID(),authSessionId=randomUUID(),workspaceId=randomUUID();
+const userId=randomUUID(),authSessionId=randomUUID(),workspaceId=randomUUID(),factorId=randomUUID();
 const origin="https://abcdefghijklmnopqrst.supabase.co/auth/v1";
 const access="test_token_"+ "x".repeat(55);
 const refreshed="new_token_"+ "y".repeat(55);
@@ -38,6 +38,12 @@ const otpClient={
   revoke:vi.fn((_token:string)=>{void _token;return Promise.resolve();})
 };
 const auth={
+  verifyPrivilegedAccessToken:vi.fn((token:string)=>{
+    if(!token.startsWith("mfa_access_"))
+      return Promise.reject(new Error("Multi-factor authentication required"));
+    return Promise.resolve({principal:{issuer:origin,subject:userId},sessionId:authSessionId,
+      expiresAt:new Date(Date.now()+3600000).toISOString()});
+  }),
   verifyAccessToken:vi.fn((token:string)=>Promise.resolve({
     principal:{issuer:origin,subject:userId},
     sessionId:authSessionId,expiresAt:new Date(Date.now()+3600000).toISOString(),
@@ -51,10 +57,29 @@ const portfolio={
 };
 const cipher=new CredentialCipher(Buffer.alloc(32,37));
 const secret=Buffer.alloc(32,39).toString("base64");
+const mfa={
+  enroll:vi.fn((_token:string)=>{
+    void _token;
+    return db!.query(
+      "INSERT INTO auth.mfa_factors(id,user_id,status,factor_type) VALUES($1,$2,'unverified','totp')",
+      [factorId,userId]
+    ).then(()=>({factorId,secret:"JBSWY3DPEHPK3PXP"}));
+  }),
+  challengeAndVerify:vi.fn((_token:string,_factorId:string,_code:string)=>{
+    void _token;void _factorId;void _code;
+    return db!.query("UPDATE auth.mfa_factors SET status='verified' WHERE id=$1",
+      [factorId]).then(()=>({
+      access_token:"mfa_access_"+"x".repeat(60),
+      refresh_token:"mfa_refresh_"+"z".repeat(55),
+      token_type:"bearer" as const,expires_in:3600
+    }));
+  })
+};
 const service=db===undefined?undefined:new PrivateBrowserAuthService({
   projectUrl:"https://abcdefghijklmnopqrst.supabase.co",
   db,cipher,csrfKeyBase64:secret,
   otp:otpClient,
+  mfa,
   auth,
   portfolio
 });
@@ -69,6 +94,9 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     await db!.query(await readFile("migrations/0010_ishikeit_workspace_connections.sql","utf8"));
     await db!.query(await readFile("migrations/0014_private_browser_auth.sql","utf8"));
     await db!.query(await readFile("migrations/0015_browser_login_email_encryption.sql","utf8"));
+    await db!.query(`CREATE TABLE IF NOT EXISTS auth.mfa_factors(
+      id uuid PRIMARY KEY,user_id uuid NOT NULL,status text NOT NULL,
+      factor_type text NOT NULL,created_at timestamptz DEFAULT now() NOT NULL)`);
     await db!.query("INSERT INTO public.ishikeit_workspaces(workspace_id,display_name) VALUES($1,'A')",[workspaceId]);
     await db!.query(
       "INSERT INTO public.ishikeit_workspace_memberships(workspace_id,auth_issuer,auth_subject,role) VALUES($1,$2,$3,'owner')",
@@ -78,6 +106,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       [userId,"invited@example.com"]);
   });
   beforeEach(async()=>{
+    await db!.query("TRUNCATE TABLE auth.mfa_factors");
     await db!.query(`TRUNCATE TABLE public.ishikeit_browser_sessions,
        public.ishikeit_browser_login_attempts,public.ishikeit_browser_auth_limits`);
     vi.clearAllMocks();
@@ -94,6 +123,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       await db!.query(`DROP TABLE IF EXISTS public.ishikeit_connection_audit,
        public.ishikeit_account_connections,public.ishikeit_provider_accounts,
        public.ishikeit_workspace_memberships,public.ishikeit_workspaces`);
+      await db!.query("DROP TABLE auth.mfa_factors");
       await db!.query("DROP TABLE auth.users");
       await db!.query("DROP SCHEMA auth");
     }finally{await db!.close();}
@@ -276,6 +306,27 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       "SELECT hits FROM public.ishikeit_browser_auth_limits WHERE hits>10"
     );
     expect(count.rows.some(row=>row.hits===11)).toBe(true);
+  });
+
+  it("enrolls only for a freshly verified workspace user, verifies TOTP and rotates tokens",async()=>{
+    const nonce=await service!.begin("invited@example.com","one-ip");
+    const session=await service!.verify(nonce,"123456","one-ip");
+    expect(await service!.listTotpFactors(session.cookieValue)).toEqual([]);
+    const enrollment=await service!.enrollTotp(session.cookieValue);
+    expect(enrollment).toEqual({factorId,secret:"JBSWY3DPEHPK3PXP"});
+    expect(await service!.listTotpFactors(session.cookieValue)).toEqual([]);
+    const verified=await service!.verifyTotp(session.cookieValue,factorId,"234567");
+    expect(verified.sessionId).toBe(authSessionId);
+    expect(verified.workspaces.items).toHaveLength(1);
+    expect(await service!.listTotpFactors(session.cookieValue)).toEqual([factorId]);
+    const previous=await db!.query<{access_ciphertext:Buffer}>(
+      "SELECT access_ciphertext FROM public.ishikeit_browser_sessions"
+    );
+    expect(previous.rows[0]?.access_ciphertext.includes(Buffer.from("mfa_access_"))).toBe(false);
+    await expect(service!.enrollTotp(session.cookieValue))
+      .rejects.toThrow(/multi-factor/i);
+    await expect(service!.verifyTotp(session.cookieValue,randomUUID(),"123456"))
+      .rejects.toThrow(/not available/i);
   });
 
   it("enforces private RLS and prevents Data API access to all sensitive tables",async()=>{

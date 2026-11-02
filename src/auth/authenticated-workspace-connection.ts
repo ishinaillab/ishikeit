@@ -31,15 +31,15 @@ const completionSchema = requestSchema.extend({
 
 export class AuthenticatedWorkspaceConnectionIntents {
   constructor(
-    private readonly identity: Pick<SupabaseAuthPrincipalVerifier,"verifyAccessToken">,
+    private readonly identity: Pick<SupabaseAuthPrincipalVerifier,"verifyPrivilegedAccessToken">,
     private readonly intents: Pick<PostgresWorkspaceConnectionIntents,"begin"|"consume">
   ) {}
 
   async begin(input: z.infer<typeof requestSchema>): Promise<ConnectionIntentStart> {
     const request = requestSchema.parse(input);
-    // Fresh readback of the current user and actual auth.sessions row.
+    // Fresh user/session check AND aal2/current MFA-factor proof.
     // The intent store then ALSO verifies live owner/admin membership.
-    const verified = await this.identity.verifyAccessToken(request.accessToken);
+    const verified = await this.identity.verifyPrivilegedAccessToken(request.accessToken);
     return this.intents.begin({
       workspaceId:request.workspaceId,
       actor:verified.principal,
@@ -52,7 +52,7 @@ export class AuthenticatedWorkspaceConnectionIntents {
 
   async consume(input: z.infer<typeof completionSchema>): Promise<ConnectionIntentCompletion | undefined> {
     const request = completionSchema.parse(input);
-    const verified = await this.identity.verifyAccessToken(request.accessToken);
+    const verified = await this.identity.verifyPrivilegedAccessToken(request.accessToken);
     return this.intents.consume({
       workspaceId:request.workspaceId,
       actor:verified.principal,

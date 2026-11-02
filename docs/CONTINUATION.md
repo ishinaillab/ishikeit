@@ -1,5 +1,10 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — Step-up MFA gate for privileged provider connections (#230)
+
+- The internal `AuthenticatedWorkspaceConnectionIntents` now requires `verifyPrivilegedAccessToken` rather than ordinary `verifyAccessToken` for both start and callback. This verifies exact issuer/token with official Supabase Auth, live session, `aal2` claim and live `auth.mfa_factors` row with currently verified second factor. An old AAL2 JWT with revoked factor, or a conventional OTP-only AAL1 session, cannot initiate or consume provider account linking. Provider factor type is not hardcoded. Current active owner/admin membership, exact session/nonce and one-use state remain additionally enforced.
+- Added unit negatives for AAL1, missing factor, revoked session/outage and storage-not-called behavior. Ordinary AAL1 login/read-only workspace list unaffected, and existing provider APIs/webhooks untouched. **No MFA enrollment/challenge UI yet; no public connection endpoint is enabled.** This is future privilege enforcement, not proof of MFA completion. A stable official Supabase TOTP enrollment and challenge flow will be needed before privileged accounts can be connected. Sources: https://supabase.com/docs/guides/auth/auth-mfa, https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html
+
 ## 2026-11-02 — Login eligibility and distributed OTP attack defenses (#230)
 
 - Account login security check confirmed that OTP dispatch previously allowed unconfirmed, deleted or banned Supabase Auth users when workspace membership was active. The private BFF now requires verified email confirmation and a nondeleted, nonbanned permanent Supabase Auth user before dispatch. It already requires current active membership, server-only provider identity proof, and prohibits public signup.

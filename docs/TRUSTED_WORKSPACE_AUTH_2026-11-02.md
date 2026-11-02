@@ -109,3 +109,13 @@ grants are unchanged and the new column/index exists. Require verified
 Hostinger exact-SHA deployment and production liveness/readiness. No
 production app configuration, workspace identity, webhook mapping or
 published local code is changed.
+
+## Verified second factor for account connection (2026-11-02)
+
+Following current [Supabase Auth MFA assurance documentation](https://supabase.com/docs/guides/auth/auth-mfa) and [OWASP MFA recommendations](https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html), sensitive provider connection initiation and callback consumption now require more than an ordinary email OTP login:
+
+- `SupabaseAuthPrincipalVerifier.verifyPrivilegedAccessToken` first verifies the **exact bearer** against Supabase Auth and checks the current live `auth.sessions` record. Only after that verification does it trust the JWT `aal=aal2` assurance claim.
+- Before allowing an account-connect action, the verifier also checks `auth.mfa_factors` for a **currently verified second factor** attached to the same user UUID. This prevents an old AAL2 JWT from being sufficient after all factors have been unenrolled. It is factor-type neutral: any officially verified MFA factor can satisfy the guard, not an invented or hardcoded provider capability.
+- Missing/unknown assurance, AAL1 sessions and users with no currently verified factors fail closed. Both OAuth start and callback must satisfy the check again, on top of existing exact session/browser/one-time state and active workspace owner/admin membership.
+- Read-only workspace inventory remains available after authenticated AAL1 login. Privileged OAuth remains **unavailable** until an official TOTP enrollment/challenge/verify UI exists and the real user is verified; do not weaken this gate to make onboarding convenient.
+- The browser BFF does **not yet** present an MFA enrollment/verification interface, and there are still no real users. This is a server-side prerequisite, not a claim that second-factor registration has been completed.

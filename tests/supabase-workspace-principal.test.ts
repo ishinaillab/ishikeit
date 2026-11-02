@@ -21,10 +21,14 @@ function jwt(overrides: Record<string,unknown> = {}): string {
   const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
   return header+"."+data+".synthetic_signature_only_not_accepted_by_real_auth";
 }
-function fakeDb(active: boolean, fail = false): Pick<PostgresDatabase,"query"> {
+function fakeDb(active: boolean, fail = false, factorVerified = true): Pick<PostgresDatabase,"query"> {
   return {
     query: vi.fn((sql: string, params?: readonly unknown[]) => {
       if(fail) throw new Error("db secret must never appear");
+      if(sql.includes("auth.mfa_factors")){
+        expect(params).toEqual([subject]);
+        return Promise.resolve({rows:[{verified:factorVerified}],rowCount:1});
+      }
       expect(sql).toContain("auth.sessions");
       expect(params).toEqual([sessionId,subject]);
       return Promise.resolve({rows:[{active}],rowCount:1});
@@ -41,11 +45,11 @@ function fakeResponse(status = 200, overrides: Record<string,unknown> = {}) {
 }
 function verifier(opts: {
   status?:number;user?:Record<string,unknown>;active?:boolean;
-  dbFail?:boolean; fetchFail?:boolean;
+  dbFail?:boolean; fetchFail?:boolean; factorVerified?:boolean;
   calls?: (url: string | URL | Request, options?: RequestInit) => void;
 } = {}) {
   return new SupabaseAuthPrincipalVerifier({
-    projectUrl:origin,publishableKey:key,db:fakeDb(opts.active ?? true,opts.dbFail),
+    projectUrl:origin,publishableKey:key,db:fakeDb(opts.active ?? true,opts.dbFail,opts.factorVerified ?? true),
     now:()=>now,
     fetchImpl: (url,options) => {
       opts.calls?.(url,options);
@@ -137,6 +141,40 @@ describe("trusted Supabase Auth user and live session workspace boundary", () =>
     }
   });
 
+  it("requires aal2 verified through the exact Supabase bearer AND a current enrolled factor",async()=>{
+    const verified=verifier();
+    await expect(verified.verifyPrivilegedAccessToken(jwt()))
+      .rejects.toThrow("Multi-factor authentication required");
+    await expect(verified.verifyPrivilegedAccessToken(jwt({aal:"aal1"})))
+      .rejects.toThrow("Multi-factor authentication required");
+    await expect(verified.verifyPrivilegedAccessToken(jwt({aal:"aal2"})))
+      .resolves.toMatchObject({principal:{issuer,subject},sessionId});
+    await expect(verifier({factorVerified:false})
+      .verifyPrivilegedAccessToken(jwt({aal:"aal2"})))
+      .rejects.toThrow("Multi-factor authentication required");
+    await expect(verifier({dbFail:true})
+      .verifyPrivilegedAccessToken(jwt({aal:"aal2"})))
+      .rejects.toThrow(/verification unavailable/i);
+  });
+
+  it("denies account connection when only aal1 is present without touching storage",async()=>{
+    const begin=vi.fn();
+    const consume=vi.fn();
+    const facade=new AuthenticatedWorkspaceConnectionIntents(verifier(),{begin,consume});
+    const request={
+      accessToken:jwt(),workspaceId:"123e4567-e89b-42d3-a456-426614174000",
+      provider:"instagram",providerApplicationKey:"test-app",
+      redirectUri:"https://apps.example.test/callback"
+    };
+    await expect(facade.begin(request)).rejects.toThrow(/multi-factor/i);
+    await expect(facade.consume({
+      ...request,state:"valid-authorizer-state-123456789",
+      browserNonce:"valid-browser-nonce-123456789"
+    })).rejects.toThrow(/multi-factor/i);
+    expect(begin).not.toHaveBeenCalled();
+    expect(consume).not.toHaveBeenCalled();
+  });
+
   it("never accepts principal or role from an untrusted connect request",async()=>{
     const identity=verifier();
     const begin=vi.fn((input: unknown) => {
@@ -153,7 +191,7 @@ describe("trusted Supabase Auth user and live session workspace boundary", () =>
       begin,consume
     });
     const req={
-      accessToken:jwt(),workspaceId:"123e4567-e89b-42d3-a456-426614174000",
+      accessToken:jwt({aal:"aal2"}),workspaceId:"123e4567-e89b-42d3-a456-426614174000",
       provider:"instagram",providerApplicationKey:"test-app",
       redirectUri:"https://apps.example.test/callback"
     };

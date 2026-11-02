@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ishikeit-first-administrator
@@ -43,6 +44,10 @@ jobs:
           node-version: '24'
           package-manager-cache: false
       - run: npm ci --ignore-scripts
+      - name: Prove GitHub deployment environment requires human approval and main branch
+        env:
+          ISHIKEIT_PROVISIONING_GITHUB_READ_TOKEN: ${{ github.token }}
+        run: node scripts/verify-protected-provisioning-environment.mjs
       - name: Verify protected approval and exact nominated administrator
         env:
           APPROVED_EMAIL: ${{ vars.ISHIKEIT_INITIAL_ADMIN_EMAIL }}

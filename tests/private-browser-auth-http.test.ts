@@ -11,24 +11,25 @@ const login="B".repeat(43);
 const csrf="C".repeat(43);
 function testServer(enabled=true){
   const controller={
-    begin:vi.fn((_email:string,_ip:string)=>Promise.resolve(login)),
-    verify:vi.fn((_nonce:string,_code:string,_ip:string)=>Promise.resolve({
+    begin:vi.fn((_email:string,_ip:string)=>{void _email;void _ip;return Promise.resolve(login);}),
+    verify:vi.fn((_nonce:string,_code:string,_ip:string)=>{void _nonce;void _code;void _ip;return Promise.resolve({
       cookieValue:token,csrfToken:csrf
-    })),
-    get:vi.fn((_cookie:string)=>Promise.resolve({
+    });}),
+    get:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve({
       sessionId:"session",expiresAt:"2027-01-01T00:00:00Z",
       csrfToken:csrf,workspaces:{items:[{
         workspaceId:"123e4567-e89b-42d3-a456-426614174000",
         displayName:"Workspace",role:"owner" as const,connectedAccounts:0
       }]}
-    })),
-    listWorkspaces:vi.fn((_cookie:string,_after?:string)=>Promise.resolve({items:[]})),
-    refresh:vi.fn((_cookie:string)=>Promise.resolve({
+    });}),
+    listWorkspaces:vi.fn((_cookie:string,_after?:string)=>{void _cookie;void _after;return Promise.resolve({items:[]});}),
+    refresh:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve({
       sessionId:"session",expiresAt:"2027-01-01T00:00:00Z",
       csrfToken:csrf,workspaces:{items:[]}
-    })),
-    logout:vi.fn((_cookie:string)=>Promise.resolve()),
+    });}),
+    logout:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve();}),
     assertCsrf:vi.fn((_cookie:string,header:string|undefined)=>{
+      void _cookie;
       if(header!==csrf)throw new Error("Invalid CSRF");
     })
   } satisfies BrowserAuthController;

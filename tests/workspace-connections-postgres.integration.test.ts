@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresDatabase } from "../src/persistence/postgres.js";
+import { PostgresWorkspaceConnectionIntents } from "../src/persistence/workspace-connection-intents.js";
 import {
   PostgresWorkspaceConnectionRegistry, type WorkspacePrincipal,
   type VerifiedAccountProof
@@ -19,6 +20,7 @@ if (connectionString !== undefined) {
 }
 const db = connectionString === undefined ? undefined : new PostgresDatabase(connectionString);
 const registry = db === undefined ? undefined : new PostgresWorkspaceConnectionRegistry(db);
+const intents = db === undefined ? undefined : new PostgresWorkspaceConnectionIntents(db);
 const ownerA: WorkspacePrincipal = { issuer: "verified-session-issuer", subject: "owner-A" };
 const ownerB: WorkspacePrincipal = { issuer: "verified-session-issuer", subject: "owner-B" };
 const agentA: WorkspacePrincipal = { issuer: "verified-session-issuer", subject: "agent-A" };
@@ -54,10 +56,12 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
   beforeAll(async () => {
     const migration = await readFile("migrations/0010_ishikeit_workspace_connections.sql", "utf8");
     await db!.query(migration);
+    const authMigration = await readFile("migrations/0011_ishikeit_connection_intents.sql", "utf8");
+    await db!.query(authMigration);
   });
 
   beforeEach(async () => {
-    await db!.query(`TRUNCATE TABLE public.ishikeit_connection_audit,
+    await db!.query(`TRUNCATE TABLE public.ishikeit_connection_intents,public.ishikeit_connection_audit,
       public.ishikeit_account_connections,public.ishikeit_provider_accounts,
       public.ishikeit_workspace_memberships,public.ishikeit_workspaces`);
     workspaceA = randomUUID();
@@ -69,7 +73,7 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
   afterAll(async () => {
     try {
       await db!.query(`DROP TABLE IF EXISTS
-        public.ishikeit_connection_audit,public.ishikeit_account_connections,
+        public.ishikeit_connection_intents,public.ishikeit_connection_audit,public.ishikeit_account_connections,
         public.ishikeit_provider_accounts,public.ishikeit_workspace_memberships,
         public.ishikeit_workspaces`);
     } finally {
@@ -236,4 +240,119 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     );
     expect(policies.rows).toEqual([]);
   });
+  it("binds one-use OAuth state to workspace, authenticated actor, provider app and secure browser", async () => {
+    const begin = {
+      workspaceId:workspaceA,actor:ownerA,provider:"instagram",
+      providerApplicationKey:"app-test",redirectUri:"https://apps.example.test/oauth/instagram/callback"
+    };
+    const created = await intents!.begin(begin);
+    expect(created.state).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(created.browserNonce).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(created.state).not.toBe(created.browserNonce);
+    expect(new Date(created.expiresAt).getTime()).toBeGreaterThan(Date.now());
+    const rows = await db!.query<{
+      state_hash:string;browser_nonce_hash:string;actor_subject:string
+    }>("SELECT state_hash,browser_nonce_hash,actor_subject FROM public.ishikeit_connection_intents");
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0]?.actor_subject).toBe(ownerA.subject);
+    expect(rows.rows[0]?.state_hash).toBe(createHash("sha256").update(created.state).digest("hex"));
+    expect(rows.rows[0]?.browser_nonce_hash).toBe(
+      createHash("sha256").update(created.browserNonce).digest("hex")
+    );
+    const callback = { ...begin,state:created.state,browserNonce:created.browserNonce };
+    expect(await intents!.consume({...callback,workspaceId:workspaceB,actor:ownerB})).toBeUndefined();
+    expect(await intents!.consume({...callback,provider:"tiktok"})).toBeUndefined();
+    expect(await intents!.consume({...callback,providerApplicationKey:"foreign-app"})).toBeUndefined();
+    expect(await intents!.consume({...callback,redirectUri:"https://other.example.test/callback"}))
+      .toBeUndefined();
+    const wrongNonce = Buffer.alloc(32,1).toString("base64url");
+    expect(await intents!.consume({...callback,browserNonce:wrongNonce})).toBeUndefined();
+    const consumed = await intents!.consume(callback);
+    expect(consumed).toMatchObject({workspaceId:workspaceA,actor:ownerA,provider:"instagram"});
+    expect(consumed?.codeVerifier).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(createHash("sha256").update(consumed!.codeVerifier).digest("base64url"))
+      .toBe(created.codeChallenge);
+    expect(await intents!.consume(callback)).toBeUndefined();
+    expect(await intents!.consume(callback)).toBeUndefined();
+  });
+
+  it("prevents OAuth callback replay even with concurrent requests", async () => {
+    const begin = {
+      workspaceId:workspaceA,actor:ownerA,provider:"tiktok",
+      providerApplicationKey:"tiktok-app",redirectUri:"https://apps.example.test/callback"
+    };
+    const minted = await intents!.begin(begin);
+    const p = {...begin,state:minted.state,browserNonce:minted.browserNonce};
+    const [a,b] = await Promise.all([intents!.consume(p),intents!.consume(p)]);
+    expect([a,b].filter(Boolean)).toHaveLength(1);
+  });
+
+  it("rechecks workspace membership and grant role at the callback", async () => {
+    const begin = {
+      workspaceId:workspaceA,actor:ownerA,provider:"instagram",
+      providerApplicationKey:"app-test",redirectUri:"https://apps.example.test/callback"
+    };
+    const mint = await intents!.begin(begin);
+    const callback = {...begin,state:mint.state,browserNonce:mint.browserNonce};
+    await db!.query(
+      "UPDATE public.ishikeit_workspace_memberships SET state='revoked' WHERE workspace_id=$1",
+      [workspaceA]
+    );
+    expect(await intents!.consume(callback)).toBeUndefined();
+    await db!.query(
+      "UPDATE public.ishikeit_workspace_memberships SET state='active',role='viewer' WHERE workspace_id=$1",
+      [workspaceA]
+    );
+    expect(await intents!.consume(callback)).toBeUndefined();
+    await db!.query(
+      "UPDATE public.ishikeit_workspace_memberships SET role='owner' WHERE workspace_id=$1",
+      [workspaceA]
+    );
+    const accepted = await intents!.consume(callback);
+    expect(accepted?.actor).toEqual(ownerA);
+    expect(await intents!.consume(callback)).toBeUndefined();
+  });
+
+  it("rejects expired, malicious, or non-HTTPS redirect attempts without cross-tenant side effects", async () => {
+    const begin = {
+      workspaceId:workspaceA,actor:ownerA,provider:"instagram",
+      providerApplicationKey:"app-test",redirectUri:"https://apps.example.test/callback"
+    };
+    await expect(intents!.begin({
+      ...begin,redirectUri:"https://apps.example.test@evil.test/callback"
+    })).rejects.toThrow();
+    await expect(intents!.begin({...begin,redirectUri:"http://apps.example.test/callback"}))
+      .rejects.toThrow();
+    await expect(intents!.begin({...begin,redirectUri:"https://apps.example.test/callback#frag"}))
+      .rejects.toThrow();
+    await expect(intents!.begin({...begin,actor:ownerB})).rejects.toThrow(/authorization denied/i);
+    const mint = await intents!.begin(begin);
+    await db!.query(
+      "UPDATE public.ishikeit_connection_intents SET expires_at=now()-interval '1 second',created_at=now()-interval '2 minutes'"
+    );
+    expect(await intents!.consume({
+      ...begin,state:mint.state,browserNonce:mint.browserNonce
+    })).toBeUndefined();
+    expect((await db!.query("SELECT 1 FROM public.ishikeit_account_connections")).rowCount)
+      .toBe(0);
+  });
+
+  it("keeps intent data RLS private with no browser grants or policies", async () => {
+    const result = await db!.query<{
+      relrowsecurity:boolean; anon_select:boolean; authenticated_select:boolean;num_policies:number
+    }>(`SELECT c.relrowsecurity,
+       EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon')
+         AND coalesce((SELECT has_table_privilege('anon',c.oid,'SELECT')
+           FROM pg_roles WHERE rolname='anon'),false) AS anon_select,
+       EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated')
+         AND coalesce((SELECT has_table_privilege('authenticated',c.oid,'SELECT')
+           FROM pg_roles WHERE rolname='authenticated'),false) AS authenticated_select,
+       (SELECT count(*)::int FROM pg_policies p WHERE p.schemaname='public'
+         AND p.tablename=c.relname) AS num_policies
+       FROM pg_class c WHERE c.oid='public.ishikeit_connection_intents'::regclass`);
+    expect(result.rows[0]).toMatchObject({
+      relrowsecurity:true,anon_select:false,authenticated_select:false,num_policies:0
+    });
+  });
+
 });

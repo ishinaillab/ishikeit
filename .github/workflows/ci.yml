@@ -20,6 +20,8 @@ jobs:
           package-manager-cache: false
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - name: Verify protected Supabase Auth SMTP, invitation redirect, and MFA configuration checks (mock only)
+        run: node --test scripts/test-verify-auth-production-config.mjs
       - name: Verify dedicated-token WordPress bridge health probe (mock only)
         timeout-minutes: 2
         run: node --test scripts/test-probe-wordpress-ai-bridge.mjs

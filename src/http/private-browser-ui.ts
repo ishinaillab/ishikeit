@@ -111,6 +111,12 @@ footer{margin-top:58px;font-size:.81rem;color:#89777b;text-align:center}
 `;
 
 export const privateLoginJs = `"use strict";
+// Auth Admin invite links may append a short-lived session fragment.
+// Ishikeit deliberately never reads or stores Supabase tokens from URL
+// fragments; clear them from browser history before any other UI work.
+if(window.location.hash || window.location.search){
+  window.history.replaceState(null,"","/app/login");
+}
 const emailForm=document.getElementById("email-form");
 const codeForm=document.getElementById("code-form");
 const loginPanel=document.getElementById("login-panel");

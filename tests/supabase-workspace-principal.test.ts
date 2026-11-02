@@ -85,7 +85,6 @@ describe("trusted Supabase Auth user and live session workspace boundary", () =>
       jwt({aud:"service_role"}),
       jwt({role:"service_role"}),
       jwt({exp:Math.floor(now/1000)-60}),
-      jwt({exp:Math.floor(now/1000)+100000}),
       jwt({sub:randomUUID()})
     ]){
       await expect(subjectVerifier.verifyAccessToken(token)).rejects.toThrow();

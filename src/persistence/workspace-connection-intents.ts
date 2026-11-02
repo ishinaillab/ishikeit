@@ -51,7 +51,9 @@ const beginSchema = z.object({
   actor: principal,
   provider,
   providerApplicationKey: provider,
-  redirectUri: z.string().min(12).max(2048)
+  redirectUri: z.string().min(12).max(2048),
+  // Optional legacy/internal callers; authenticated facade always supplies it.
+  sessionId: uuid.optional()
 }).strict();
 const consumeSchema = beginSchema.extend({
   state: token,
@@ -110,11 +112,11 @@ export class PostgresWorkspaceConnectionIntents {
       const inserted = await tx.query<ExpirationRow>(
         `INSERT INTO public.ishikeit_connection_intents
            (intent_id,workspace_id,actor_issuer,actor_subject,provider,
-            provider_application_key,redirect_uri,state_hash,browser_nonce_hash,expires_at)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now()+ interval '10 minutes')
+            provider_application_key,redirect_uri,state_hash,browser_nonce_hash,auth_session_id,expires_at)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now()+ interval '10 minutes')
          RETURNING expires_at`,
         [randomUUID(),p.workspaceId,p.actor.issuer,p.actor.subject,p.provider,
-          p.providerApplicationKey,redirectUri,digest(state),digest(browserNonce)]
+          p.providerApplicationKey,redirectUri,digest(state),digest(browserNonce),p.sessionId ?? null]
       );
       if (inserted.rows[0] === undefined) throw new Error("Connection intent unavailable");
       return inserted.rows[0].expires_at.toISOString();
@@ -140,6 +142,7 @@ export class PostgresWorkspaceConnectionIntents {
        WHERE i.workspace_id=$1 AND i.actor_issuer=$2 AND i.actor_subject=$3
          AND i.provider=$4 AND i.provider_application_key=$5 AND i.redirect_uri=$6
          AND i.state_hash=$7 AND i.browser_nonce_hash=$8
+         AND i.auth_session_id IS NOT DISTINCT FROM $9::uuid
          AND i.consumed_at IS NULL AND i.expires_at > now()
          AND EXISTS (
            SELECT 1 FROM public.ishikeit_workspace_memberships m
@@ -151,7 +154,7 @@ export class PostgresWorkspaceConnectionIntents {
        RETURNING intent_id,workspace_id,actor_issuer,actor_subject,
                  provider,provider_application_key,redirect_uri`,
       [p.workspaceId,p.actor.issuer,p.actor.subject,p.provider,
-        p.providerApplicationKey,redirectUri,digest(p.state),digest(p.browserNonce)]
+        p.providerApplicationKey,redirectUri,digest(p.state),digest(p.browserNonce),p.sessionId ?? null]
     ));
     const row = result.rows[0];
     if (row === undefined) return undefined;

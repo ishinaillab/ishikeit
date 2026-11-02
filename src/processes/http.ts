@@ -55,6 +55,7 @@ import { SupabaseAuthPrincipalVerifier } from "../auth/supabase-workspace-princi
 import { AuthenticatedWorkspacePortfolio } from "../auth/authenticated-workspace-portfolio.js";
 import { SupabaseEmailOtpClient } from "../auth/supabase-email-otp.js";
 import { PrivateBrowserAuthService } from "../auth/private-browser-auth.js";
+import { PostgresBrowserAuthMaintenance } from "../auth/private-browser-auth-maintenance.js";
 import { PostgresOAuthCredentialStore } from "../auth/oauth-store.js";
 import { PostgresAccountCapabilityFacts } from "../persistence/account-capability-facts.js";
 import { TikTokOAuthClient, TikTokOAuthService } from "../auth/tiktok-oauth.js";
@@ -843,6 +844,7 @@ if (env.PROCESSOR_ENABLED) {
 let shuttingDown = false;
 // An asynchronous Hostinger SIGTERM may arrive before startup has finished.
 let instagramMaintenanceTimer: NodeJS.Timeout | undefined;
+let browserAuthCleanupTimer: NodeJS.Timeout | undefined;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -850,6 +852,7 @@ async function shutdown(signal: string): Promise<void> {
   // Startup must observe shuttingDown before the DB pool can be closed.
   await startupPromise;
   if (instagramMaintenanceTimer !== undefined) clearInterval(instagramMaintenanceTimer);
+  if (browserAuthCleanupTimer !== undefined) clearInterval(browserAuthCleanupTimer);
   await latePointReminderClock.stop();
   if (processorWorker !== undefined) await processorWorker.stop();
   if (outboundWorker !== undefined) await outboundWorker.stop();
@@ -907,6 +910,25 @@ async function main(): Promise<void> {
       instagramMaintenanceTimer = setInterval(() => { void maintainInstagram(); }, 6 * 60 * 60 * 1000);
       instagramMaintenanceTimer.unref();
       void maintainInstagram();
+    }
+    if (browserAuth !== undefined) {
+      const cleanup=new PostgresBrowserAuthMaintenance(db);
+      const maintainBrowserAuth=async()=>{
+        try {
+          const result=await cleanup.runOnce();
+          if(result.expiredAttempts+result.expiredSessions+result.oldRateBuckets>0)
+            logger.info(result,"private browser auth data cleanup completed");
+        }catch{
+          logger.warn("private browser auth data cleanup unavailable");
+        }
+      };
+      // Independent non-sending cleanup, no provider tokens, accounts or queue
+      // modifications. Each pass is bounded and safe across Hostinger replicas.
+      browserAuthCleanupTimer=setInterval(()=>{
+        if(!shuttingDown)void maintainBrowserAuth();
+      },30*60*1000);
+      browserAuthCleanupTimer.unref();
+      void maintainBrowserAuth();
     }
     // This clock suppresses deadlines only; no outbound template sender is involved.
     latePointReminderClock.start();

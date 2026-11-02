@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { PostgresDatabase } from "../src/persistence/postgres.js";
 import { CredentialCipher } from "../src/auth/credential-cipher.js";
 import { PrivateBrowserAuthService } from "../src/auth/private-browser-auth.js";
+import { PostgresBrowserAuthMaintenance } from "../src/auth/private-browser-auth-maintenance.js";
 
 const connectionString=process.env.PG_OUTBOX_TEST_DATABASE_URL;
 if(connectionString!==undefined){
@@ -66,6 +67,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       );`);
     await db!.query(await readFile("migrations/0010_ishikeit_workspace_connections.sql","utf8"));
     await db!.query(await readFile("migrations/0014_private_browser_auth.sql","utf8"));
+    await db!.query(await readFile("migrations/0015_browser_login_email_encryption.sql","utf8"));
     await db!.query("INSERT INTO public.ishikeit_workspaces(workspace_id,display_name) VALUES($1,'A')",[workspaceId]);
     await db!.query(
       "INSERT INTO public.ishikeit_workspace_memberships(workspace_id,auth_issuer,auth_subject,role) VALUES($1,$2,$3,'owner')",
@@ -99,9 +101,22 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     const guest=await service!.begin("outsider@example.com","test-network-b");
     expect(guest).toMatch(/^[A-Za-z0-9_-]{43}$/u);
     expect(otpClient.sendOtp).toHaveBeenCalledTimes(1);
-    const dbRows=await db!.query<{challenge_hash:string;email_address:string}>(
-      "SELECT challenge_hash,email_address FROM public.ishikeit_browser_login_attempts"
+    const dbRows=await db!.query<{
+      challenge_hash:string;email_ciphertext:Buffer;email_iv:Buffer;email_tag:Buffer
+    }>(
+      "SELECT challenge_hash,email_ciphertext,email_iv,email_tag FROM public.ishikeit_browser_login_attempts"
     );
+    expect(dbRows.rows.every(r=>
+      r.email_ciphertext.length>0 && r.email_iv.length===12 && r.email_tag.length===16
+      && !r.email_ciphertext.includes(Buffer.from("invited@example.com"))
+      && !r.email_ciphertext.includes(Buffer.from("outsider@example.com"))
+    )).toBe(true);
+    const columns=await db!.query<{column_name:string}>(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='ishikeit_browser_login_attempts'
+         AND column_name='email_address'`
+    );
+    expect(columns.rows).toHaveLength(0);
     expect(dbRows.rows).toHaveLength(2);
     expect(dbRows.rows.map(r=>r.challenge_hash)).not.toContain(
       createHash("sha256").update("not-a-cookie").digest("hex")
@@ -136,6 +151,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     const current=await service!.get(created.cookieValue);
     expect(current.workspaces.items).toHaveLength(1);
     await service!.logout(created.cookieValue);
+    expect((await db!.query("SELECT 1 FROM public.ishikeit_browser_sessions")).rowCount).toBe(0);
     await expect(service!.csrf(created.cookieValue)).rejects.toThrow(/session/i);
     await expect(service!.get(created.cookieValue)).rejects.toThrow(/session/i);
     expect(otpClient.revoke).toHaveBeenCalledWith(refreshed);
@@ -168,6 +184,46 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     );
     await expect(service!.verify(nonce,"123456","test-network-a")).rejects.toThrow();
     expect(otpClient.verifyOtp).not.toHaveBeenCalled();
+  });
+
+  it("uses keyed nonreversible rate buckets instead of predictable email SHA-256",async()=>{
+    await service!.begin("invited@example.com","test-network-a");
+    const rows=await db!.query<{bucket_hash:string}>(
+      "SELECT bucket_hash FROM public.ishikeit_browser_auth_limits"
+    );
+    const guess=createHash("sha256").update("otp:email:invited@example.com").digest("hex");
+    expect(rows.rows.length).toBeGreaterThanOrEqual(2);
+    expect(rows.rows.some(row=>row.bucket_hash===guess)).toBe(false);
+    expect(rows.rows.every(row=>/^[0-9a-f]{64}$/u.test(row.bucket_hash))).toBe(true);
+  });
+
+  it("removes only expired private records, preserving active session and current throttles",async()=>{
+    const active=await service!.begin("invited@example.com","test-network-a");
+    const old=await service!.begin("outsider@example.com","test-network-b");
+    const session=await service!.verify(active,"123456","test-network-a");
+    await db!.query(
+      "UPDATE public.ishikeit_browser_login_attempts SET expires_at=now()-interval '1 second',requested_at=now()-interval '11 minutes' WHERE challenge_hash=$1",
+      [createHash("sha256").update(old).digest("hex")]
+    );
+    await db!.query(
+      "INSERT INTO public.ishikeit_browser_auth_limits(bucket_hash,hits,reset_at) VALUES($1,2,now()-interval '25 hours')",
+      ["f".repeat(64)]
+    );
+    const cleaner=new PostgresBrowserAuthMaintenance(db!);
+    const removed=await cleaner.runOnce();
+    expect(removed.expiredAttempts).toBe(1);
+    expect(removed.expiredSessions).toBe(0);
+    expect(removed.oldRateBuckets).toBe(1);
+    expect((await db!.query(
+      "SELECT 1 FROM public.ishikeit_browser_sessions WHERE session_hash=$1",
+      [createHash("sha256").update(session.cookieValue).digest("hex")]
+    )).rowCount).toBe(1);
+    await db!.query(
+      "UPDATE public.ishikeit_browser_sessions SET created_at=now()-interval '13 hours',session_expires_at=now()-interval '1 second'"
+    );
+    const expired=await cleaner.runOnce();
+    expect(expired.expiredSessions).toBe(1);
+    await expect(service!.csrf(session.cookieValue)).rejects.toThrow(/session/i);
   });
 
   it("enforces private RLS and prevents Data API access to all sensitive tables",async()=>{

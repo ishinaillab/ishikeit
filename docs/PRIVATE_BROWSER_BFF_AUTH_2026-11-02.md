@@ -40,7 +40,7 @@ continue unchanged.
 ## Implementation
 
 - `migrations/0014_private_browser_auth.sql`: three private, RLS-on,
-  no-public-client-grants tables for one-time login challenges, durable hashed
+  no-public-client-grants tables for one-time login challenges with encrypted email values, durable keyed-HMAC
   rate buckets, and session records. Session IDs are SHA-256 hashes; provider
   access/refresh tokens use AES-256-GCM with per-value associated data and
   independent browser encryption key. Session max lifetime 12h.
@@ -48,8 +48,8 @@ continue unchanged.
   no signup or password endpoint and no service-role keys.
 - `src/auth/private-browser-auth.ts`: server-only OTP request/verify,
   active-member check, encrypted cookie sessions, explicit session validation,
-  serializing refresh and local revocation before best-effort remote signout.
-  Database throttles email OTP requests and remote OTP verification; per-code
+  serializing refresh and immediate local credential erasure before best-effort remote signout.
+  Database throttles email OTP requests and remote OTP verification with keyed-HMAC privacy-preserving rate buckets; per-code
   retries capped at five. All public OTP request responses are intentionally
   generic to limit user enumeration.
 - `src/http/private-browser-auth-routes.ts`: six routes under
@@ -102,7 +102,7 @@ Do NOT enable the flag merely because this code is deployed:
   does not bypass Supabase refresh or current workspace authorization.
 - No real user/workspace is provisioned, and no historical records are
   attributed to an account by these changes.
-- Durable throttling cleanup and explicit production UI are separate
+- A bounded, non-sending authentication cleanup process (30-minute checks when feature enabled) removes expired login challenges, expired or revoked sessions, and old rate-bucket entries. Explicit public onboarding and full conversations UI are separate
   maintenance steps. Never assert those are already complete.
 
 ## Test gates
@@ -137,3 +137,34 @@ CSP, disabled routes, cookie revocation and CSRF recovery.
 real user/bootstrap has been set. Before inviting users verify actual email
 OTP template, canonical Hostinger proxy behavior and the provider's official
 current security controls.
+
+## Privacy hardening — migration 0015 (2026-11-02)
+
+The first private BFF foundation had a plaintext email column in the short-lived
+OTP attempt table, unsalted SHA-256 email/IP rate-bucket digests, and no
+scheduled removal of expired, encrypted credential records. **Fix:**
+
+- Migration `0015_browser_login_email_encryption.sql` removes the plaintext
+  `email_address` column after *locking and verifying that the table is empty*
+  and substitutes mandatory AES-256-GCM email ciphertext/IV/tag. This migration
+  **fails closed** if there are any live login attempts requiring an explicit
+  encrypted backfill. It must run before the new code is activated.
+- The service decrypts the matching email using the one-time cookie hash as
+  additional authenticated data, never writes the email as plaintext to its
+  own private auth table, and uses HMAC-SHA-256 of the rate bucket key under
+  the independent CSRF secret to avoid predictable email-address hashing.
+- Logout deletes the entire local session row in one DB transaction **before**
+  best-effort remote Auth signout, immediately erasing encrypted tokens and
+  their decryption metadata from the active DB table.
+- `PostgresBrowserAuthMaintenance.runOnce()` deletes at most 250 expired
+  OTP challenges, 250 expired/revoked sessions and 250 rate buckets older than
+  24h after expiry per pass; it uses `FOR UPDATE SKIP LOCKED` so replicas
+  cannot delete a record while verification or refresh is holding its row.
+  The non-sending runner operates only when `BROWSER_AUTH_ENABLED=true`.
+- Isolated PostgreSQL 17 regression tests prove that no plaintext email
+  column remains, ciphertext is not plaintext, rate hashes aren't trivial
+  SHA-256 dictionaries, active records survive cleanup, expired records are
+  removed, and logout removes tokens immediately.
+
+The production browser login remains **disabled** until real authorized
+user enrollment and email-template/Hostinger proxy verification succeed.

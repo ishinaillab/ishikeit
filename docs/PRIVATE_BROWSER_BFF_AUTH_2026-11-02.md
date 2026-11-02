@@ -96,7 +96,10 @@ Do NOT enable the flag merely because this code is deployed:
 - The 12h browser session cap is absolute; expired sessions require a new
   OTP even if Supabase refresh tokens could technically remain valid.
 - Automatic GET refresh is intentionally disabled: `POST /refresh`
-  requires explicit CSRF protection. The UI must call it before expiry.
+  requires explicit CSRF protection. After an access token expires, the
+  same-origin `GET /app/auth/csrf` can recover the CSRF token **only** for a
+  still-valid nonrevoked BFF cookie; it never returns a bearer token and
+  does not bypass Supabase refresh or current workspace authorization.
 - No real user/workspace is provisioned, and no historical records are
   attributed to an account by these changes.
 - Durable throttling cleanup and explicit production UI are separate
@@ -110,3 +113,27 @@ encryption/replay/throttle/refresh/logout/RLS regression. Apply migration
 0014 only after full CI success; verify table counts zero, RLS and no client
 access, and exact Hostinger SHA with live/ready. Production-enable only
 after live proof and explicit operational configuration.
+
+## Follow-up: private login shell and expiry-safe CSRF recovery
+
+The disabled-by-default BFF also serves `GET /app` and `GET /app/login`
+when enabled, with static same-origin `ui.js` and `ui.css`. It is a narrow
+login and **read-only** workspace inventory, not the Phase 3 conversation
+dashboard. Accessible labels, email/one-time-code inputs, live status and
+mobile-responsive styling avoid inlined JavaScript, unsafe dynamic HTML,
+third-party scripts or browser token persistence. CSP restricts script,
+style, connect and form sources; the frontend uses `textContent` for
+workspace names.
+
+`GET /app/auth/csrf` is bound to an unexpired, nonrevoked opaque server-side
+session. This supports POST refresh after a Supabase access token expires,
+including after a tab reload, without exposing the access token or refresh
+token. POST refresh still requires both exact same-origin metadata and the
+HMAC CSRF header; actual user/session/membership verification happens on
+refresh before any workspace data is returned. Negative HTTP tests cover
+CSP, disabled routes, cookie revocation and CSRF recovery.
+
+**Activation hold unchanged:** No `BROWSER_AUTH_ENABLED` production flag or
+real user/bootstrap has been set. Before inviting users verify actual email
+OTP template, canonical Hostinger proxy behavior and the provider's official
+current security controls.

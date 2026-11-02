@@ -210,6 +210,21 @@ export class PrivateBrowserAuthService {
     return {access,verified};
   }
 
+  /** CSRF recovery for an unexpired BFF cookie when its Supabase access
+   * token has expired. It never returns a bearer token or grants membership.
+   * Strict same-origin HTTP transport must guard the response.
+   */
+  async csrf(cookie:string):Promise<string> {
+    bearer.parse(cookie);
+    const result=await this.deps.db.query(
+      `SELECT 1 FROM public.ishikeit_browser_sessions
+       WHERE session_hash=$1 AND revoked_at IS NULL AND session_expires_at>now()`,
+      [sha256(cookie)]
+    );
+    if(result.rowCount!==1)throw new Error("Browser session unavailable");
+    return this.csrfForCookie(cookie);
+  }
+
   async get(cookie:string):Promise<BrowserIdentitySummary> {
     const {access,verified}=await this.#bearer(cookie);
     const workspaces=await this.deps.portfolio.list(access,{pageSize:50});

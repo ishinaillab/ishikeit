@@ -1,5 +1,11 @@
 # Ishikeit continuation handoff
 
+## 2026-11-02 — Pre-Phase-3 private login shell and expiry-safe CSRF recovery (#230)
+
+- Added static, accessible, mobile-responsive `GET /app` and `GET /app/login` UI for private email OTP, session renewal, sign-out and a read-only current-workspace switcher inventory. Same-origin external JS/CSS only, no inline script, `innerHTML`, third-party libraries, browser token storage, arbitrary roles or account IDs. CSP restricts resources and disables forms/frames; all login UI endpoints remain **404** when `BROWSER_AUTH_ENABLED` is unset.
+- `GET /app/auth/csrf` now recovers per-cookie HMAC CSRF only for an unexpired nonrevoked opaque server session, allowing browser sessions to POST authorized refresh even when their Supabase access JWT expired before a page reload. It does NOT authenticate a user, return Supabase tokens or bypass current membership checks. POST refresh still requires Origin/Host and exact CSRF and calls official Auth/current-session verification.
+- Extended HTTP and disposable PG17 tests for CSP/script isolation, no-browser-token leak, disabled-by-default routes, matching CSRF recovery and revoked-cookie denial. See [PRIVATE_BROWSER_BFF_AUTH_2026-11-02.md](PRIVATE_BROWSER_BFF_AUTH_2026-11-02.md). Live rollout hold and provider routing safeguards remain unchanged; public onboarding, conversations dashboard, genuine OTP live test and Ishi account assignment still require separate work.
+
 ## 2026-11-02 — Private browser OTP, HttpOnly BFF sessions and exact workspace authorization (#230)
 
 - Added `migrations/0014_private_browser_auth.sql` private RLS/encrypted session tables, short-lived email OTP login challenges and DB-enforced rate buckets; no legacy account/message/queue/backfill changes.

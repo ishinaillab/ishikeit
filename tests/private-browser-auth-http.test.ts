@@ -26,7 +26,7 @@ function testServer(enabled=true,invitesEnabled=false){
         displayName:"Workspace",role:"owner" as const,connectedAccounts:0
       }]}
     });}),
-    sessionStatus:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve({
+    sessionStatus:vi.fn<BrowserAuthController["sessionStatus"]>((_cookie:string)=>{void _cookie;return Promise.resolve({
       status:"authenticated" as const,
       sessionId:"session",expiresAt:"2027-01-01T00:00:00Z",
       csrfToken:csrf,memberInvitationsEnabled:true,workspaces:{items:[{
@@ -35,7 +35,7 @@ function testServer(enabled=true,invitesEnabled=false){
       }]}
     });}),
     listWorkspaces:vi.fn((_cookie:string,_after?:string)=>{void _cookie;void _after;return Promise.resolve({items:[]});}),
-    refresh:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve({
+    refresh:vi.fn<BrowserAuthController["refresh"]>((_cookie:string)=>{void _cookie;return Promise.resolve({
       status:"authenticated" as const,
       sessionId:"session",expiresAt:"2027-01-01T00:00:00Z",
       csrfToken:csrf,memberInvitationsEnabled:true,workspaces:{items:[]}

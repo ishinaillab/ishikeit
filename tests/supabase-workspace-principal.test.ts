@@ -32,6 +32,8 @@ function fakeDb(active: boolean, fail = false, factorVerified = true, sessionAal
         expect(sql).toContain("s.aal='aal2'");
         expect(sql).toContain("f.id=s.factor_id AND f.user_id=s.user_id");
         expect(sql).toContain("f.status='verified'");
+        expect(sql).toContain("ishikeit_browser_disabled_totp_factors");
+        expect(sql).toContain("d.factor_id=f.id");
         expect(params).toEqual([sessionId,subject]);
         return Promise.resolve({rows:[{verified:factorVerified && sessionAal2}],rowCount:1});
       }

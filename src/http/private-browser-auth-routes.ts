@@ -3,7 +3,8 @@ import { z } from "zod";
 import {privateLoginHtml,privateLoginCss,privateLoginJs} from "./private-browser-ui.js";
 import {
   BrowserLoginSessionSetupError, BrowserMfaEnrollmentRateLimited,
-  BrowserMfaPendingEnrollment, type PrivateBrowserAuthService
+  BrowserMfaPendingEnrollment, BrowserMfaLastAuthenticatorError,
+  type PrivateBrowserAuthService
 } from "../auth/private-browser-auth.js";
 
 export interface BrowserAuthController {
@@ -20,6 +21,9 @@ export interface BrowserAuthController {
   refresh(cookie:string):ReturnType<PrivateBrowserAuthService["refresh"]>;
   csrf(cookie:string):Promise<string>;
   listTotpFactors(cookie:string):ReturnType<PrivateBrowserAuthService["listTotpFactors"]>;
+  changeMfaSettings(cookie:string,mutation:
+    Parameters<PrivateBrowserAuthService["changeMfaSettings"]>[1]):
+    ReturnType<PrivateBrowserAuthService["changeMfaSettings"]>;
   enrollTotp(cookie:string):ReturnType<PrivateBrowserAuthService["enrollTotp"]>;
   verifyTotp(cookie:string,factorId:string,code:string):ReturnType<PrivateBrowserAuthService["verifyTotp"]>;
   inviteWorkspaceMember(cookie:string,input:{workspaceId:string;email:string;role:"admin"|"agent"|"viewer"}):
@@ -279,6 +283,37 @@ export function registerPrivateBrowserAuthRoutes(
         ...await deps.controller.listTotpFactors(value)
       });
     }catch{return deny(reply).send({status:"unauthenticated"});}
+  });
+  const mfaSettingsSchema=z.discriminatedUnion("kind",[
+    z.object({kind:z.literal("sign_in"),enabled:z.boolean(),
+      proofFactorId:z.string().uuid(),code:z.string().regex(/^[0-9]{6}$/u)}).strict(),
+    z.object({kind:z.literal("factor"),factorId:z.string().uuid(),
+      enabled:z.boolean(),proofFactorId:z.string().uuid(),
+      code:z.string().regex(/^[0-9]{6}$/u)}).strict()
+  ]);
+  // A switch is a sensitive security mutation, not a cosmetic UI setting.
+  // Confirm current TOTP through the official provider, then atomically
+  // rotate the current cookie and revoke all other local browser sessions.
+  server.post("/app/auth/mfa/preferences",{bodyLimit:512},async(req,reply)=>{
+    privateResponse(reply);
+    if(!mutation(req,reply))return reply;
+    const value=session(req,reply);
+    if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+    if(!csrf(req,reply,value))return reply;
+    const parsed=mfaSettingsSchema.safeParse(req.body);
+    if(!parsed.success)return deny(reply,400).send({status:"invalid_request"});
+    try{
+      const result=await deps.controller.changeMfaSettings(value,parsed.data);
+      return reply.header("set-cookie",cookie(sessionName,result.cookieValue,43200))
+        .code(200).send({status:"changed",csrfToken:result.csrfToken});
+    }catch(error){
+      if(error instanceof BrowserMfaLastAuthenticatorError)
+        return deny(reply,409).send({status:"last_authenticator_required"});
+      if(error instanceof BrowserMfaEnrollmentRateLimited)
+        return deny(reply,429).header("retry-after","900")
+          .send({status:"security_change_rate_limited"});
+      return deny(reply,403).send({status:"security_change_rejected"});
+    }
   });
   server.post("/app/auth/mfa/totp/enroll",{bodyLimit:256},async(req,reply)=>{
     privateResponse(reply);

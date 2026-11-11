@@ -44,10 +44,7 @@ export const privateLoginHtml = `<!doctype html>
       <div id="mfa-gate-slot">
         <section class="mfa-content" id="mfa-panel" aria-label="Authenticator verification" hidden>
           <p id="mfa-summary" class="muted"></p>
-          <div id="mfa-recovery" class="notice" hidden>
-            <p>An earlier authenticator setup was not finished. You can discard it without removing a verified device.</p>
-            <button type="button" class="secondary" id="mfa-reset">Discard unfinished setup</button>
-          </div>
+          <p id="mfa-pending-help" class="muted" hidden>Cancel this setup to start again.</p>
           <div id="mfa-setup" hidden>
             <button type="button" id="mfa-enroll">Set up an authenticator</button>
           </div>
@@ -69,6 +66,7 @@ export const privateLoginHtml = `<!doctype html>
             <input id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="6" pattern="[0-9]{6}" required>
             <button id="mfa-submit" type="submit">Verify and continue</button>
           </form>
+          <button type="button" id="mfa-cancel" class="secondary" hidden>Cancel</button>
         </section>
       </div>
       <button type="button" class="text-button auth-switch-account" id="gate-sign-out">Use another account</button>
@@ -129,12 +127,47 @@ export const privateLoginHtml = `<!doctype html>
         <p class="eyebrow">ACCOUNT SETTINGS</p>
         <h1 id="security-heading">Account security</h1>
         <p class="page-description">Manage how you verify your identity and protect your account.</p>
-        <article class="settings-card">
-          <div class="settings-card-head"><span class="security-icon" aria-hidden="true">✓</span>
-            <div><h2>Two-step verification</h2><p class="muted">Your account is protected with an authenticator.</p></div>
-            <span class="state-label">On</span>
+        <article class="settings-card" aria-labelledby="mfa-settings-heading">
+          <div class="settings-card-head">
+            <span class="security-icon" aria-hidden="true">✓</span>
+            <div>
+              <h2 id="mfa-settings-heading">Two-step verification (2FA)</h2>
+              <p class="muted" id="mfa-account-description">Checking account protection…</p>
+            </div>
+            <button type="button" role="switch" id="mfa-account-toggle"
+              class="security-switch" aria-label="Two-step verification for sign-in"
+              aria-checked="true" aria-describedby="mfa-account-description" disabled>
+              <span class="switch-track" aria-hidden="true"><span></span></span>
+              <span class="switch-label" id="mfa-account-switch-label">On</span>
+            </button>
           </div>
-          <button type="button" class="secondary" id="manage-authenticators" aria-controls="mfa-settings-slot" aria-expanded="false">Manage authenticators</button>
+          <p class="muted security-footnote">Security-sensitive changes always require an authenticator code, even when 2FA for sign-in is off.</p>
+          <div class="devices-section" aria-labelledby="mfa-devices-heading">
+            <div class="devices-title-row">
+              <div><h3 id="mfa-devices-heading">Your authenticators</h3>
+                <p class="muted">Manage the authenticators you use to verify your identity.</p></div>
+              <button type="button" class="secondary" id="mfa-add">Set up an authenticator</button>
+            </div>
+            <div id="mfa-devices" class="device-list" aria-live="polite"></div>
+            <p id="mfa-devices-empty" class="muted">Loading authenticators…</p>
+          </div>
+          <section id="mfa-change-panel" class="security-detail security-proof"
+            aria-labelledby="mfa-change-title" hidden>
+            <h3 id="mfa-change-title">Confirm security change</h3>
+            <p id="mfa-change-description" class="muted"></p>
+            <form id="mfa-change-form">
+              <label for="mfa-proof-factor">Verify using</label>
+              <select id="mfa-proof-factor" required></select>
+              <label for="mfa-change-code">Six-digit authenticator code</label>
+              <input id="mfa-change-code" type="text" inputmode="numeric"
+                autocomplete="one-time-code" minlength="6" maxlength="6"
+                pattern="[0-9]{6}" required>
+              <div class="security-actions">
+                <button id="mfa-change-confirm" type="submit">Confirm change</button>
+                <button type="button" class="secondary" id="mfa-change-cancel">Cancel</button>
+              </div>
+            </form>
+          </section>
           <div id="mfa-settings-slot" class="security-detail" hidden></div>
         </article>
       </section>
@@ -175,7 +208,7 @@ button{min-height:44px;padding:10px 18px;border:1px solid #775365;border-radius:
   background:#775365;color:#fff;font-weight:650;cursor:pointer;
   transition:background .15s ease,box-shadow .15s ease}
 button:hover{background:#684759}
-button:disabled{cursor:wait;opacity:.57}
+button:disabled{cursor:not-allowed;opacity:.57}
 button.secondary{background:#fff;color:#684759;border-color:#dfd4da}
 button.secondary:hover{background:#faf5f8}
 button.text-button{background:transparent;color:#684759;border:0;padding:8px 4px;font-weight:650}
@@ -275,6 +308,40 @@ p{margin-bottom:0}
 .settings-card-head p{font-size:.88rem}
 .security-icon{display:grid;place-items:center;width:46px;height:46px;border-radius:12px;background:#e9f5ee;color:#356f58;font-size:1.25rem}
 .security-detail{margin-top:23px;padding-top:22px;border-top:1px solid #eee8ec}
+.security-footnote{max-width:570px;font-size:.88rem;line-height:1.55;margin:-8px 0 27px}
+.devices-section{padding-top:23px;border-top:1px solid #eee8ec}
+.devices-title-row{display:flex;align-items:center;justify-content:space-between;
+  flex-wrap:wrap;gap:16px;margin-bottom:18px}
+.devices-title-row>div{flex:1;min-width:210px}
+.devices-title-row h3{font-size:1.08rem;margin-bottom:5px}
+.devices-title-row p{font-size:.86rem}
+.devices-title-row button{white-space:normal;flex-shrink:0}
+.device-list{display:grid;gap:10px}
+.device-row{display:flex;align-items:center;justify-content:space-between;gap:15px;
+  border:1px solid #e9e4e8;background:#fff;border-radius:12px;padding:16px}
+.device-info{min-width:0;flex:1}
+.device-info strong{display:block;font-size:.93rem;font-weight:700;overflow-wrap:anywhere}
+.device-info p{margin-top:3px;font-size:.8rem}
+.security-switch{display:inline-flex;align-items:center;justify-content:center;gap:10px;
+  flex-shrink:0;min-height:44px;padding:8px 12px;color:#433844;background:#fff;
+  border:1px solid #e5dde2;border-radius:12px;font-size:.84rem}
+.security-switch:hover{background:#f8f4f7}
+.security-switch:disabled{cursor:not-allowed;opacity:.6}
+.security-switch .switch-track{display:flex;align-items:center;width:40px;height:23px;
+  padding:3px;background:#bcb5bd;border-radius:99px;transition:background .15s ease}
+.security-switch .switch-track span{width:17px;height:17px;border-radius:50%;
+  background:white;box-shadow:0 1px 3px #0003;transition:transform .15s ease}
+.security-switch[aria-checked="true"] .switch-track{background:#775365}
+.security-switch[aria-checked="true"] .switch-track span{transform:translateX(17px)}
+.security-switch .switch-label{min-width:24px}
+.security-proof{background:#fdfbfc;border:1px solid #eadfe5;border-radius:13px;
+  padding:20px;margin-top:23px}
+.security-proof .muted{font-size:.87rem;margin:0 0 16px}
+.security-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.security-actions button{flex:1 1 140px}
+#mfa-settings-slot{max-width:580px}
+#mfa-cancel{justify-self:stretch}
+
 .workspace-switcher{max-width:420px;margin-bottom:22px;display:grid;gap:8px}
 .toast{position:fixed;bottom:20px;right:20px;z-index:90;max-width:min(420px,calc(100vw - 40px));
   color:#fff;background:#433740;padding:13px 18px;border-radius:11px;
@@ -342,7 +409,14 @@ const mfaFactor=get("mfa-factor");
 const mfaFactorPicker=get("mfa-factor-picker");
 const mfaSummary=get("mfa-summary");
 const mfaSetup=get("mfa-setup");
-const mfaRecovery=get("mfa-recovery");
+const mfaPendingHelp=get("mfa-pending-help");
+const mfaCancel=get("mfa-cancel");
+const mfaDevices=get("mfa-devices");
+const mfaDevicesEmpty=get("mfa-devices-empty");
+const mfaAccountToggle=get("mfa-account-toggle");
+const mfaAccountDescription=get("mfa-account-description");
+const mfaChangePanel=get("mfa-change-panel");
+const mfaProofFactor=get("mfa-proof-factor");
 const mfaEnrollment=get("mfa-enrollment");
 const mfaSecret=get("mfa-secret");
 const mfaQr=get("mfa-qr");
@@ -364,7 +438,9 @@ let refreshInFlight=null;
 let workspaceRows=[];
 let currentWorkspaceId="";
 let invitingEnabled=false;
-let securityExpanded=false;
+let mfaState=null;
+let securityChange=null;
+let lastPendingCount=0;
 let mfaRetryTimer=null;
 
 function message(value){
@@ -391,12 +467,21 @@ function clearMfa(){
   mfaEnrollment.hidden=true;
   mfaForm.hidden=true;
   mfaSetup.hidden=true;
-  mfaRecovery.hidden=true;
+  mfaPendingHelp.hidden=true;
+  mfaCancel.hidden=true;
   mfaFactorPicker.hidden=true;
   mfaFactor.replaceChildren();
   get("mfa-code").value="";
   mfaSummary.textContent="";
   mfaPanel.hidden=true;
+  mfaSettingsSlot.hidden=true;
+  mfaChangePanel.hidden=true;
+  securityChange=null;
+  mfaState=null;
+  lastPendingCount=0;
+  mfaDevices.replaceChildren();
+  mfaDevicesEmpty.textContent="Loading authenticators…";
+  mfaAccountToggle.disabled=true;
 }
 function closeAccountMenu(){
   accountMenu.hidden=true;
@@ -542,6 +627,9 @@ function showPanel(panel){
   }
   closeAccountMenu();
   message("");
+  // Security settings and verified device switches are visible upon entering
+  // the page; no "Set up" or hidden accordion is needed to list them.
+  if(panel==="security")void loadMfaFactors();
 }
 function showDashboard(data,preserve){
   if(data.status!=="authenticated" || !data.workspaces || !Array.isArray(data.workspaces.items)
@@ -578,13 +666,101 @@ function showDashboard(data,preserve){
   window.history.replaceState(null,"","/app/workspaces");
   if(priorMode!=="dashboard" || !preserve){
     clearMfa();
-    securityExpanded=false;
-    mfaSettingsSlot.hidden=true;
-    get("manage-authenticators").setAttribute("aria-expanded","false");
   }
   mfaSettingsSlot.append(mfaPanel);
   setSessionExpiry(data);
   showPanel(preserve && priorMode==="dashboard"?selectedPanel:"overview");
+}
+function renderMfaDeviceList(data){
+  if(mode!=="dashboard")return;
+  const raw=Array.isArray(data.devices)?data.devices:[];
+  const devices=raw.filter(item=>item && typeof item.factorId==="string"
+    && typeof item.label==="string" && typeof item.enabled==="boolean");
+  mfaState={devices,signIn2faEnabled:data.signIn2faEnabled!==false,
+    canEnroll:data.canEnroll===true,pendingCount:data.pendingCount||0};
+  const on=mfaState.signIn2faEnabled;
+  mfaAccountToggle.setAttribute("aria-checked",on?"true":"false");
+  get("mfa-account-switch-label").textContent=on?"On":"Off";
+  mfaAccountDescription.textContent=on
+    ?"An authenticator code is required when you sign in."
+    :"Sign-in requires only your email code. Security changes still need an authenticator.";
+  mfaAccountToggle.disabled=devices.length===0;
+  mfaDevices.replaceChildren();
+  const count=devices.filter(item=>item.enabled).length;
+  for(const device of devices){
+    const row=document.createElement("div");row.className="device-row";
+    const information=document.createElement("div");information.className="device-info";
+    const heading=document.createElement("strong");heading.textContent=device.label;
+    const details=document.createElement("p");details.className="muted";
+    let date="";
+    if(typeof device.enrolledAt==="string"){
+      const parsed=Date.parse(device.enrolledAt);
+      if(Number.isFinite(parsed))
+        date=" · Added "+new Date(parsed).toLocaleDateString(undefined,{dateStyle:"medium"});
+    }
+    details.textContent=(device.enabled?"Enabled":"Disabled")+date;
+    information.append(heading,details);
+    const control=document.createElement("button");
+    control.type="button";control.className="security-switch";
+    control.setAttribute("role","switch");
+    control.setAttribute("aria-checked",device.enabled?"true":"false");
+    control.setAttribute("aria-label",
+      (device.enabled?"Disable ":"Enable ")+device.label.toLowerCase());
+    const track=document.createElement("span");track.className="switch-track";
+    track.setAttribute("aria-hidden","true");
+    track.append(document.createElement("span"));
+    const text=document.createElement("span");text.className="switch-label";
+    text.textContent=device.enabled?"On":"Off";
+    control.append(track,text);
+    // At least one usable authenticator must remain for privileged actions
+    // and recovery, even if sign-in MFA is switched off.
+    control.disabled=device.enabled && count<=1;
+    if(control.disabled)
+      control.title="Keep at least one authenticator enabled for security and recovery.";
+    control.addEventListener("click",()=>{
+      openSecurityChange({kind:"factor",factorId:device.factorId,
+        enabled:!device.enabled,label:device.label});
+    });
+    row.append(information,control);
+    mfaDevices.append(row);
+  }
+  mfaDevicesEmpty.hidden=devices.length>0;
+  mfaDevicesEmpty.textContent=devices.length===0
+    ?"No authenticators have been added yet.":"";
+}
+function openSecurityChange(mutation){
+  if(mode!=="dashboard" || !csrfToken || !mfaState)return;
+  if(enrollmentFactorId){
+    message("Finish or cancel the authenticator setup before changing security settings.");
+    return;
+  }
+  const devices=mfaState.devices;
+  const options=devices.filter(item=>item.enabled
+    && !(mutation.kind==="factor" && !mutation.enabled
+      && item.factorId===mutation.factorId));
+  if(!options.length){
+    message("Keep another authenticator enabled before disabling this one.");
+    return;
+  }
+  securityChange=mutation;
+  mfaProofFactor.replaceChildren();
+  for(const device of options){
+    const option=document.createElement("option");
+    option.value=device.factorId;option.textContent=device.label;
+    mfaProofFactor.append(option);
+  }
+  get("mfa-change-code").value="";
+  const verb=mutation.enabled?"Enable":"Disable";
+  const subject=mutation.kind==="sign_in"?"two-step verification for sign-in":mutation.label;
+  get("mfa-change-title").textContent=mutation.kind==="enroll"
+    ?"Verify to add an authenticator":verb+" "+subject;
+  get("mfa-change-description").textContent=mutation.kind==="sign_in" && !mutation.enabled
+    ?"Future sign-ins will use your email code without a second step. An authenticator remains required for sensitive changes. Other sessions will be signed out."
+    :"For your protection, enter a fresh code from an enabled authenticator. Other signed-in sessions will be signed out.";
+  get("mfa-change-confirm").textContent=verb+" and confirm";
+  mfaChangePanel.hidden=false;
+  get("mfa-change-code").focus();
+  message("");
 }
 async function loadMfaFactors(retried){
   const generation=++mfaGeneration;
@@ -597,51 +773,68 @@ async function loadMfaFactors(retried){
     if(generation!==mfaGeneration || (mode!=="gate" && mode!=="dashboard"))return;
     const ids=Array.isArray(data.factors)?data.factors:[];
     const pending=Number.isInteger(data.pendingCount) && data.pendingCount>=0?data.pendingCount:0;
+    lastPendingCount=pending;
     const canEnroll=data.canEnroll===true;
     const keepPending=!!enrollmentFactorId && !!mfaSecret.textContent;
+    if(mode==="dashboard")renderMfaDeviceList(data);
     mfaFactor.replaceChildren();
     if(keepPending){
       const item=document.createElement("option");
-      item.value=enrollmentFactorId;item.textContent="New authenticator (finish setup)";
+      item.value=enrollmentFactorId;
+      item.textContent="New authenticator (finish setup)";
       mfaFactor.append(item);
     }
     for(let i=0;i<ids.length;i++){
+      const device=Array.isArray(data.devices)
+        ? data.devices.find(item=>item.factorId===ids[i]):undefined;
       const option=document.createElement("option");
-      option.value=ids[i];option.textContent="Authenticator "+String(i+1);
+      option.value=ids[i];
+      option.textContent=device && typeof device.label==="string"
+        ? device.label:"Authenticator "+String(i+1);
       mfaFactor.append(option);
     }
     if(keepPending)mfaFactor.value=enrollmentFactorId;
     mfaForm.hidden=!(keepPending || (mode==="gate" && ids.length>0));
     mfaFactorPicker.hidden=mfaFactor.options.length<=1;
     mfaEnrollment.hidden=!keepPending;
-    mfaSetup.hidden=!canEnroll || keepPending || pending>0;
-    mfaRecovery.hidden=!(canEnroll && pending>0);
+    mfaSetup.hidden=!(mode==="gate" && canEnroll && !keepPending && pending===0);
+    const interrupted=pending>0 && !keepPending && canEnroll;
+    mfaPendingHelp.hidden=!(interrupted && (mode==="gate" || !mfaSettingsSlot.hidden));
+    mfaCancel.hidden=!(keepPending || (interrupted && (mode==="gate" || !mfaSettingsSlot.hidden)));
     mfaSummary.textContent=keepPending
-      ? "Finish setup using the QR code or manual key below."
-      : mode==="gate" && ids.length>0
-        ? "Choose an authenticator and enter its current code."
-        : pending>0 && canEnroll
-          ? "An unfinished setup needs to be discarded before you can try again."
-          : ids.length>0
-            ? String(ids.length)+" verified authenticator"+(ids.length===1?"":"s")+"."
-            : "Set up an authenticator to secure your account.";
-    mfaPanel.hidden=false;
+      ?"Scan the QR code or enter the setup key, then verify the current six-digit code."
+      :mode==="gate" && ids.length>0
+        ?"Select an authenticator and enter its current code."
+        :interrupted
+          ?"Cancel this setup to start a new one."
+          :"";
+    mfaPanel.hidden=mode==="dashboard"
+      && !keepPending && mfaPendingHelp.hidden;
+    if(mode==="dashboard" && !mfaPanel.hidden)mfaSettingsSlot.hidden=false;
   }catch{
     if(generation!==mfaGeneration || (mode!=="gate" && mode!=="dashboard"))return;
     if(!enrollmentFactorId){
-      mfaForm.hidden=true;mfaSetup.hidden=true;mfaRecovery.hidden=true;
+      mfaForm.hidden=true;mfaSetup.hidden=true;mfaPendingHelp.hidden=true;
+      mfaCancel.hidden=true;
     }
-    mfaSummary.textContent="We couldn't load your authenticators. Checking again…";
+    if(mode==="dashboard"){
+      mfaDevicesEmpty.hidden=false;
+      mfaDevicesEmpty.textContent="Couldn't load authenticators. Checking again…";
+      mfaAccountToggle.disabled=true;
+    }else mfaSummary.textContent="Checking your authenticators again…";
     if(!retried){
       mfaRetryTimer=setTimeout(()=>{
         mfaRetryTimer=null;
         if(generation===mfaGeneration)void loadMfaFactors(true);
       },2200);
     }else{
-      mfaSummary.textContent="Authenticator information is temporarily unavailable. Reload this page to reconnect.";
+      if(mode==="dashboard")
+        mfaDevicesEmpty.textContent="Authenticators are temporarily unavailable. Reload to reconnect.";
+      else mfaSummary.textContent="Authenticator information is temporarily unavailable. Reload this page to reconnect.";
     }
   }
 }
+
 function showCodeEntry(){
   if(mode!=="login")showLogin("");
   emailForm.hidden=true;
@@ -773,18 +966,64 @@ document.addEventListener("keydown",event=>{
 document.addEventListener("click",event=>{
   if(!get("account-area").contains(event.target))closeAccountMenu();
 });
-get("manage-authenticators").addEventListener("click",async()=>{
-  securityExpanded=!securityExpanded;
-  mfaSettingsSlot.hidden=!securityExpanded;
-  get("manage-authenticators").setAttribute("aria-expanded",securityExpanded?"true":"false");
-  if(securityExpanded){
-    mfaSettingsSlot.append(mfaPanel);
-    mfaPanel.hidden=false;
+get("mfa-account-toggle").addEventListener("click",()=>{
+  if(!mfaState)return;
+  openSecurityChange({kind:"sign_in",enabled:!mfaState.signIn2faEnabled});
+});
+get("mfa-add").addEventListener("click",()=>{void beginEnrollment();});
+get("mfa-change-cancel").addEventListener("click",()=>{
+  securityChange=null;
+  mfaChangePanel.hidden=true;
+  get("mfa-change-code").value="";
+});
+get("mfa-change-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  if(mode!=="dashboard" || !csrfToken || !securityChange)return;
+  const requestChange=securityChange;
+  const proofFactorId=mfaProofFactor.value;
+  const code=get("mfa-change-code").value.trim();
+  const submit=get("mfa-change-confirm");submit.disabled=true;
+  try{
+    if(requestChange.kind==="enroll"){
+      // Sign-in 2FA can be switched off, but enrolling a backup still needs
+      // fresh AAL2 before GoTrue will create the factor.
+      const verified=await request("/app/auth/mfa/totp/verify",
+        {factorId:proofFactorId,code},csrfToken);
+      if(!verified.ok)throw Error("Proof not verified");
+      const result=await verified.json();
+      csrfToken=result.csrfToken;
+      setSessionExpiry(result);
+      securityChange=null;mfaChangePanel.hidden=true;
+      if(mfaState)mfaState.canEnroll=true;
+      await beginEnrollment();
+      return;
+    }
+    const payload=requestChange.kind==="sign_in"
+      ? {kind:"sign_in",enabled:requestChange.enabled,proofFactorId,code}
+      : {kind:"factor",factorId:requestChange.factorId,
+          enabled:requestChange.enabled,proofFactorId,code};
+    const response=await request("/app/auth/mfa/preferences",payload,csrfToken);
+    if(response.status===409){
+      message("Keep at least one active authenticator. You can disable another device after enabling a backup.");
+      await loadMfaFactors();
+      return;
+    }
+    if(response.status===429){
+      message("Security changes are temporarily limited. Try again after the 15-minute cooldown.");
+      return;
+    }
+    if(!response.ok)throw Error("Security change rejected");
+    const updated=await response.json();
+    if(updated.status!=="changed" || typeof updated.csrfToken!=="string")
+      throw Error("Security update incomplete");
+    csrfToken=updated.csrfToken;
+    securityChange=null;mfaChangePanel.hidden=true;
+    get("mfa-change-code").value="";
     await loadMfaFactors();
-  }else{
-    // Hide management actions; never erase an in-progress one-use key.
-    mfaPanel.hidden=true;
-  }
+    message("Security settings updated. Other signed-in sessions were signed out.");
+  }catch{
+    message("The code wasn't accepted or the security change couldn't be saved. Try a current code.");
+  }finally{submit.disabled=false;}
 });
 memberInviteForm.addEventListener("submit",async event=>{
   event.preventDefault();
@@ -806,15 +1045,45 @@ memberInviteForm.addEventListener("submit",async event=>{
   }catch{message("Couldn't send invitation. Check workspace permissions and recipient.");}
   finally{button.disabled=false;}
 });
-get("mfa-enroll").addEventListener("click",async()=>{
+async function beginEnrollment(){
   if(!csrfToken){message("Please sign in again.");return;}
-  if(enrollmentFactorId){message("Complete or discard the current setup first.");return;}
-  const button=get("mfa-enroll");button.disabled=true;
+  if(enrollmentFactorId){
+    message("Finish this setup or select Cancel before starting another.");
+    return;
+  }
+  const inSettings=mode==="dashboard";
+  if(inSettings){
+    if(mfaState && !mfaState.canEnroll && mfaState.devices.length){
+      openSecurityChange({kind:"enroll",enabled:true,
+        label:"another authenticator"});
+      return;
+    }
+    mfaSettingsSlot.append(mfaPanel);
+    mfaSettingsSlot.hidden=false;
+    mfaPanel.hidden=false;
+    mfaChangePanel.hidden=true;
+    securityChange=null;
+  }
+  const button=get(inSettings?"mfa-add":"mfa-enroll");
+  button.disabled=true;
   try{
     const response=await request("/app/auth/mfa/totp/enroll",{},csrfToken);
-    if(response.status===409){await loadMfaFactors();message("Discard the unfinished setup before adding another authenticator.");return;}
-    if(response.status===429){message("Too many attempts. Please try again after the security cooldown (up to 15 minutes).");return;}
-    if(!response.ok){message("Authenticator setup is unavailable. Please try again.");return;}
+    if(response.status===409){
+      if(inSettings)mfaSettingsSlot.hidden=false;
+      mfaCancel.hidden=false;
+      mfaPendingHelp.hidden=false;
+      await loadMfaFactors();
+      message("Select Cancel to restart this setup.");
+      return;
+    }
+    if(response.status===429){
+      message("Too many attempts. Please try again after the security cooldown (up to 15 minutes).");
+      return;
+    }
+    if(!response.ok){
+      message("Authenticator setup is unavailable. Please try again.");
+      return;
+    }
     const data=await response.json();
     if(typeof data.factorId!=="string" || typeof data.secret!=="string"
       || !/^[A-Z2-7]{16,128}$/.test(data.secret)){
@@ -831,31 +1100,40 @@ get("mfa-enroll").addEventListener("click",async()=>{
     else{mfaQr.removeAttribute("src");mfaQr.hidden=true;mfaQrFallback.hidden=false;}
     mfaEnrollment.hidden=false;
     mfaSetup.hidden=true;
-    mfaRecovery.hidden=false;
+    mfaPendingHelp.hidden=true;
+    mfaCancel.hidden=false;
     mfaForm.hidden=false;
+    mfaPanel.hidden=false;
+    if(inSettings)mfaSettingsSlot.hidden=false;
     const option=document.createElement("option");
     option.value=data.factorId;option.textContent="New authenticator (finish setup)";
     mfaFactor.prepend(option);
     mfaFactor.value=data.factorId;
     mfaFactorPicker.hidden=mfaFactor.options.length<=1;
-    mfaSummary.textContent="Scan the QR code or enter the key, then verify a six-digit code.";
+    mfaSummary.textContent="Scan the QR code or enter the key, then verify the six-digit code.";
     get("mfa-code").focus();
     message("");
-  }catch{message("Connection interrupted. The setup may already exist. Reopen this page if necessary.");}
-  finally{button.disabled=false;}
-});
-get("mfa-reset").addEventListener("click",async()=>{
+  }catch{
+    message("Connection interrupted. Setup may be pending. Reopen Security to continue.");
+  }finally{button.disabled=false;}
+}
+get("mfa-enroll").addEventListener("click",()=>{void beginEnrollment();});
+mfaCancel.addEventListener("click",async()=>{
   if(!csrfToken){message("Please sign in again.");return;}
-  if(!window.confirm("Discard unfinished authenticator setup? Verified devices won't be removed."))return;
-  const button=get("mfa-reset");button.disabled=true;
+  const button=mfaCancel;button.disabled=true;
   try{
-    const response=await request("/app/auth/mfa/totp/reset",{},csrfToken);
-    if(!response.ok)throw Error("Reset unavailable");
+    if(enrollmentFactorId || lastPendingCount>0){
+      // Explicit Cancel removes only unfinished GoTrue enrollment. All
+      // existing verified primary/backup authenticators remain enrolled.
+      const response=await request("/app/auth/mfa/totp/reset",{},csrfToken);
+      if(!response.ok)throw Error("Cancel unavailable");
+    }
+    const currentMode=mode;
     clearMfa();
-    mfaPanel.hidden=false;
+    if(currentMode==="gate")mfaPanel.hidden=false;
     await loadMfaFactors();
-    message("Unfinished setup discarded.");
-  }catch{message("Couldn't discard setup. Please try again.");}
+    message("Setup canceled.");
+  }catch{message("Couldn't cancel this setup. Please try again.");}
   finally{button.disabled=false;}
 });
 mfaForm.addEventListener("submit",async event=>{
@@ -871,9 +1149,10 @@ mfaForm.addEventListener("submit",async event=>{
     const result=await response.json();
     // A successful challenge always completes the flow: no QR, code field,
     // factor list or setup controls remain on the workspace landing screen.
+    const wasSettings=mode==="dashboard";
     clearMfa();
-    showDashboard(result,false);
-    message("");
+    showDashboard(result,wasSettings);
+    message(wasSettings?"Authenticator added successfully.":"");
   }catch{message("That authenticator code wasn't accepted. Try the current code.");}
   finally{button.disabled=false;}
 });

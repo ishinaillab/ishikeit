@@ -227,6 +227,13 @@ export class SupabaseAuthPrincipalVerifier {
             ON f.id=s.factor_id AND f.user_id=s.user_id
           WHERE s.id=$1::uuid AND s.user_id=$2::uuid
             AND s.aal='aal2' AND f.status='verified'
+            -- Disabling a factor in Ishikeit must immediately revoke its
+            -- eligibility for all privileged backend APIs, even for stale
+            -- AAL2 JWTs and other concurrent browser sessions.
+            AND NOT EXISTS (
+              SELECT 1 FROM public.ishikeit_browser_disabled_totp_factors AS d
+              WHERE d.user_id=s.user_id AND d.factor_id=f.id
+            )
         ) AS verified`,
         [verified.sessionId,verified.principal.subject]
       );

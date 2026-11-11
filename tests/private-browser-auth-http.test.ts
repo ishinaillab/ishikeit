@@ -4,7 +4,7 @@ import { buildServer } from "../src/http/server.js";
 import type { BrowserAuthController } from "../src/http/private-browser-auth-routes.js";
 import {
   BrowserLoginSessionSetupError, BrowserMfaEnrollmentRateLimited,
-  BrowserMfaPendingEnrollment
+  BrowserMfaPendingEnrollment, BrowserMfaLastAuthenticatorError
 } from "../src/auth/private-browser-auth.js";
 import type { InboundStore } from "../src/persistence/inbound.js";
 
@@ -47,7 +47,13 @@ function testServer(enabled=true,invitesEnabled=false){
     csrf:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve(csrf);}),
     listTotpFactors:vi.fn((_cookie:string)=>{
       void _cookie;return Promise.resolve({factors:["123e4567-e89b-42d3-a456-426614174000"],
-        pendingCount:0,canEnroll:false});
+        devices:[{factorId:"123e4567-e89b-42d3-a456-426614174000",
+          label:"Primary authenticator",enrolledAt:"2026-11-11T17:53:00.000Z",enabled:true}],
+        pendingCount:0,canEnroll:false,signIn2faEnabled:true});
+    }),
+    changeMfaSettings:vi.fn<BrowserAuthController["changeMfaSettings"]>((_cookie,_mutation)=>{
+      void _cookie;void _mutation;
+      return Promise.resolve({cookieValue:"F".repeat(43),csrfToken:"G".repeat(43)});
     }),
     clearIncompleteTotp:vi.fn((_cookie:string)=>{
       void _cookie;return Promise.resolve({cleared:1});
@@ -227,14 +233,19 @@ describe("private cookie-only browser auth routes",()=>{
     expect(js.body).toContain('document.title="ISHIKEIT · "+workspaceRows[0].displayName');
     expect(js.body).toContain('Number.isInteger(data.pendingCount)');
     expect(js.body).toContain('const canEnroll=data.canEnroll===true;');
-    expect(html.body).toContain('id="mfa-reset"');
+    expect(html.body).toContain('id="mfa-cancel"');
+    expect(html.body).not.toContain("Discard unfinished setup");
+    expect(html.body).not.toContain("An earlier authenticator setup was not finished.");
     expect(html.body).toContain('id="mfa-qr"');
     expect(html.body).not.toContain('id="mfa-reload"');
     expect(html.body).not.toContain('id="refresh-session"');
     expect(html.body).toContain('id="account-menu"');
     expect(html.body).toContain('id="security-view"');
     expect(html.body).toContain('id="nav-overview"');
-    expect(html.body).toContain('id="manage-authenticators"');
+    expect(html.body).toContain('id="mfa-devices"');
+    expect(html.body).toContain('id="mfa-add"');
+    expect(html.body).toContain('id="mfa-account-toggle"');
+    expect(html.body).toContain('id="mfa-change-form"');
     expect(html.body).toContain('id="skip-link"');
     // Prior regression: the setup key lived INSIDE hidden #mfa-setup;
     // hiding that parent made the key invisible while the dropdown showed.
@@ -248,7 +259,7 @@ describe("private cookie-only browser auth routes",()=>{
     expect(js.body).toContain('mfaEnrollment.hidden=false');
     expect(js.body).toContain('response.status===429');
     expect(js.body).toContain('response.status===409');
-    expect(js.body).toContain('mfaSetup.hidden=!canEnroll || keepPending || pending>0');
+    expect(js.body).toContain('mfaSetup.hidden=!(mode==="gate" && canEnroll && !keepPending && pending===0)');
     expect(js.body).toContain('workspaceRows=data.workspaces.items');
     expect(js.body).toContain('authShell.hidden=true');
     expect(js.body).toContain('mfaSettingsSlot.append(mfaPanel)');
@@ -507,7 +518,9 @@ describe("private cookie-only browser auth routes",()=>{
     expect(factors.statusCode).toBe(200);
     expect(factors.json()).toEqual({
       factors:["123e4567-e89b-42d3-a456-426614174000"],
-      pendingCount:0,canEnroll:false
+      devices:[{factorId:"123e4567-e89b-42d3-a456-426614174000",
+        label:"Primary authenticator",enrolledAt:"2026-11-11T17:53:00.000Z",enabled:true}],
+      pendingCount:0,canEnroll:false,signIn2faEnabled:true
     });
     for(const path of ["/app/auth/mfa/totp/enroll","/app/auth/mfa/totp/verify"]){
       const missing=await server.inject({method:"POST",url:path,
@@ -560,6 +573,65 @@ describe("private cookie-only browser auth routes",()=>{
       headers:{...base,origin:"https://evil.test","x-ishikeit-csrf":csrf},payload:{}});
     expect(foreign.statusCode).toBe(403);
     expect(controller.enrollTotp).toHaveBeenCalledTimes(1);
+    await server.close();
+  });
+
+  it("requires fresh-factor security changes and rotates only HttpOnly cookie on success",async()=>{
+    const {server,controller}=testServer();
+    const body={kind:"factor",factorId:"123e4567-e89b-42d3-a456-426614174000",
+      enabled:false,proofFactorId:"223e4567-e89b-42d3-a456-426614174000",
+      code:"654321"};
+    const noCsrf=await server.inject({
+      method:"POST",url:"/app/auth/mfa/preferences",
+      headers:{...headers,cookie:authCookie()},payload:body
+    });
+    expect(noCsrf.statusCode).toBe(403);
+    for(const modified of [
+      {...headers,cookie:authCookie(),"x-ishikeit-csrf":csrf,origin:"https://evil.test"},
+      {...headers,cookie:authCookie(),"x-ishikeit-csrf":csrf,"sec-fetch-site":"cross-site"}
+    ]){
+      const cross=await server.inject({method:"POST",url:"/app/auth/mfa/preferences",
+        headers:modified,payload:body});
+      expect(cross.statusCode).toBe(403);
+    }
+    const invalid=await server.inject({method:"POST",url:"/app/auth/mfa/preferences",
+      headers:{...headers,cookie:authCookie(),"x-ishikeit-csrf":csrf},
+      payload:{...body,code:"1234",extra:"untrusted"}});
+    expect(invalid.statusCode).toBe(400);
+    expect(controller.changeMfaSettings).not.toHaveBeenCalled();
+    const ok=await server.inject({
+      method:"POST",url:"/app/auth/mfa/preferences",
+      headers:{...headers,cookie:authCookie(),"x-ishikeit-csrf":csrf},
+      payload:body
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toEqual({status:"changed",csrfToken:"G".repeat(43)});
+    expect(ok.headers["set-cookie"]).toContain("__Host-ishikeit-session="+"F".repeat(43));
+    expect(ok.headers["set-cookie"]).toContain("HttpOnly; Secure; SameSite=Strict");
+    expect(ok.body).not.toContain("F".repeat(43));
+    expect(ok.body).not.toContain(body.code);
+    expect(ok.body).not.toContain("access_token");
+    expect(controller.changeMfaSettings).toHaveBeenCalledWith(token,body);
+    await server.close();
+  });
+
+  it("rejects last-factor disable and throttles sensitive account 2FA changes",async()=>{
+    const {server,controller}=testServer();
+    const h={...headers,cookie:authCookie(),"x-ishikeit-csrf":csrf};
+    const body={kind:"sign_in",enabled:false,
+      proofFactorId:"123e4567-e89b-42d3-a456-426614174000",code:"654321"};
+    controller.changeMfaSettings.mockRejectedValueOnce(new BrowserMfaLastAuthenticatorError());
+    const locked=await server.inject({method:"POST",url:"/app/auth/mfa/preferences",
+      headers:h,payload:body});
+    expect(locked.statusCode).toBe(409);
+    expect(locked.json()).toEqual({status:"last_authenticator_required"});
+    controller.changeMfaSettings.mockRejectedValueOnce(new BrowserMfaEnrollmentRateLimited());
+    const limited=await server.inject({method:"POST",url:"/app/auth/mfa/preferences",
+      headers:h,payload:body});
+    expect(limited.statusCode).toBe(429);
+    expect(limited.headers["retry-after"]).toBe("900");
+    expect(limited.json()).toEqual({status:"security_change_rate_limited"});
+    expect(limited.body).not.toContain(token);
     await server.close();
   });
 

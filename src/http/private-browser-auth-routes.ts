@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {privateLoginHtml,privateLoginCss,privateLoginJs} from "./private-browser-ui.js";
-import type { PrivateBrowserAuthService } from "../auth/private-browser-auth.js";
+import { BrowserLoginSessionSetupError, type PrivateBrowserAuthService } from "../auth/private-browser-auth.js";
 
 export interface BrowserAuthController {
   begin(email:string,networkId:string):Promise<string>;
@@ -160,7 +160,9 @@ export function registerPrivateBrowserAuthRoutes(
       return reply.header("set-cookie",[
         cookie(sessionName,result.cookieValue,43200),clearCookie(pendingName)
       ]).code(200).send({status:"authenticated"});
-    }catch{
+    }catch(error){
+      if(error instanceof BrowserLoginSessionSetupError)
+        return deny(reply,503).send({status:"session_setup_unavailable"});
       return deny(reply).send({status:"authentication_failed"});
     }
   });

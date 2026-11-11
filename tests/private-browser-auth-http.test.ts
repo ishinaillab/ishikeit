@@ -2,6 +2,7 @@ import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 import { buildServer } from "../src/http/server.js";
 import type { BrowserAuthController } from "../src/http/private-browser-auth-routes.js";
+import { BrowserLoginSessionSetupError } from "../src/auth/private-browser-auth.js";
 import type { InboundStore } from "../src/persistence/inbound.js";
 
 const origin="https://apps.ishinaillab.com";
@@ -257,6 +258,22 @@ describe("private cookie-only browser auth routes",()=>{
     expect(controller.verify).toHaveBeenCalledTimes(1);
     await server.close();
   });
+  it("reports a consumed valid OTP as secure-session setup failure without leaking credentials",async()=>{
+    const {server,controller}=testServer();
+    controller.verify.mockRejectedValueOnce(new BrowserLoginSessionSetupError());
+    const response=await server.inject({
+      method:"POST",url:"/app/auth/verify-otp",
+      headers:{...headers,cookie:loginCookie()},payload:{code:"123456"}
+    });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({status:"session_setup_unavailable"});
+    expect(response.headers["set-cookie"]).toBeUndefined();
+    expect(response.headers["cache-control"]).toContain("no-store");
+    expect(response.body).not.toContain(login);
+    expect(response.body).not.toContain(token);
+    await server.close();
+  });
+
   it("accepts six and ten digit email OTPs but rejects out-of-range codes",async()=>{
     const {server,controller}=testServer();
     const base={...headers,cookie:loginCookie()};

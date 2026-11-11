@@ -105,6 +105,7 @@ export class SupabaseEmailOtpClient {
   }
   async revoke(accessToken: string): Promise<void> {
     // Local BFF revocation is authoritative even if the IdP is unreachable.
-    await this.#post("/logout?scope=local",{},accessToken);
+    const response=await this.#post("/logout?scope=local",{},accessToken);
+    if(!response.ok)throw new Error("Supabase session revocation unavailable");
   }
 }

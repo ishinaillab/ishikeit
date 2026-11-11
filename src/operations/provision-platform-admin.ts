@@ -2,6 +2,7 @@ import { z } from "zod";
 import { PostgresDatabase } from "../persistence/postgres.js";
 import { SupabaseAdminInviteClient } from "../auth/supabase-admin-invite.js";
 import { PostgresInitialAdminProvisioning } from "../auth/managed-initial-admin.js";
+import { isApprovedFirstOwnerActionContext } from "../auth/provisioning-action-context.js";
 
 /**
  * Trusted protected-deployment job; NEVER callable from an HTTP route.
@@ -19,7 +20,8 @@ const schema=z.object({
   ISHIKEIT_INITIAL_ADMIN_APPROVAL_REFERENCE:z.string().min(8).max(160),
   ISHIKEIT_INITIAL_ADMIN_CONFIRMATION:z.string()
 }).safeParse(process.env);
-if(!["--invite","--reconcile"].includes(mode??"") || !schema.success
+if(!isApprovedFirstOwnerActionContext(process.env)
+  || !["--invite","--reconcile"].includes(mode??"") || !schema.success
   || schema.data.ISHIKEIT_INITIAL_ADMIN_CONFIRMATION
     !=="APPROVE_ISHIKEIT_ADMIN:"+schema.data.ISHIKEIT_INITIAL_ADMIN_EMAIL){
   process.stderr.write("Managed administrator provisioning not authorized or configured.\n");

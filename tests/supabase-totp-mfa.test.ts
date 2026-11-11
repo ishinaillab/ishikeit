@@ -82,6 +82,31 @@ describe("Supabase Auth MFA server transport",()=>{
     expect(tokens.refresh_token).toBe("abcd1234wxyz");
   });
 
+  it("accepts large official QR SVG responses while returning only the setup secret",async()=>{
+    // Official GoTrue emits an SVG rectangle per QR module. This 100 KiB QR
+    // payload was rejected by the legacy generic 32 KiB response budget.
+    const qr="<svg>"+'<rect fill="black"/>'.repeat(5000)+"</svg>";
+    expect(qr.length).toBeGreaterThan(32768);
+    const {client}=mockClient(()=>json({
+      id:factorId,type:"totp",
+      friendly_name:"Ishikeit Authenticator",
+      totp:{qr_code:qr,secret:"JBSWY3DPEHPK3PXP",uri:"otpauth://totp/test"}
+    }));
+    await expect(client.enroll(bearer))
+      .resolves.toEqual({factorId,secret:"JBSWY3DPEHPK3PXP"});
+  });
+  it("retains a hard 1 MiB enrollment bound even when responses are chunked",async()=>{
+    const {client}=mockClient(()=>new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller){
+          controller.enqueue(new Uint8Array(600000));
+          controller.enqueue(new Uint8Array(600000));
+        }
+      }),{status:200}
+    ));
+    await expect(client.enroll(bearer)).rejects.toThrow("Invalid MFA provider response");
+  });
+
   it("creates challenge and exchanges six-digit OTP for rotated provider tokens only internally",async()=>{
     const {client,calls}=mockClient((url)=>{
       if(url.endsWith("/challenge"))return json({id:challengeId});

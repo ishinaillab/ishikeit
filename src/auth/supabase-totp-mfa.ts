@@ -70,8 +70,13 @@ export class SupabaseTotpMfaClient {
     }catch{throw new Error("MFA provider unavailable");}
     if(!response.ok)throw new Error("MFA provider rejected the request");
     try{
+      // GoTrue's enrollment payload contains a QR SVG with an SVG rectangle
+      // for every QR module; even a normal TOTP QR can exceed 32 KiB.
+      // Bound that endpoint separately while keeping tiny challenge/verify
+      // responses on the original defensive 32 KiB ceiling.
+      const maxBytes=method==="POST" && path==="/factors" ? 1024*1024 : 32768;
       const size=response.headers.get("content-length");
-      if(size!==null && (!Number.isFinite(Number(size)) || Number(size)<0 || Number(size)>32768))
+      if(size!==null && (!Number.isFinite(Number(size)) || Number(size)<0 || Number(size)>maxBytes))
         throw new Error("Invalid MFA response length");
       const reader=response.body?.getReader();
       if(reader===undefined)throw new Error("Missing MFA response");
@@ -83,7 +88,7 @@ export class SupabaseTotpMfaClient {
           if(next.done)break;
           if(next.value===undefined)continue;
           total+=next.value.byteLength;
-          if(total>32768){
+          if(total>maxBytes){
             await reader.cancel().catch(()=>undefined);
             throw new Error("MFA response too large");
           }

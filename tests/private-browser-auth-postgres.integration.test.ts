@@ -60,7 +60,7 @@ const portfolio={
 };
 const cipher=new CredentialCipher(Buffer.alloc(32,37));
 const secret=Buffer.alloc(32,39).toString("base64");
-const otpDiagnostics=vi.fn((_entry:BrowserOtpFailureDiagnostic)=>{ /* non-sensitive only */ });
+const otpDiagnostics=vi.fn((entry:BrowserOtpFailureDiagnostic)=>{void entry;});
 const mfa={
   enroll:vi.fn((_token:string)=>{
     void _token;

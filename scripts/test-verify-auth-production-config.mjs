@@ -12,6 +12,9 @@ const valid={
   mailer_templates_magic_link_content:"Your code: {{ .Token }}",
   uri_allow_list:ISHIKEIT_AUTH_REDIRECT,
   mfa_totp_enroll_enabled:true,mfa_totp_verify_enabled:true,
+  mfa_max_enrolled_factors:10,
+  mailer_otp_length:6,mailer_otp_exp:3600,
+  mailer_allow_unverified_email_sign_ins:false,
   refresh_token_rotation_enabled:true,
   smtp_pass:"MUST NEVER EXPOSE",other_secret:"MUST NEVER EXPOSE"
 };
@@ -39,6 +42,10 @@ test("checks official Management API read-only config and redacts all provider s
   assert.equal(calls[0].request.headers.authorization,"Bearer "+managementToken);
   assert.ok(!JSON.stringify(await check).includes("MUST NEVER EXPOSE"));
 });
+test("supports the documented longest ten-digit OTP and a backup TOTP factor",async()=>{
+  assert.deepEqual(await trusted({mailer_otp_length:10,mfa_max_enrolled_factors:2}).check,
+    {ready:true,redirect:ISHIKEIT_AUTH_REDIRECT});
+});
 test("rejects missing redirect allowlist without relying on Site URL fallback",async()=>{
   await assert.rejects(trusted({uri_allow_list:"https://www.ishinaillab.com"}).check,/not safe/);
   await assert.rejects(trusted({uri_allow_list:ISHIKEIT_AUTH_REDIRECT+"/malicious"}).check,/not safe/);
@@ -54,7 +61,11 @@ test("denies insecure mail templates and automatic email confirmation",async()=>
     {smtp_admin_email:"no-reply@other.example"},
     {mfa_totp_enroll_enabled:false},
     {mfa_totp_verify_enabled:false},
-    {refresh_token_rotation_enabled:false}
+    {refresh_token_rotation_enabled:false},
+    {mailer_otp_length:5},{mailer_otp_length:11},{mailer_otp_length:6.5},
+    {mailer_otp_exp:0},{mailer_otp_exp:3601},
+    {mailer_allow_unverified_email_sign_ins:true},
+    {mfa_max_enrolled_factors:1},{mfa_max_enrolled_factors:11}
   ];
   for(const bad of cases)
     await assert.rejects(trusted(bad).check,/not safe/);

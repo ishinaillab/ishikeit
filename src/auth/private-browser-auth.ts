@@ -11,7 +11,7 @@ import type { PostgresWorkspaceInvitations, InviteSummary } from "./workspace-me
 
 const bearer = z.string().min(20).max(4096).regex(/^[A-Za-z0-9_-]+$/u);
 const normalizedEmail = z.email().min(3).max(320).transform(x=>x.trim().toLowerCase());
-const otp = z.string().regex(/^[0-9]{6,8}$/u);
+const otp = z.string().regex(/^[0-9]{6,10}$/u);
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }

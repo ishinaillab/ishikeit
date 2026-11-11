@@ -72,7 +72,7 @@ export const privateLoginHtml = `<!doctype html>
     <button type="button" class="secondary" id="refresh-session">Renew session</button>
   </section>
   <p id="status" class="status" role="status" aria-live="polite"></p>
-  <footer>Technique-first. Style-forward. Always clean.</footer>
+  <footer>ISHIKEIT · Secure workspace access</footer>
 </main>
 </body></html>`;
 

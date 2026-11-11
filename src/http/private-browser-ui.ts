@@ -307,7 +307,18 @@ p{margin-bottom:0}
 `;
 
 export const privateLoginJs = `"use strict";
-// Never accept Supabase credentials from query strings or URL fragments.
+// The email template may carry ONLY a URL-fragment email hint, never an OTP,
+// Auth token or other sign-in capability. Browser GET, Referer, and server
+// access logs do not contain this fragment. It is removed immediately.
+let linkEmailHint=null;
+if(window.location.hash.startsWith("#verify-email=")
+  && window.location.hash.length<=2048){
+  try{
+    const email=decodeURIComponent(
+      window.location.hash.slice("#verify-email=".length));
+    if(email.length>=3 && email.length<=320)linkEmailHint=email;
+  }catch{/* Malformed fragment is never reflected back to the page. */}
+}
 if(window.location.hash || window.location.search){
   window.history.replaceState(null,"",window.location.pathname==="/app/workspaces"
     ? "/app/workspaces" : "/app/login");
@@ -631,6 +642,50 @@ async function loadMfaFactors(retried){
     }
   }
 }
+function showCodeEntry(){
+  if(mode!=="login")showLogin("");
+  emailForm.hidden=true;
+  codeForm.hidden=false;
+  authStep.textContent="CHECK YOUR EMAIL";
+  authTitle.textContent="Enter your email code";
+  authDescription.textContent="Enter the verification code from your Ishikeit email to continue.";
+  get("code").value="";
+  get("code").focus();
+  message("");
+}
+/** Code-entry resume requires an existing unexpired, cookie-bound attempt. */
+async function pendingCodeAvailable(){
+  try{
+    const response=await fetch("/app/auth/pending-otp",{
+      credentials:"same-origin",cache:"no-store",redirect:"error"
+    });
+    return response.ok && (await response.json()).status==="awaiting_code";
+  }catch{return false;}
+}
+async function resumeEmailCodeStep(){
+  // Capture and immediately discard any email fragment hint. Unlike an OTP,
+  // this address is never sufficient to authenticate or authorize access.
+  const hint=linkEmailHint;
+  linkEmailHint=null;
+  if(await pendingCodeAvailable()){
+    showLogin("");
+    showCodeEntry();
+    return true;
+  }
+  if(hint!==null){
+    try{
+      const response=await request("/app/auth/resume-otp",{email:hint});
+      if(response.status===202 && await pendingCodeAvailable()){
+        showLogin("");
+        showCodeEntry();
+        return true;
+      }
+    }catch{/* An expired or offline link must not bypass OTP validation. */}
+    showLogin("Your sign-in code may have expired. Request a fresh code to continue.");
+    return true;
+  }
+  return false;
+}
 async function recoverSession(){
   const response=await fetch("/app/auth/csrf",{credentials:"same-origin",cache:"no-store"});
   if(!response.ok)return false;
@@ -655,6 +710,7 @@ async function initialize(){
       if(session.status==="authenticated"){showDashboard(session,false);return;}
     }
     if(await recoverSession())return;
+    if(await resumeEmailCodeStep())return;
   }catch{ /* No stored session or temporary service error. */ }
   showLogin("");
 }
@@ -666,13 +722,8 @@ emailForm.addEventListener("submit",async event=>{
     const email=get("email").value.trim();
     const response=await request("/app/auth/request-otp",{email});
     if(response.status===202){
-      emailForm.hidden=true;
-      codeForm.hidden=false;
-      authStep.textContent="CHECK YOUR EMAIL";
-      authTitle.textContent="Enter your email code";
-      authDescription.textContent="We sent a code if the email belongs to an invited member.";
-      get("code").focus();
-      message("");
+      showCodeEntry();
+      authDescription.textContent="If this email has access, enter the code sent to it.";
     }else message("We couldn't send a code right now. Please try again.");
   }catch{message("Connection interrupted. Try again.");}
   finally{button.disabled=false;}

@@ -205,8 +205,8 @@ describe("private cookie-only browser auth routes",()=>{
     expect(html.headers["content-security-policy"]).toContain("form-action 'none'");
     expect(html.headers["content-security-policy"]).toContain("img-src 'self' data:");
     expect(html.headers["content-security-policy"]).toContain("object-src 'none'");
-    expect(html.body).toContain('id="dashboard-shell" hidden');
-    expect(html.body).toContain('id="auth-shell" hidden');
+    expect(html.body).toContain('id="dashboard-shell" class="dashboard-shell" hidden');
+    expect(html.body).toContain('id="auth-shell" class="auth-shell" hidden');
     expect(html.body).toContain('id="boot-panel"');
     expect(html.body).toContain("Protected access to your Ishikeit workspace");
     expect(html.body).not.toContain("Technique-first. Style-forward. Always clean.");

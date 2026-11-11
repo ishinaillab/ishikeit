@@ -30,7 +30,7 @@ const identity={
 const provider={
   inviteUserByEmail:vi.fn(async (address:string)=>{
     await db!.query(
-      "INSERT INTO auth.users(id,email,is_anonymous,email_confirmed_at) VALUES($1,$2,false,NULL)",
+      "INSERT INTO auth.users(id,email,is_anonymous,email_confirmed_at,invited_at) VALUES($1,$2,false,NULL,now())",
       [invitee,address]
     );
     return {userId:invitee,email:address};
@@ -51,7 +51,7 @@ describe.skipIf(db===undefined)("tenant member invitation authentication & activ
     await db!.query(`CREATE SCHEMA IF NOT EXISTS auth;
       CREATE TABLE auth.users(
         id uuid PRIMARY KEY,email text,is_anonymous boolean NOT NULL DEFAULT false,
-        deleted_at timestamptz,banned_until timestamptz,email_confirmed_at timestamptz
+        deleted_at timestamptz,banned_until timestamptz,email_confirmed_at timestamptz,invited_at timestamptz
       )`);
     await db!.query(await readFile("migrations/0010_ishikeit_workspace_connections.sql","utf8"));
     await db!.query(await readFile("migrations/0018_workspace_member_invitations.sql","utf8"));
@@ -73,7 +73,7 @@ describe.skipIf(db===undefined)("tenant member invitation authentication & activ
       void _token;return Promise.resolve(proof);
     });
     provider.inviteUserByEmail.mockImplementation(async address=>{
-      await db!.query("INSERT INTO auth.users(id,email,email_confirmed_at) VALUES($1,$2,NULL)",[invitee,address]);
+      await db!.query("INSERT INTO auth.users(id,email,email_confirmed_at,invited_at) VALUES($1,$2,NULL,now())",[invitee,address]);
       return {userId:invitee,email:address};
     });
   });
@@ -104,6 +104,26 @@ describe.skipIf(db===undefined)("tenant member invitation authentication & activ
     expect((await state())[0]?.state).toBe("activated");
     expect(await service!.activateConfirmedBatch()).toBe(0);
   });
+  it("refuses to grant workspace access to a confirmed account without actual Supabase invitation provenance",async()=>{
+    const result=await service!.invite("trusted-aal2",invite());
+    expect(result.status).toBe("invited");
+    await db!.query(
+      "UPDATE auth.users SET email_confirmed_at=now(),invited_at=NULL WHERE id=$1",
+      [invitee]
+    );
+    expect(await service!.activateConfirmedBatch()).toBe(0);
+    expect((await state())[0]?.state).toBe("invited");
+    const memberships=await db!.query(
+      "SELECT 1 FROM public.ishikeit_workspace_memberships WHERE auth_subject=$1",
+      [invitee]
+    );
+    expect(memberships.rowCount).toBe(0);
+    // A verified official invitation record is mandatory, not an arbitrary
+    // preexisting confirmed account sharing the same email address.
+    await db!.query("UPDATE auth.users SET invited_at=now() WHERE id=$1",[invitee]);
+    expect(await service!.activateConfirmedBatch()).toBe(1);
+  });
+
   it("forbids owner / platform admin role injection before any provider interaction",async()=>{
     await expect(service!.invite("trusted-aal2",{
       workspaceId:workspace,email,role:"owner" as "agent"
@@ -148,7 +168,7 @@ describe.skipIf(db===undefined)("tenant member invitation authentication & activ
     for(let index=0;index<26;index++){
       const id=randomUUID();
       const address="unconfirmed-"+index+"@example.com";
-      await db!.query("INSERT INTO auth.users(id,email,email_confirmed_at) VALUES($1,$2,NULL)",[id,address]);
+      await db!.query("INSERT INTO auth.users(id,email,email_confirmed_at,invited_at) VALUES($1,$2,NULL,now())",[id,address]);
       await db!.query(
         `INSERT INTO public.ishikeit_workspace_invitations(
           invitation_id,workspace_id,auth_issuer,invitee_email,requested_role,

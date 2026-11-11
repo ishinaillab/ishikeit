@@ -17,7 +17,7 @@ function testServer(enabled=true,invitesEnabled=false){
     });}),
     get:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve({
       sessionId:"session",expiresAt:"2027-01-01T00:00:00Z",
-      csrfToken:csrf,workspaces:{items:[{
+      csrfToken:csrf,memberInvitationsEnabled:true,workspaces:{items:[{
         workspaceId:"123e4567-e89b-42d3-a456-426614174000",
         displayName:"Workspace",role:"owner" as const,connectedAccounts:0
       }]}
@@ -25,7 +25,7 @@ function testServer(enabled=true,invitesEnabled=false){
     listWorkspaces:vi.fn((_cookie:string,_after?:string)=>{void _cookie;void _after;return Promise.resolve({items:[]});}),
     refresh:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve({
       sessionId:"session",expiresAt:"2027-01-01T00:00:00Z",
-      csrfToken:csrf,workspaces:{items:[]}
+      csrfToken:csrf,memberInvitationsEnabled:true,workspaces:{items:[]}
     });}),
     csrf:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve(csrf);}),
     listTotpFactors:vi.fn((_cookie:string)=>{
@@ -41,7 +41,7 @@ function testServer(enabled=true,invitesEnabled=false){
       void _cookie;void _factorId;void _code;
       return Promise.resolve({
         sessionId:"session",expiresAt:"2027-01-01T00:00:00Z",
-        csrfToken:csrf,workspaces:{items:[]}
+        csrfToken:csrf,memberInvitationsEnabled:true,workspaces:{items:[]}
       });
     }),
     inviteWorkspaceMember:vi.fn((_cookie:string,_input:{workspaceId:string;email:string;role:"admin"|"agent"|"viewer"})=>{
@@ -115,6 +115,57 @@ describe("private cookie-only browser auth routes",()=>{
     await server.close();
   });
 
+  it("advertises workspace invitations only when the independent HTTP gate permits it across session, refresh, and MFA",async()=>{
+    for(const invitesEnabled of [false,true]){
+      const {server}=testServer(true,invitesEnabled);
+      const session=await server.inject({
+        method:"GET",url:"/app/auth/session",headers:{host,cookie:authCookie()}
+      });
+      expect(session.statusCode).toBe(200);
+      expect(session.json()).toMatchObject({memberInvitationsEnabled:invitesEnabled});
+
+      const base={...headers,cookie:authCookie(),"x-ishikeit-csrf":csrf};
+      const refreshed=await server.inject({
+        method:"POST",url:"/app/auth/refresh",headers:base,payload:{}
+      });
+      expect(refreshed.statusCode).toBe(200);
+      expect(refreshed.json()).toMatchObject({memberInvitationsEnabled:invitesEnabled});
+
+      const verified=await server.inject({
+        method:"POST",url:"/app/auth/mfa/totp/verify",headers:base,
+        payload:{factorId:"123e4567-e89b-42d3-a456-426614174000",code:"123456"}
+      });
+      expect(verified.statusCode).toBe(200);
+      expect(verified.json()).toMatchObject({memberInvitationsEnabled:invitesEnabled});
+      expect(verified.body).not.toContain("access_token");
+      expect(verified.body).not.toContain("refresh_token");
+      await server.close();
+    }
+  });
+
+  it("exposes no password login or recovery routes even when BFF is enabled",async()=>{
+    const {server,controller}=testServer(true);
+    const passwordPayload={email:"person@example.com",password:"sensitive_not_for_the_browser"};
+    for(const url of [
+      "/app/auth/password",
+      "/app/auth/login",
+      "/app/auth/recover",
+      "/app/auth/reset-password"
+    ]){
+      const response=await server.inject({
+        method:"POST",url,headers,payload:passwordPayload
+      });
+      expect(response.statusCode).toBe(404);
+    }
+    const rejected=await server.inject({
+      method:"POST",url:"/app/auth/request-otp",
+      headers,payload:passwordPayload
+    });
+    expect(rejected.statusCode).toBe(400);
+    expect(controller.begin).not.toHaveBeenCalled();
+    await server.close();
+  });
+
   it("registers no login/session endpoints when production gate is absent",async()=>{
     const {server}=testServer(false);
     const r=await server.inject({method:"GET",url:"/app/auth/session",headers:{host}});
@@ -134,6 +185,8 @@ describe("private cookie-only browser auth routes",()=>{
     expect(html.headers["content-security-policy"]).toContain("script-src 'self'");
     expect(html.headers["content-security-policy"]).toContain("form-action 'none'");
     expect(html.body).toContain("Your workspaces");
+    expect(html.body).toContain("ISHIKEIT · Secure workspace access");
+    expect(html.body).not.toContain("Technique-first. Style-forward. Always clean.");
     expect(html.body).toContain('autocomplete="one-time-code"');
     expect(html.body).not.toContain("access_token");
     expect(html.body).not.toContain("localStorage");

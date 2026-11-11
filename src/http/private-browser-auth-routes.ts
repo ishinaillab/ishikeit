@@ -111,6 +111,11 @@ export function registerPrivateBrowserAuthRoutes(
     }
   }
 
+  function invitationCapability(data:{memberInvitationsEnabled?:boolean}):boolean {
+    // The UI must not expose an invitation feature unless its route is enabled.
+    return deps.allowWorkspaceInvitations===true && data.memberInvitationsEnabled===true;
+  }
+
   function privateUi(req:FastifyRequest,reply:FastifyReply,
     type:"html"|"css"|"js"):FastifyReply {
     privateResponse(reply);
@@ -177,7 +182,8 @@ export function registerPrivateBrowserAuthRoutes(
       const data=await deps.controller.get(value);
       return reply.code(200).send({
         status:"authenticated",expiresAt:data.expiresAt,
-        csrfToken:data.csrfToken,workspaces:data.workspaces
+        csrfToken:data.csrfToken,workspaces:data.workspaces,
+        memberInvitationsEnabled:invitationCapability(data)
       });
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
@@ -201,7 +207,8 @@ export function registerPrivateBrowserAuthRoutes(
     try {
       const data=await deps.controller.refresh(value);
       return reply.code(200).send({status:"authenticated",expiresAt:data.expiresAt,
-        csrfToken:data.csrfToken,workspaces:data.workspaces});
+        csrfToken:data.csrfToken,workspaces:data.workspaces,
+        memberInvitationsEnabled:invitationCapability(data)});
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
   server.get("/app/auth/mfa/factors",async(req,reply)=>{
@@ -240,7 +247,8 @@ export function registerPrivateBrowserAuthRoutes(
       const data=await deps.controller.verifyTotp(value,body.data.factorId,body.data.code);
       return reply.code(200).send({
         status:"mfa_verified",expiresAt:data.expiresAt,csrfToken:data.csrfToken,
-        workspaces:data.workspaces
+        workspaces:data.workspaces,
+        memberInvitationsEnabled:invitationCapability(data)
       });
     }catch{return deny(reply,403).send({status:"mfa_verification_failed"});}
   });

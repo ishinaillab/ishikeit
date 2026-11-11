@@ -845,14 +845,14 @@ export class PrivateBrowserAuthService {
             await tx.query(
               `DELETE FROM public.ishikeit_browser_disabled_totp_factors
                WHERE user_id=$1::uuid AND factor_id=$2::uuid`,
-              [row.user_id,targetId]
+              [row.user_id,mutation.factorId]
             );
           }else{
             await tx.query(
               `INSERT INTO public.ishikeit_browser_disabled_totp_factors
                (user_id,factor_id) VALUES($1::uuid,$2::uuid)
                ON CONFLICT (user_id,factor_id) DO NOTHING`,
-              [row.user_id,targetId]
+              [row.user_id,mutation.factorId]
             );
           }
         }else{

@@ -217,12 +217,18 @@ export class SupabaseAuthPrincipalVerifier {
     }
     let factors:pg.QueryResult<MfaRow>;
     try {
+      // Bind assurance to the factor used by this exact live session.
+      // A verified backup factor must not keep a stale session privileged
+      // after its original authenticator is unenrolled or AAL is downgraded.
       factors=await this.#db.query<MfaRow>(
         `SELECT EXISTS(
-          SELECT 1 FROM auth.mfa_factors
-          WHERE user_id=$1::uuid AND status='verified'
+          SELECT 1 FROM auth.sessions AS s
+          JOIN auth.mfa_factors AS f
+            ON f.id=s.factor_id AND f.user_id=s.user_id
+          WHERE s.id=$1::uuid AND s.user_id=$2::uuid
+            AND s.aal='aal2' AND f.status='verified'
         ) AS verified`,
-        [verified.principal.subject]
+        [verified.sessionId,verified.principal.subject]
       );
     } catch {
       throw new Error("MFA verification unavailable");

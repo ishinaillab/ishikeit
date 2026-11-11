@@ -440,6 +440,7 @@ let currentWorkspaceId="";
 let invitingEnabled=false;
 let mfaState=null;
 let securityChange=null;
+let lastPendingCount=0;
 let mfaRetryTimer=null;
 
 function message(value){
@@ -477,6 +478,7 @@ function clearMfa(){
   mfaChangePanel.hidden=true;
   securityChange=null;
   mfaState=null;
+  lastPendingCount=0;
   mfaDevices.replaceChildren();
   mfaDevicesEmpty.textContent="Loading authenticators…";
   mfaAccountToggle.disabled=true;
@@ -750,7 +752,8 @@ function openSecurityChange(mutation){
   get("mfa-change-code").value="";
   const verb=mutation.enabled?"Enable":"Disable";
   const subject=mutation.kind==="sign_in"?"two-step verification for sign-in":mutation.label;
-  get("mfa-change-title").textContent=verb+" "+subject;
+  get("mfa-change-title").textContent=mutation.kind==="enroll"
+    ?"Verify to add an authenticator":verb+" "+subject;
   get("mfa-change-description").textContent=mutation.kind==="sign_in" && !mutation.enabled
     ?"Future sign-ins will use your email code without a second step. An authenticator remains required for sensitive changes. Other sessions will be signed out."
     :"For your protection, enter a fresh code from an enabled authenticator. Other signed-in sessions will be signed out.";
@@ -770,6 +773,7 @@ async function loadMfaFactors(retried){
     if(generation!==mfaGeneration || (mode!=="gate" && mode!=="dashboard"))return;
     const ids=Array.isArray(data.factors)?data.factors:[];
     const pending=Number.isInteger(data.pendingCount) && data.pendingCount>=0?data.pendingCount:0;
+    lastPendingCount=pending;
     const canEnroll=data.canEnroll===true;
     const keepPending=!!enrollmentFactorId && !!mfaSecret.textContent;
     if(mode==="dashboard")renderMfaDeviceList(data);
@@ -1041,15 +1045,45 @@ memberInviteForm.addEventListener("submit",async event=>{
   }catch{message("Couldn't send invitation. Check workspace permissions and recipient.");}
   finally{button.disabled=false;}
 });
-get("mfa-enroll").addEventListener("click",async()=>{
+async function beginEnrollment(){
   if(!csrfToken){message("Please sign in again.");return;}
-  if(enrollmentFactorId){message("Complete or discard the current setup first.");return;}
-  const button=get("mfa-enroll");button.disabled=true;
+  if(enrollmentFactorId){
+    message("Finish this setup or select Cancel before starting another.");
+    return;
+  }
+  const inSettings=mode==="dashboard";
+  if(inSettings){
+    if(mfaState && !mfaState.canEnroll && mfaState.devices.length){
+      openSecurityChange({kind:"enroll",enabled:true,
+        label:"another authenticator"});
+      return;
+    }
+    mfaSettingsSlot.append(mfaPanel);
+    mfaSettingsSlot.hidden=false;
+    mfaPanel.hidden=false;
+    mfaChangePanel.hidden=true;
+    securityChange=null;
+  }
+  const button=get(inSettings?"mfa-add":"mfa-enroll");
+  button.disabled=true;
   try{
     const response=await request("/app/auth/mfa/totp/enroll",{},csrfToken);
-    if(response.status===409){await loadMfaFactors();message("Discard the unfinished setup before adding another authenticator.");return;}
-    if(response.status===429){message("Too many attempts. Please try again after the security cooldown (up to 15 minutes).");return;}
-    if(!response.ok){message("Authenticator setup is unavailable. Please try again.");return;}
+    if(response.status===409){
+      if(inSettings)mfaSettingsSlot.hidden=false;
+      mfaCancel.hidden=false;
+      mfaPendingHelp.hidden=false;
+      await loadMfaFactors();
+      message("Select Cancel to restart this setup.");
+      return;
+    }
+    if(response.status===429){
+      message("Too many attempts. Please try again after the security cooldown (up to 15 minutes).");
+      return;
+    }
+    if(!response.ok){
+      message("Authenticator setup is unavailable. Please try again.");
+      return;
+    }
     const data=await response.json();
     if(typeof data.factorId!=="string" || typeof data.secret!=="string"
       || !/^[A-Z2-7]{16,128}$/.test(data.secret)){
@@ -1066,31 +1100,40 @@ get("mfa-enroll").addEventListener("click",async()=>{
     else{mfaQr.removeAttribute("src");mfaQr.hidden=true;mfaQrFallback.hidden=false;}
     mfaEnrollment.hidden=false;
     mfaSetup.hidden=true;
-    mfaRecovery.hidden=false;
+    mfaPendingHelp.hidden=true;
+    mfaCancel.hidden=false;
     mfaForm.hidden=false;
+    mfaPanel.hidden=false;
+    if(inSettings)mfaSettingsSlot.hidden=false;
     const option=document.createElement("option");
     option.value=data.factorId;option.textContent="New authenticator (finish setup)";
     mfaFactor.prepend(option);
     mfaFactor.value=data.factorId;
     mfaFactorPicker.hidden=mfaFactor.options.length<=1;
-    mfaSummary.textContent="Scan the QR code or enter the key, then verify a six-digit code.";
+    mfaSummary.textContent="Scan the QR code or enter the key, then verify the six-digit code.";
     get("mfa-code").focus();
     message("");
-  }catch{message("Connection interrupted. The setup may already exist. Reopen this page if necessary.");}
-  finally{button.disabled=false;}
-});
-get("mfa-reset").addEventListener("click",async()=>{
+  }catch{
+    message("Connection interrupted. Setup may be pending. Reopen Security to continue.");
+  }finally{button.disabled=false;}
+}
+get("mfa-enroll").addEventListener("click",()=>{void beginEnrollment();});
+mfaCancel.addEventListener("click",async()=>{
   if(!csrfToken){message("Please sign in again.");return;}
-  if(!window.confirm("Discard unfinished authenticator setup? Verified devices won't be removed."))return;
-  const button=get("mfa-reset");button.disabled=true;
+  const button=mfaCancel;button.disabled=true;
   try{
-    const response=await request("/app/auth/mfa/totp/reset",{},csrfToken);
-    if(!response.ok)throw Error("Reset unavailable");
+    if(enrollmentFactorId || lastPendingCount>0){
+      // Explicit Cancel removes only unfinished GoTrue enrollment. All
+      // existing verified primary/backup authenticators remain enrolled.
+      const response=await request("/app/auth/mfa/totp/reset",{},csrfToken);
+      if(!response.ok)throw Error("Cancel unavailable");
+    }
+    const currentMode=mode;
     clearMfa();
-    mfaPanel.hidden=false;
+    if(currentMode==="gate")mfaPanel.hidden=false;
     await loadMfaFactors();
-    message("Unfinished setup discarded.");
-  }catch{message("Couldn't discard setup. Please try again.");}
+    message("Setup canceled.");
+  }catch{message("Couldn't cancel this setup. Please try again.");}
   finally{button.disabled=false;}
 });
 mfaForm.addEventListener("submit",async event=>{
@@ -1106,9 +1149,10 @@ mfaForm.addEventListener("submit",async event=>{
     const result=await response.json();
     // A successful challenge always completes the flow: no QR, code field,
     // factor list or setup controls remain on the workspace landing screen.
+    const wasSettings=mode==="dashboard";
     clearMfa();
-    showDashboard(result,false);
-    message("");
+    showDashboard(result,wasSettings);
+    message(wasSettings?"Authenticator added successfully.":"");
   }catch{message("That authenticator code wasn't accepted. Try the current code.");}
   finally{button.disabled=false;}
 });

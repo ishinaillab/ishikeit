@@ -6,6 +6,7 @@ import { CredentialCipher } from "../src/auth/credential-cipher.js";
 import {
   PrivateBrowserAuthService, BrowserLoginSessionSetupError,
   BrowserMfaEnrollmentRateLimited, BrowserMfaPendingEnrollment,
+  BrowserMfaLastAuthenticatorError,
   type BrowserOtpFailureDiagnostic
 } from "../src/auth/private-browser-auth.js";
 import { PostgresBrowserAuthMaintenance } from "../src/auth/private-browser-auth-maintenance.js";
@@ -123,6 +124,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     await db!.query(`CREATE TABLE IF NOT EXISTS auth.sessions(
       id uuid PRIMARY KEY,user_id uuid NOT NULL,aal text NOT NULL DEFAULT 'aal1',
       factor_id uuid)`);
+    await db!.query(await readFile("migrations/0020_browser_mfa_preferences.sql","utf8"));
     await db!.query("INSERT INTO public.ishikeit_workspaces(workspace_id,display_name) VALUES($1,'A')",[workspaceId]);
     await db!.query(
       "INSERT INTO public.ishikeit_workspace_memberships(workspace_id,auth_issuer,auth_subject,role) VALUES($1,$2,$3,'owner')",
@@ -132,7 +134,9 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       [userId,"invited@example.com"]);
   });
   beforeEach(async()=>{
-    await db!.query("TRUNCATE TABLE auth.mfa_factors,auth.sessions");
+    await db!.query(`TRUNCATE TABLE public.ishikeit_browser_mfa_security_events,
+       public.ishikeit_browser_disabled_totp_factors,
+       public.ishikeit_browser_mfa_policies,auth.mfa_factors,auth.sessions`);
     await db!.query("INSERT INTO auth.sessions(id,user_id,aal) VALUES($1,$2,'aal1')",
       [authSessionId,userId]);
     await db!.query(`TRUNCATE TABLE public.ishikeit_browser_sessions,
@@ -148,6 +152,10 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     try {
       await db!.query(`DROP TABLE IF EXISTS public.ishikeit_browser_sessions,
        public.ishikeit_browser_login_attempts,public.ishikeit_browser_auth_limits`);
+      await db!.query(`DROP TABLE IF EXISTS
+        public.ishikeit_browser_mfa_security_events,
+        public.ishikeit_browser_disabled_totp_factors,
+        public.ishikeit_browser_mfa_policies`);
       await db!.query(`DROP TABLE IF EXISTS public.ishikeit_connection_audit,
        public.ishikeit_account_connections,public.ishikeit_provider_accounts,
        public.ishikeit_workspace_memberships,public.ishikeit_workspaces`);

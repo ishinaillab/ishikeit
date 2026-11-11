@@ -33,6 +33,30 @@ export interface BrowserMfaFactorStatus {
   pendingCount:number;
   canEnroll:boolean;
 }
+/** Public error classes avoid converting enrollment throttles into generic 403. */
+export class BrowserMfaEnrollmentRateLimited extends Error {
+  constructor(){super("MFA enrollment rate limited");this.name="BrowserMfaEnrollmentRateLimited";}
+}
+export class BrowserMfaPendingEnrollment extends Error {
+  constructor(){super("Incomplete MFA setup exists");this.name="BrowserMfaPendingEnrollment";}
+}
+export type BrowserMfaFailureReason =
+  "rate_limited"|"incomplete_setup"|"provider_unavailable"
+  |"provider_rejected"|"provider_response_invalid"|"invalid_session"|"unexpected";
+function mfaReason(error:unknown):BrowserMfaFailureReason {
+  if(error instanceof BrowserMfaEnrollmentRateLimited)return "rate_limited";
+  if(error instanceof BrowserMfaPendingEnrollment)return "incomplete_setup";
+  if(!(error instanceof Error))return "unexpected";
+  switch(error.message){
+    case "MFA provider unavailable":return "provider_unavailable";
+    case "MFA provider rejected the request":return "provider_rejected";
+    case "Invalid MFA provider response":return "provider_response_invalid";
+    case "Browser session unavailable":
+    case "Browser session refresh required":
+    case "User authentication invalid":return "invalid_session";
+    default:return "unexpected";
+  }
+}
 interface CountRow extends pg.QueryResultRow { n:number }
 interface MemberRow extends pg.QueryResultRow { eligible:boolean }
 interface BrowserSessionRow extends pg.QueryResultRow {
@@ -104,6 +128,8 @@ export class PrivateBrowserAuthService {
     memberInvites?:Pick<PostgresWorkspaceInvitations,"invite">;
     csrfKeyBase64:string;
     onOtpFailure?: (diagnostic:BrowserOtpFailureDiagnostic)=>void;
+    /** Fixed enums only. Never log raw provider errors or any TOTP secret. */
+    onMfaEnrollmentFailure?: (diagnostic:{stage:"session"|"policy"|"provider";reason:BrowserMfaFailureReason})=>void;
   }){
     const origin=new URL(deps.projectUrl);
     if (origin.protocol!=="https:" || !/^[a-z0-9]{20}\.supabase\.co$/u.test(origin.hostname)
@@ -446,30 +472,48 @@ export class PrivateBrowserAuthService {
    * The returned one-time TOTP secret must never be cached or persisted by UI.
    */
   async enrollTotp(cookie:string):Promise<TotpEnrollment> {
-    const {verified}=await this.#bearer(cookie);
-    const rateOk=await this.#limit("mfa:enroll:"+verified.principal.subject,3,900);
-    if(!rateOk)throw new Error("MFA enrollment rate limited");
-    return this.deps.db.transaction(async tx=>{
-      const row=await this.#load(tx,cookie,true);
-      const hash=sha256(cookie);
-      const token=this.deps.cipher.decrypt(
-        encrypted(row.access_ciphertext,row.access_iv,row.access_tag),
-        "ishikeit-browser-v1\0"+hash+"\0access"
-      );
-      const fresh=await this.deps.auth.verifyAccessToken(token);
-      if(fresh.principal.subject!==row.user_id || fresh.sessionId!==row.auth_session_id)
-        throw new Error("Browser session unavailable");
-      const existing=await tx.query<CountRow>(
-        `SELECT count(*)::int AS n FROM auth.mfa_factors
-         WHERE user_id=$1::uuid AND status='verified'`,
-        [row.user_id]
-      );
-      if((existing.rows[0]?.n??0)>0)
-        await this.deps.auth.verifyPrivilegedAccessToken(token);
-      const pages=await this.deps.portfolio.list(token,{pageSize:1});
-      if(pages.items.length===0)throw new Error("Workspace authorization required");
-      return this.deps.mfa.enroll(token);
-    });
+    let stage:"session"|"policy"|"provider"="session";
+    try{
+      const {verified}=await this.#bearer(cookie);
+      stage="policy";
+      return await this.deps.db.transaction(async tx=>{
+        const row=await this.#load(tx,cookie,true);
+        const hash=sha256(cookie);
+        const token=this.deps.cipher.decrypt(
+          encrypted(row.access_ciphertext,row.access_iv,row.access_tag),
+          "ishikeit-browser-v1\0"+hash+"\0access"
+        );
+        const fresh=await this.deps.auth.verifyAccessToken(token);
+        if(fresh.principal.subject!==row.user_id || fresh.sessionId!==row.auth_session_id)
+          throw new Error("Browser session unavailable");
+        const existing=await tx.query<CountRow>(
+          `SELECT count(*)::int AS n FROM auth.mfa_factors
+           WHERE user_id=$1::uuid AND status='verified'`,
+          [row.user_id]
+        );
+        if((existing.rows[0]?.n??0)>0)
+          await this.deps.auth.verifyPrivilegedAccessToken(token);
+        const pages=await this.deps.portfolio.list(token,{pageSize:1});
+        if(pages.items.length===0)throw new Error("Workspace authorization required");
+        // Only one incomplete secret should exist at a time. Do NOT burn
+        // enrollment quota, create more GoTrue factors or lose the first
+        // one-time secret while this factor is unresolved.
+        const pending=await tx.query<CountRow>(
+          `SELECT count(*)::int AS n FROM auth.mfa_factors
+           WHERE user_id=$1::uuid AND status='unverified' AND factor_type='totp'`,
+          [row.user_id]
+        );
+        if((pending.rows[0]?.n??0)>0)throw new BrowserMfaPendingEnrollment();
+        if(!await this.#limit("mfa:enroll:"+verified.principal.subject,3,900))
+          throw new BrowserMfaEnrollmentRateLimited();
+        stage="provider";
+        return this.deps.mfa.enroll(token);
+      });
+    }catch(error){
+      try{this.deps.onMfaEnrollmentFailure?.({stage,reason:mfaReason(error)});}
+      catch{/* diagnostic hooks never affect security */}
+      throw error;
+    }
   }
 
   /**

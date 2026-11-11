@@ -214,7 +214,8 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     auth.verifyAccessToken.mockRejectedValueOnce(new Error("User authentication invalid"));
     await expect(service!.verify(login,"123456","test-network-a"))
       .rejects.toThrow(BrowserLoginSessionSetupError);
-    expect(otpClient.revoke).toHaveBeenCalledExactlyOnceWith(access);
+    expect(otpClient.revoke).toHaveBeenCalledTimes(1);
+    expect(otpClient.revoke).toHaveBeenCalledWith(access);
     expect(otpDiagnostics).toHaveBeenCalledWith({
       stage:"principal",reason:"identity_invalid"
     });

@@ -26,8 +26,17 @@ function testServer(enabled=true,invitesEnabled=false){
         displayName:"Workspace",role:"owner" as const,connectedAccounts:0
       }]}
     });}),
+    sessionStatus:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve({
+      status:"authenticated" as const,
+      sessionId:"session",expiresAt:"2027-01-01T00:00:00Z",
+      csrfToken:csrf,memberInvitationsEnabled:true,workspaces:{items:[{
+        workspaceId:"123e4567-e89b-42d3-a456-426614174000",
+        displayName:"Workspace",role:"owner" as const,connectedAccounts:0
+      }]}
+    });}),
     listWorkspaces:vi.fn((_cookie:string,_after?:string)=>{void _cookie;void _after;return Promise.resolve({items:[]});}),
     refresh:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve({
+      status:"authenticated" as const,
       sessionId:"session",expiresAt:"2027-01-01T00:00:00Z",
       csrfToken:csrf,memberInvitationsEnabled:true,workspaces:{items:[]}
     });}),
@@ -49,8 +58,9 @@ function testServer(enabled=true,invitesEnabled=false){
     verifyTotp:vi.fn((_cookie:string,_factorId:string,_code:string)=>{
       void _cookie;void _factorId;void _code;
       return Promise.resolve({
+        cookieValue:"D".repeat(43),
         sessionId:"session",expiresAt:"2027-01-01T00:00:00Z",
-        csrfToken:csrf,memberInvitationsEnabled:true,workspaces:{items:[]}
+        csrfToken:"E".repeat(43),memberInvitationsEnabled:true,workspaces:{items:[]}
       });
     }),
     inviteWorkspaceMember:vi.fn((_cookie:string,_input:{workspaceId:string;email:string;role:"admin"|"agent"|"viewer"})=>{
@@ -267,6 +277,47 @@ describe("private cookie-only browser auth routes",()=>{
     await server.close();
   });
 
+  it("exposes only an MFA step-up shell after email OTP and denies workspace data at AAL1",async()=>{
+    const {server,controller}=testServer();
+    controller.sessionStatus.mockResolvedValueOnce({
+      status:"mfa_required",expiresAt:"2027-01-01T00:00:00Z",csrfToken:csrf
+    });
+    controller.get.mockRejectedValueOnce(new Error("Multi-factor authentication required"));
+    controller.listWorkspaces.mockRejectedValueOnce(new Error("Multi-factor authentication required"));
+    controller.refresh.mockResolvedValueOnce({
+      status:"mfa_required",expiresAt:"2027-01-01T00:00:00Z",csrfToken:csrf
+    });
+    const session=await server.inject({
+      method:"GET",url:"/app/auth/session",headers:{host,cookie:authCookie()}
+    });
+    expect(session.statusCode).toBe(200);
+    expect(session.json()).toEqual({
+      status:"mfa_required",expiresAt:"2027-01-01T00:00:00Z",csrfToken:csrf
+    });
+    expect(session.body).not.toContain("Workspace");
+    expect(session.body).not.toContain("owner");
+    expect(session.body).not.toContain("memberInvitationsEnabled");
+    const workspace=await server.inject({
+      method:"GET",url:"/app/workspaces",headers:{host,cookie:authCookie()}
+    });
+    expect(workspace.statusCode).toBe(303);
+    expect(workspace.headers.location).toBe("/app/login");
+    const items=await server.inject({
+      method:"GET",url:"/app/auth/workspaces",headers:{host,cookie:authCookie()}
+    });
+    expect(items.statusCode).toBe(401);
+    const refresh=await server.inject({
+      method:"POST",url:"/app/auth/refresh",
+      headers:{...headers,cookie:authCookie(),"x-ishikeit-csrf":csrf},payload:{}
+    });
+    expect(refresh.statusCode).toBe(200);
+    expect(refresh.json()).toEqual({
+      status:"mfa_required",expiresAt:"2027-01-01T00:00:00Z",csrfToken:csrf
+    });
+    expect(refresh.body).not.toContain("Workspace");
+    await server.close();
+  });
+
   it("checks exact Host and Origin for every authentication mutation",async()=>{
     const {server,controller}=testServer();
     for(const h of [
@@ -366,7 +417,7 @@ describe("private cookie-only browser auth routes",()=>{
       status:"authenticated",csrfToken:csrf,workspaces:{items:[{role:"owner"}]}
     });
     expect(valid.body).not.toContain(token);
-    expect(controller.get).toHaveBeenCalledWith(token);
+    expect(controller.sessionStatus).toHaveBeenCalledWith(token);
     const recovered=await server.inject({
       method:"GET",url:"/app/auth/csrf",headers:{host,cookie:authCookie()}
     });
@@ -410,7 +461,12 @@ describe("private cookie-only browser auth routes",()=>{
         factorId:"123e4567-e89b-42d3-a456-426614174000",code:"123456"
       }});
     expect(verified.statusCode).toBe(200);
-    expect(verified.json()).toMatchObject({status:"mfa_verified",csrfToken:csrf});
+    expect(verified.json()).toMatchObject({
+      status:"authenticated",csrfToken:"E".repeat(43)
+    });
+    expect(verified.headers["set-cookie"]).toContain(
+      "__Host-ishikeit-session="+"D".repeat(43));
+    expect(verified.body).not.toContain("D".repeat(43));
     expect(verified.body).not.toContain("access_token");
     expect(verified.body).not.toContain("refresh_token");
     const resetWithoutCsrf=await server.inject({

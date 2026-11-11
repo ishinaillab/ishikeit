@@ -375,7 +375,14 @@ const mfaFactor=get("mfa-factor");
 const mfaFactorPicker=get("mfa-factor-picker");
 const mfaSummary=get("mfa-summary");
 const mfaSetup=get("mfa-setup");
-const mfaRecovery=get("mfa-recovery");
+const mfaPendingHelp=get("mfa-pending-help");
+const mfaCancel=get("mfa-cancel");
+const mfaDevices=get("mfa-devices");
+const mfaDevicesEmpty=get("mfa-devices-empty");
+const mfaAccountToggle=get("mfa-account-toggle");
+const mfaAccountDescription=get("mfa-account-description");
+const mfaChangePanel=get("mfa-change-panel");
+const mfaProofFactor=get("mfa-proof-factor");
 const mfaEnrollment=get("mfa-enrollment");
 const mfaSecret=get("mfa-secret");
 const mfaQr=get("mfa-qr");
@@ -397,7 +404,8 @@ let refreshInFlight=null;
 let workspaceRows=[];
 let currentWorkspaceId="";
 let invitingEnabled=false;
-let securityExpanded=false;
+let mfaState=null;
+let securityChange=null;
 let mfaRetryTimer=null;
 
 function message(value){
@@ -424,12 +432,20 @@ function clearMfa(){
   mfaEnrollment.hidden=true;
   mfaForm.hidden=true;
   mfaSetup.hidden=true;
-  mfaRecovery.hidden=true;
+  mfaPendingHelp.hidden=true;
+  mfaCancel.hidden=true;
   mfaFactorPicker.hidden=true;
   mfaFactor.replaceChildren();
   get("mfa-code").value="";
   mfaSummary.textContent="";
   mfaPanel.hidden=true;
+  mfaSettingsSlot.hidden=true;
+  mfaChangePanel.hidden=true;
+  securityChange=null;
+  mfaState=null;
+  mfaDevices.replaceChildren();
+  mfaDevicesEmpty.textContent="Loading authenticators…";
+  mfaAccountToggle.disabled=true;
 }
 function closeAccountMenu(){
   accountMenu.hidden=true;
@@ -611,9 +627,6 @@ function showDashboard(data,preserve){
   window.history.replaceState(null,"","/app/workspaces");
   if(priorMode!=="dashboard" || !preserve){
     clearMfa();
-    securityExpanded=false;
-    mfaSettingsSlot.hidden=true;
-    get("manage-authenticators").setAttribute("aria-expanded","false");
   }
   mfaSettingsSlot.append(mfaPanel);
   setSessionExpiry(data);

@@ -91,7 +91,7 @@ describe("Supabase Auth MFA server transport",()=>{
     expect(tokens.refresh_token).toBe("abcd1234wxyz");
   });
 
-  it("accepts large official QR SVG responses while returning only the setup secret",async()=>{
+  it("accepts large official QR SVG responses and returns a safe image data URI",async()=>{
     // Official GoTrue emits an SVG rectangle per QR module. This 100 KiB QR
     // payload was rejected by the legacy generic 32 KiB response budget.
     const qr="<svg>"+'<rect fill="black"/>'.repeat(5000)+"</svg>";
@@ -101,8 +101,29 @@ describe("Supabase Auth MFA server transport",()=>{
       friendly_name:"Ishikeit Authenticator",
       totp:{qr_code:qr,secret:"JBSWY3DPEHPK3PXP",uri:"otpauth://totp/test"}
     }));
-    await expect(client.enroll(bearer))
-      .resolves.toEqual({factorId,secret:"JBSWY3DPEHPK3PXP"});
+    const enrollment=await client.enroll(bearer);
+    expect(enrollment.factorId).toBe(factorId);
+    expect(enrollment.secret).toBe("JBSWY3DPEHPK3PXP");
+    expect(enrollment.qrCodeDataUrl).toMatch(/^data:image\\/svg\\+xml;base64,/u);
+    const encoded=enrollment.qrCodeDataUrl?.split(",")[1];
+    expect(Buffer.from(encoded??"","base64").toString("utf8")).toBe(qr);
+  });
+  it("rejects active SVG payloads instead of injecting scripts or external references",async()=>{
+    for(const code of [
+      '<svg onload="alert(1)"><rect/></svg>',
+      '<svg><script>alert(1)</script></svg>',
+      '<svg><image href="https://evil.test/a"/></svg>',
+      '<svg><rect style="fill:url(https://evil.test/a)"/></svg>'
+    ]){
+      const {client,calls}=mockClient((url,options)=>
+        options.method==="DELETE"?json({id:factorId})
+          :json({id:factorId,type:"totp",totp:{
+            secret:"JBSWY3DPEHPK3PXP",qr_code:code
+          }})
+      );
+      await expect(client.enroll(bearer)).rejects.toThrow("Invalid MFA provider response");
+      expect(calls.map(x=>x.options.method)).toEqual(["POST","DELETE"]);
+    }
   });
   it("retains a hard 1 MiB enrollment bound even when responses are chunked",async()=>{
     const {client}=mockClient(()=>new Response(

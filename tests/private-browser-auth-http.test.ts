@@ -188,6 +188,7 @@ describe("private cookie-only browser auth routes",()=>{
     expect(html.body).toContain("ISHIKEIT · Secure workspace access");
     expect(html.body).not.toContain("Technique-first. Style-forward. Always clean.");
     expect(html.body).toContain('autocomplete="one-time-code"');
+    expect(html.body).toContain('minlength="6" maxlength="10" pattern="[0-9]{6,10}"');
     expect(html.body).not.toContain("access_token");
     expect(html.body).not.toContain("localStorage");
     const js=await server.inject({method:"GET",url:"/app/auth/ui.js",headers:{host}});
@@ -256,6 +257,25 @@ describe("private cookie-only browser auth routes",()=>{
     expect(controller.verify).toHaveBeenCalledTimes(1);
     await server.close();
   });
+  it("accepts six and ten digit email OTPs but rejects out-of-range codes",async()=>{
+    const {server,controller}=testServer();
+    const base={...headers,cookie:loginCookie()};
+    for(const code of ["123456","1234567890"]){
+      const response=await server.inject({
+        method:"POST",url:"/app/auth/verify-otp",headers:base,payload:{code}
+      });
+      expect(response.statusCode).toBe(200);
+    }
+    for(const code of ["12345","12345678901","1234567x90"]){
+      const response=await server.inject({
+        method:"POST",url:"/app/auth/verify-otp",headers:base,payload:{code}
+      });
+      expect(response.statusCode).toBe(400);
+    }
+    expect(controller.verify).toHaveBeenCalledTimes(2);
+    await server.close();
+  });
+
   it("enforces session-cookie plus server authentication for workspace visibility",async()=>{
     const {server,controller}=testServer();
     const missing=await server.inject({method:"GET",url:"/app/auth/session",headers:{host}});

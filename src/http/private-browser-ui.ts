@@ -30,8 +30,9 @@ export const privateLoginHtml = `<!doctype html>
     <p class="note">Only existing authorized workspace members can sign in. This does not create an account.</p>
   </section>
   <section class="surface" id="account-panel" hidden>
-    <div class="section-head"><h2>Your workspaces</h2>
+    <div class="section-head"><h2 id="account-heading">Your workspaces</h2>
       <button type="button" class="secondary" id="sign-out">Sign out</button></div>
+    <div id="workspace-content">
     <p class="note">Only workspaces your current membership permits are shown. Conversation management is not yet enabled here.</p>
     <ul id="workspace-list" class="workspaces"></ul>
     <section class="mfa-panel" id="member-invite-panel" aria-labelledby="member-invite-heading" hidden>
@@ -51,6 +52,7 @@ export const privateLoginHtml = `<!doctype html>
         <button type="submit" id="member-invite-send">Send invitation</button>
       </form>
     </section>
+    </div>
     <section class="mfa-panel" aria-labelledby="mfa-heading">
       <h2 id="mfa-heading">Two-step verification</h2>
       <p class="note">Protect account connections with an authenticator app. Verify a code to confirm your device before sensitive actions.</p>
@@ -127,6 +129,7 @@ button.secondary{background:transparent;color:#8f5365}
 .workspaces small{color:#735f65}
 .status{min-height:1.4rem;font-size:.95rem;font-weight:550;color:#774455;margin:20px 0}
 .mfa-panel{display:grid;gap:18px;margin-top:6px;border-top:1px solid #eadedd;padding-top:26px}
+#workspace-content{display:grid;gap:18px}
 .mfa-panel h2{font-size:1.12rem}
 #mfa-recovery,#mfa-setup,#mfa-enrollment,#mfa-factor-picker{
   display:grid;gap:14px;min-width:0
@@ -179,6 +182,8 @@ const mfaQr=document.getElementById("mfa-qr");
 const mfaQrFallback=document.getElementById("mfa-qr-fallback");
 const mfaFactorPicker=document.getElementById("mfa-factor-picker");
 const mfaRecovery=document.getElementById("mfa-recovery");
+const workspaceContent=document.getElementById("workspace-content");
+const accountHeading=document.getElementById("account-heading");
 const pageTitle=document.getElementById("page-title");
 let mfaLoadGeneration=0;
 const mfaForm=document.getElementById("mfa-form");
@@ -272,28 +277,45 @@ function showLogin(){
   inviteWorkspace.replaceChildren();invitePanel.hidden=true;
 }
 function showAccount(data){
-  window.history.replaceState(null,"","/app/workspaces");
-  pageTitle.textContent="Your workspaces";
-  document.title="ISHIKEIT · Your workspaces";
+  // Only the server-verified AAL2 state may display workspace details.
+  // A valid email-OTP (AAL1) session sees a factor challenge, not workspace
+  // names, roles, connected accounts or invitation controls.
+  if(data.status!=="authenticated" && data.status!=="mfa_required"){
+    showLogin();message("Session confirmation unavailable. Sign in again.");
+    return;
+  }
+  const privileged=data.status==="authenticated";
+  if(privileged && (!data.workspaces || !Array.isArray(data.workspaces.items))){
+    showLogin();message("Session verification unavailable. Sign in again.");
+    return;
+  }
+  window.history.replaceState(null,"",privileged?"/app/workspaces":"/app/login");
+  pageTitle.textContent=privileged?"Your workspaces":"Verify your authenticator";
+  accountHeading.textContent=privileged?"Your workspaces":"Complete two-step verification";
+  document.title=privileged?"ISHIKEIT · Your workspaces":"ISHIKEIT · Verify authenticator";
   csrfToken=data.csrfToken;
   workspaceList.replaceChildren();
   inviteWorkspace.replaceChildren();
-  for(const workspace of data.workspaces.items){
-    if(data.memberInvitationsEnabled===true && workspace.role==="owner"){
-      const option=document.createElement("option");
-      option.value=workspace.workspaceId;
-      option.textContent=workspace.displayName;
-      inviteWorkspace.append(option);
+  workspaceContent.hidden=!privileged;
+  if(privileged){
+    for(const workspace of data.workspaces.items){
+      if(data.memberInvitationsEnabled===true && workspace.role==="owner"){
+        const option=document.createElement("option");
+        option.value=workspace.workspaceId;
+        option.textContent=workspace.displayName;
+        inviteWorkspace.append(option);
+      }
+      const li=document.createElement("li");
+      const title=document.createElement("strong");
+      title.textContent=workspace.displayName;
+      const details=document.createElement("small");
+      details.textContent=workspace.role+" · "+workspace.connectedAccounts+" connected accounts";
+      li.append(title,details);workspaceList.append(li);
     }
-    const li=document.createElement("li");
-    const title=document.createElement("strong");
-    title.textContent=workspace.displayName;
-    const details=document.createElement("small");
-    details.textContent=workspace.role+" · "+workspace.connectedAccounts+" connected accounts";
-    li.append(title,details);workspaceList.append(li);
   }
-  invitePanel.hidden=inviteWorkspace.options.length===0;
-  accountPanel.hidden=false;loginPanel.hidden=true;message("Signed in.");
+  invitePanel.hidden=!privileged || inviteWorkspace.options.length===0;
+  accountPanel.hidden=false;loginPanel.hidden=true;
+  message(privileged?"Signed in.":"Email verified. Enter a code from your authenticator to access workspaces.");
   void loadMfaFactors();
 }
 async function recoverSession(){

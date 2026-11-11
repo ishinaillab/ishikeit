@@ -13,18 +13,18 @@ class FakeElement {
   value="";
   src="";
   children:FakeElement[]=[];
-  listeners=new Map<string,()=>Promise<void>|void>();
+  listeners=new Map<string,(event?:{preventDefault():void})=>Promise<void>|void>();
   get options():FakeElement[]{return this.children;}
   replaceChildren(...nodes:FakeElement[]):void{this.children=[...nodes];}
   append(...nodes:FakeElement[]):void{this.children.push(...nodes);}
   prepend(...nodes:FakeElement[]):void{this.children.unshift(...nodes);}
   removeAttribute(name:string):void{if(name==="src")this.src="";}
-  addEventListener(name:string,handler:()=>Promise<void>|void):void{
+  addEventListener(name:string,handler:(event?:{preventDefault():void})=>Promise<void>|void):void{
     this.listeners.set(name,handler);
   }
 }
 
-function setup(status=200){
+function setup(status=200,authState:"authenticated"|"mfa_required"="authenticated",factorCount=0){
   const elements=new Map<string,FakeElement>();
   const tags=/<[a-z][^>]*\sid="([^"]+)"[^>]*>/giu;
   for(const match of privateLoginHtml.matchAll(tags)){
@@ -53,16 +53,19 @@ function setup(status=200){
   });
   const fetch=(path:string,options?:{method?:string})=>{
     const mutation=options?.method==="POST";
-    if(path==="/app/auth/session")return Promise.resolve(response({
-      csrfToken:"synthetic_csrf_for_unit_tests_only",
-      memberInvitationsEnabled:false,
-      workspaces:{items:[{
-        workspaceId:"123e4567-e89b-42d3-a456-426614174000",
-        displayName:"Test",role:"owner",connectedAccounts:0
-      }]}
-    }));
+    if(path==="/app/auth/session")return Promise.resolve(response(authState==="mfa_required"
+      ? {status:"mfa_required",csrfToken:"synthetic_csrf_for_unit_tests_only",
+          expiresAt:"2027-01-01T00:00:00Z"}
+      : {status:"authenticated",csrfToken:"synthetic_csrf_for_unit_tests_only",
+          memberInvitationsEnabled:false,
+          workspaces:{items:[{
+            workspaceId:"123e4567-e89b-42d3-a456-426614174000",
+            displayName:"Test",role:"owner",connectedAccounts:0
+          }]}}));
     if(path==="/app/auth/mfa/factors")return Promise.resolve(response({
-      factors:[],pendingCount,canEnroll:true
+      factors:Array.from({length:factorCount},(_,i)=>
+        i===0?"123e4567-e89b-42d3-a456-426614174000":"223e4567-e89b-42d3-a456-426614174000"),
+      pendingCount,canEnroll:factorCount===0
     }));
     if(path==="/app/auth/mfa/totp/enroll" && mutation){
       requests++;
@@ -74,6 +77,12 @@ function setup(status=200){
         qrCodeDataUrl:"data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="
       }));
     }
+    if(path==="/app/auth/mfa/totp/verify" && mutation)return Promise.resolve(response({
+      status:"authenticated",csrfToken:"new_synthetic_csrf_after_rotation",
+      workspaces:{items:[{workspaceId:"123e4567-e89b-42d3-a456-426614174000",
+        displayName:"Test",role:"owner",connectedAccounts:0}]}
+    }));
+    if(path==="/app/auth/logout" && mutation)return Promise.resolve(response({status:"signed_out"}));
     if(path==="/app/auth/mfa/totp/reset" && mutation){
       pendingCount=0;
       return Promise.resolve(response({status:"incomplete_setup_cleared",cleared:1}));
@@ -87,7 +96,12 @@ function setup(status=200){
     if(!handler)throw new Error("Missing click handler for "+id);
     await handler();await flush();
   };
-  return {dom,window,flush,click,getEnrollmentRequests:()=>requests};
+  const submit=async(id:string)=>{
+    const handler=dom.getElementById(id).listeners.get("submit");
+    if(!handler)throw new Error("Missing form handler for "+id);
+    await handler({preventDefault(){}});await flush();
+  };
+  return {dom,window,flush,click,submit,getEnrollmentRequests:()=>requests};
 }
 
 describe("private browser TOTP setup actual frontend state transitions",()=>{
@@ -122,6 +136,33 @@ describe("private browser TOTP setup actual frontend state transitions",()=>{
     expect(ui.dom.getElementById("mfa-qr").src).toBe("");
     expect(ui.dom.getElementById("mfa-enrollment").hidden).toBe(true);
     expect(ui.dom.getElementById("mfa-setup").hidden).toBe(false);
+  });
+
+  it("never exposes workspaces at AAL1 and supports primary/backup MFA step-up",async()=>{
+    const ui=setup(200,"mfa_required",2);
+    await ui.flush();
+    expect(ui.dom.getElementById("login-panel").hidden).toBe(true);
+    expect(ui.dom.getElementById("account-panel").hidden).toBe(false);
+    expect(ui.window.location.pathname).toBe("/app/login");
+    expect(ui.dom.getElementById("workspace-content").hidden).toBe(true);
+    expect(ui.dom.getElementById("account-heading").textContent)
+      .toBe("Complete two-step verification");
+    expect(ui.dom.getElementById("member-invite-panel").hidden).toBe(true);
+    expect(ui.dom.getElementById("mfa-form").hidden).toBe(false);
+    expect(ui.dom.getElementById("mfa-factor-picker").hidden).toBe(false);
+    expect(ui.dom.getElementById("mfa-factor").options).toHaveLength(2);
+    // Simulated backup device: no real TOTP, cookies or identity data involved.
+    ui.dom.getElementById("mfa-factor").value="223e4567-e89b-42d3-a456-426614174000";
+    ui.dom.getElementById("mfa-code").value="123456";
+    await ui.submit("mfa-form");
+    expect(ui.window.location.pathname).toBe("/app/workspaces");
+    expect(ui.dom.getElementById("workspace-content").hidden).toBe(false);
+    expect(ui.dom.getElementById("account-heading").textContent).toBe("Your workspaces");
+    expect(ui.dom.getElementById("mfa-code").value).toBe("");
+    await ui.click("sign-out");
+    expect(ui.window.location.pathname).toBe("/app/login");
+    expect(ui.dom.getElementById("account-panel").hidden).toBe(true);
+    expect(ui.dom.getElementById("mfa-qr").src).toBe("");
   });
 
   it("explains provider cooldown without creating a phantom QR or duplicate factor",async()=>{

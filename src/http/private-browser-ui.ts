@@ -232,6 +232,14 @@ codeForm.addEventListener("submit",async event=>{
   try {
     const code=document.getElementById("code").value.trim();
     const r=await request("/app/auth/verify-otp",{code});
+    if(r.status===503){
+      // Supabase may already have consumed a valid OTP. Never invite the
+      // user to retry that code: a fresh login challenge is necessary.
+      document.getElementById("code").value="";
+      codeForm.hidden=true;emailForm.hidden=false;
+      message("A secure session could not be established. The code may have been accepted already. Request a new code after the email cooldown.");
+      return;
+    }
     if(!r.ok){message("Verification unsuccessful. Check your code.");return;}
     document.getElementById("code").value="";
     const session=await fetch("/app/auth/session",{credentials:"same-origin",cache:"no-store"});

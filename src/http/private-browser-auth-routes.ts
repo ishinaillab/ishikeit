@@ -8,6 +8,8 @@ import {
 
 export interface BrowserAuthController {
   begin(email:string,networkId:string):Promise<string>;
+  hasPendingEmailOtp(cookie:string):Promise<boolean>;
+  resumeEmailOtp(email:string,networkId:string):Promise<string>;
   verify(cookie:string,code:string,networkId:string):
     Promise<{cookieValue:string;csrfToken:string}>;
   get(cookie:string):ReturnType<PrivateBrowserAuthService["get"]>;
@@ -168,6 +170,33 @@ export function registerPrivateBrowserAuthRoutes(
     }catch{
       return reply.code(503).send({status:"temporarily_unavailable"});
     }
+  });
+  // A code-email link must resume the original browser's existing OTP
+  // challenge. Never return the email address or the OTP itself.
+  server.get("/app/auth/pending-otp",async(req,reply)=>{
+    privateResponse(reply);
+    if(!sameOrigin(req,false))return deny(reply,403).send({status:"forbidden"});
+    const pending=parseCookie(req,pendingName);
+    if(pending===undefined)return deny(reply).send({status:"unavailable"});
+    try{
+      if(await deps.controller.hasPendingEmailOtp(pending))
+        return reply.code(200).send({status:"awaiting_code"});
+    }catch{/* same non-enumerating response */}
+    return deny(reply).send({status:"unavailable"});
+  });
+  // Email fragments never reach server logs: client POSTs only a validated
+  // recipient to obtain a new, *unprivileged* challenge cookie, without
+  // sending another email or consuming/verifying any code on navigation.
+  server.post("/app/auth/resume-otp",{bodyLimit:2048},async(req,reply)=>{
+    privateResponse(reply);
+    if(!mutation(req,reply))return reply;
+    const parsed=requestSchema.safeParse(req.body);
+    if(!parsed.success)return deny(reply,400).send({status:"invalid_request"});
+    try{
+      const pending=await deps.controller.resumeEmailOtp(parsed.data.email,req.ip);
+      return reply.header("set-cookie",cookie(pendingName,pending,600))
+        .code(202).send({status:"if_recent_code_sent"});
+    }catch{return reply.code(503).send({status:"temporarily_unavailable"});}
   });
   server.post("/app/auth/verify-otp",{bodyLimit:2048},async(req,reply)=>{
     privateResponse(reply);

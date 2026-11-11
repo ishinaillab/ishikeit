@@ -41,6 +41,38 @@ export interface BrowserAuthSuccess {
   cookieValue:string;
   csrfToken:string;
 }
+
+/** Only fixed, non-sensitive stage classifications may be written to logs. */
+export type BrowserOtpFailureStage =
+  "challenge" | "provider_exchange" | "principal" | "workspace" | "session";
+export type BrowserOtpFailureReason =
+  "invalid_challenge" | "upstream_rejected" | "upstream_unavailable"
+  | "upstream_response_invalid" | "identity_invalid" | "identity_unavailable"
+  | "session_validation_unavailable" | "unexpected_failure";
+export type BrowserOtpFailureDiagnostic = {
+  stage:BrowserOtpFailureStage; reason:BrowserOtpFailureReason;
+};
+function browserOtpReason(error:unknown):BrowserOtpFailureReason {
+  if(!(error instanceof Error))return "unexpected_failure";
+  switch(error.message) {
+    case "Login verification rejected": return "invalid_challenge";
+    case "Supabase authentication rejected": return "upstream_rejected";
+    case "Supabase authentication service unavailable": return "upstream_unavailable";
+    case "Supabase authentication response invalid": return "upstream_response_invalid";
+    case "User authentication invalid": return "identity_invalid";
+    case "User authentication unavailable": return "identity_unavailable";
+    case "User session verification unavailable": return "session_validation_unavailable";
+    default: return "unexpected_failure";
+  }
+}
+
+/** A code may already have been consumed by Supabase, so retrying it is wrong. */
+export class BrowserLoginSessionSetupError extends Error {
+  constructor() {
+    super("Secure browser session could not be established");
+    this.name="BrowserLoginSessionSetupError";
+  }
+}
 export interface BrowserIdentitySummary {
   sessionId:string;
   expiresAt:string;
@@ -66,6 +98,7 @@ export class PrivateBrowserAuthService {
     portfolio:Pick<AuthenticatedWorkspacePortfolio,"list">;
     memberInvites?:Pick<PostgresWorkspaceInvitations,"invite">;
     csrfKeyBase64:string;
+    onOtpFailure?: (diagnostic:BrowserOtpFailureDiagnostic)=>void;
   }){
     const origin=new URL(deps.projectUrl);
     if (origin.protocol!=="https:" || !/^[a-z0-9]{20}\.supabase\.co$/u.test(origin.hostname)
@@ -181,27 +214,46 @@ export class PrivateBrowserAuthService {
   }
 
   async verify(loginCookie:string,code:string,networkId:string):Promise<BrowserAuthSuccess> {
-    const email=await this.#consumeLogin(loginCookie,code,networkId);
-    if(email===undefined)throw new Error("Login verification rejected");
-    const tokens=await this.deps.otp.verifyOtp(email,code);
-    const verified=await this.deps.auth.verifyAccessToken(tokens.access_token);
-    const memberships=await this.deps.portfolio.list(tokens.access_token,{pageSize:1});
-    if(memberships.items.length===0){
-      try{ await this.deps.otp.revoke(tokens.access_token); }catch{/* deny */ }
-      throw new Error("Login verification rejected");
+    let stage:BrowserOtpFailureStage="challenge";
+    let issued:SupabaseIssuedTokens|undefined;
+    try {
+      const email=await this.#consumeLogin(loginCookie,code,networkId);
+      if(email===undefined)throw new Error("Login verification rejected");
+      stage="provider_exchange";
+      issued=await this.deps.otp.verifyOtp(email,code);
+      stage="principal";
+      const verified=await this.deps.auth.verifyAccessToken(issued.access_token);
+      stage="workspace";
+      const memberships=await this.deps.portfolio.list(issued.access_token,{pageSize:1});
+      if(memberships.items.length===0)throw new Error("Login verification rejected");
+      stage="session";
+      const result=await this.deps.db.transaction(async tx=>{
+        const consumed=await tx.query(
+          `UPDATE public.ishikeit_browser_login_attempts SET completed_at=now()
+           WHERE challenge_hash=$1 AND completed_at IS NULL AND expires_at>now()
+           RETURNING challenge_hash`,[sha256(loginCookie)]
+        );
+        if(consumed.rowCount!==1)throw new Error("Login verification rejected");
+        const value=newSecret();
+        await this.#insertSession(tx,value,issued!,verified);
+        return value;
+      });
+      return {cookieValue:result,csrfToken:this.csrfForCookie(result)};
+    }catch(error){
+      // The Auth provider may have consumed a correct email code and issued
+      // a live session before a downstream local check failed. Always try
+      // to revoke that token. No sensitive token or original error is logged.
+      if(issued!==undefined){
+        try {await this.deps.otp.revoke(issued.access_token);}catch{/* fail closed locally */}
+      }
+      const reason=browserOtpReason(error);
+      try {this.deps.onOtpFailure?.({stage,reason});}catch{/* diagnostics never affect auth */}
+      // Provider payload errors on a 2xx response can also mean the OTP was
+      // consumed; distinguish setup failure from a truly invalid OTP.
+      if(issued!==undefined || reason==="upstream_response_invalid")
+        throw new BrowserLoginSessionSetupError();
+      throw error;
     }
-    const result=await this.deps.db.transaction(async tx=>{
-      const consumed=await tx.query(
-        `UPDATE public.ishikeit_browser_login_attempts SET completed_at=now()
-         WHERE challenge_hash=$1 AND completed_at IS NULL AND expires_at>now()
-         RETURNING challenge_hash`,[sha256(loginCookie)]
-      );
-      if(consumed.rowCount!==1)throw new Error("Login verification rejected");
-      const value=newSecret();
-      await this.#insertSession(tx,value,tokens,verified);
-      return value;
-    });
-    return {cookieValue:result,csrfToken:this.csrfForCookie(result)};
   }
 
   async #insertSession(tx:SqlExecutor,value:string,tokens:SupabaseIssuedTokens,

@@ -185,6 +185,8 @@ describe("private cookie-only browser auth routes",()=>{
     expect(html.headers["content-security-policy"]).toContain("script-src 'self'");
     expect(html.headers["content-security-policy"]).toContain("form-action 'none'");
     expect(html.body).toContain("Your workspaces");
+    expect(html.body).toContain("ISHIKEIT · Secure workspace access");
+    expect(html.body).not.toContain("Technique-first. Style-forward. Always clean.");
     expect(html.body).toContain('autocomplete="one-time-code"');
     expect(html.body).not.toContain("access_token");
     expect(html.body).not.toContain("localStorage");

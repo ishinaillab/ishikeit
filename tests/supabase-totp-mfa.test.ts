@@ -104,7 +104,7 @@ describe("Supabase Auth MFA server transport",()=>{
     const enrollment=await client.enroll(bearer);
     expect(enrollment.factorId).toBe(factorId);
     expect(enrollment.secret).toBe("JBSWY3DPEHPK3PXP");
-    expect(enrollment.qrCodeDataUrl).toMatch(/^data:image\\/svg\\+xml;base64,/u);
+    expect(enrollment.qrCodeDataUrl).toMatch(/^data:image\/svg\+xml;base64,/u);
     const encoded=enrollment.qrCodeDataUrl?.split(",")[1];
     expect(Buffer.from(encoded??"","base64").toString("utf8")).toBe(qr);
   });

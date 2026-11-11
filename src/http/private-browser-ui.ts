@@ -60,18 +60,26 @@ export const privateLoginHtml = `<!doctype html>
       </div>
       <div id="mfa-setup" hidden>
         <button type="button" class="secondary" id="mfa-enroll">Set up an authenticator</button>
-        <div id="mfa-enrollment" hidden>
-          <p class="note">Enter this setup key in your authenticator app. Keep it private. It will disappear after verification or sign-out.</p>
-          <output id="mfa-secret" class="mfa-secret"></output>
-        </div>
       </div>
+      <section id="mfa-enrollment" aria-labelledby="mfa-enrollment-title" hidden>
+        <h3 id="mfa-enrollment-title">Connect your authenticator app</h3>
+        <p class="note">Scan this QR code with Google Authenticator or another authenticator app. If scanning is unavailable, enter the setup key manually.</p>
+        <img id="mfa-qr" class="mfa-qr" width="260" height="260" alt="Authenticator setup QR code; keep private" hidden>
+        <p id="mfa-qr-fallback" class="note" hidden>QR code unavailable. Use the manual setup key below.</p>
+        <p class="setup-key-label">Manual setup key</p>
+        <output id="mfa-secret" class="mfa-secret" aria-label="Manual authenticator setup key"></output>
+        <p class="note">Keep the key private. It disappears when you verify, discard this setup, or sign out. Then enter the current six-digit code below.</p>
+      </section>
       <form id="mfa-form" hidden>
-        <label for="mfa-factor">Authenticator</label>
-        <select id="mfa-factor" aria-label="Choose verified authenticator"></select>
+        <div id="mfa-factor-picker" hidden>
+          <label for="mfa-factor">Authenticator device</label>
+          <select id="mfa-factor" aria-label="Choose authenticator"></select>
+        </div>
         <label for="mfa-code">Six-digit authenticator code</label>
         <input id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="6" pattern="[0-9]{6}" required>
         <button type="submit" id="mfa-submit">Verify authenticator</button>
       </form>
+      <button type="button" class="secondary" id="mfa-reload">Refresh authenticator status</button>
     </section>
     <button type="button" class="secondary" id="refresh-session">Renew session</button>
   </section>
@@ -81,36 +89,65 @@ export const privateLoginHtml = `<!doctype html>
 </body></html>`;
 
 export const privateLoginCss = `
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#332b2d;background:#f7f1ec;line-height:1.5}
+:root{
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  color:#332b2d;background:#f7f1ec;line-height:1.55
+}
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh}
-.layout{max-width:600px;margin:auto;padding:7vh 24px 50px}
+.layout{max-width:680px;margin:auto;padding:clamp(24px,6vh,70px) clamp(18px,4vw,30px) 50px}
 .eyebrow{font-size:.83rem;font-weight:750;letter-spacing:.24em;color:#9b6171}
 h1{font-size:clamp(1.95rem,4vw,2.65rem);letter-spacing:-.045em;line-height:1.12;margin:.6rem 0 1rem}
 h2{font-size:1.28rem;margin:0}
-.intro{color:#6f6063;max-width:480px}
-.surface{background:#fffdfb;border:1px solid #e7d9d9;border-radius:18px;padding:clamp(22px,5vw,34px);margin:26px 0 0;box-shadow:0 8px 38px #452e3411}
-form{display:flex;flex-direction:column;gap:12px}
-label{font-weight:650;font-size:.94rem}
-input{width:100%;padding:14px 15px;font:inherit;border:1px solid #cbbdbf;border-radius:10px;background:#fff;color:#332b2d}
-input:focus-visible,button:focus-visible{outline:3px solid #df95ae;outline-offset:2px}
-button{padding:13px 16px;font:inherit;font-weight:700;border-radius:10px;border:1px solid #8f5365;background:#8f5365;color:white;cursor:pointer}
+h3{font-size:1rem;margin:0}
+.intro{color:#6f6063;max-width:520px}
+.surface{background:#fffdfb;border:1px solid #e7d9d9;border-radius:18px;
+  padding:clamp(22px,5vw,34px);margin:24px 0 0;
+  box-shadow:0 8px 38px #452e3411}
+#login-panel,#account-panel{display:grid;gap:20px}
+form{display:grid;gap:14px;min-width:0}
+label,.setup-key-label{font-weight:650;font-size:.94rem}
+input,select{min-width:0;width:100%;min-height:46px;padding:12px 14px;font:inherit;
+  border:1px solid #cbbdbf;border-radius:10px;background:#fff;color:#332b2d}
+input:focus-visible,button:focus-visible,select:focus-visible{
+  outline:3px solid #df95ae;outline-offset:2px
+}
+button{min-height:46px;padding:12px 16px;font:inherit;font-weight:700;
+  border-radius:10px;border:1px solid #8f5365;background:#8f5365;
+  color:white;cursor:pointer;max-width:100%;white-space:normal}
 button:hover{filter:brightness(.95)}
 button:disabled{opacity:.55;cursor:wait}
 button.secondary{background:transparent;color:#8f5365}
-.note{font-size:.85rem;color:#76676b;margin:17px 0 0}
-.section-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
-.workspaces{padding:0;list-style:none;display:grid;gap:12px;margin:22px 0}
+.note{font-size:.88rem;color:#76676b;margin:0;line-height:1.55}
+.section-head{display:flex;justify-content:space-between;align-items:center;
+  gap:14px;flex-wrap:wrap}
+.workspaces{padding:0;list-style:none;display:grid;gap:12px;margin:0}
 .workspaces li{padding:16px;border-radius:12px;background:#faf3f3;border:1px solid #f0dddd}
 .workspaces strong{display:block}
 .workspaces small{color:#735f65}
 .status{min-height:1.4rem;font-size:.95rem;font-weight:550;color:#774455;margin:20px 0}
-.mfa-panel{margin-top:26px;border-top:1px solid #eadedd;padding-top:24px}
+.mfa-panel{display:grid;gap:18px;margin-top:6px;border-top:1px solid #eadedd;padding-top:26px}
 .mfa-panel h2{font-size:1.12rem}
-.mfa-secret{display:block;overflow-wrap:anywhere;background:#f8ecec;border-radius:9px;padding:12px;margin:12px 0;font-family:ui-monospace,monospace;font-size:.93rem;user-select:all}
-select{width:100%;padding:12px;border:1px solid #cbbdbf;border-radius:10px;background:#fff;color:#332b2d;font:inherit}
-footer{margin-top:58px;font-size:.81rem;color:#89777b;text-align:center}
+#mfa-recovery,#mfa-setup,#mfa-enrollment,#mfa-factor-picker{
+  display:grid;gap:14px;min-width:0
+}
+#mfa-recovery{padding:16px;border-radius:12px;background:#faf3f3}
+#mfa-enrollment{padding:18px;border:1px solid #e7d9d9;border-radius:12px;
+  background:#fff8f6}
+.mfa-qr{display:block;width:min(100%,260px);height:auto;aspect-ratio:1;
+  padding:8px;border:1px solid #eee;background:white;border-radius:10px;
+  image-rendering:pixelated;margin:2px auto}
+.mfa-secret{display:block;min-width:0;max-width:100%;overflow-wrap:anywhere;
+  background:#f8ecec;border-radius:9px;padding:14px;font-family:ui-monospace,monospace;
+  font-size:1rem;font-weight:700;letter-spacing:.08em;user-select:all}
+#refresh-session{margin-top:8px}
+footer{margin-top:56px;font-size:.81rem;color:#89777b;text-align:center}
 [hidden]{display:none!important}
+@media(max-width:480px){
+  .section-head{align-items:stretch}
+  .section-head button{width:100%}
+  .mfa-panel button,#refresh-session{width:100%}
+}
 @media(prefers-reduced-motion:no-preference){button{transition:filter .15s ease}}
 `;
 

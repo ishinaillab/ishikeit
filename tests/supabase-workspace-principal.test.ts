@@ -21,13 +21,19 @@ function jwt(overrides: Record<string,unknown> = {}): string {
   const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
   return header+"."+data+".synthetic_signature_only_not_accepted_by_real_auth";
 }
-function fakeDb(active: boolean, fail = false, factorVerified = true): Pick<PostgresDatabase,"query"> {
+function fakeDb(active: boolean, fail = false, factorVerified = true, sessionAal2 = true): Pick<PostgresDatabase,"query"> {
   return {
     query: vi.fn((sql: string, params?: readonly unknown[]) => {
       if(fail) throw new Error("db secret must never appear");
       if(sql.includes("auth.mfa_factors")){
-        expect(params).toEqual([subject]);
-        return Promise.resolve({rows:[{verified:factorVerified}],rowCount:1});
+        // The factor must belong to the exact live AAL2 session, not merely
+        // be any verified backup device enrolled on the same user account.
+        expect(sql).toContain("s.id=$1::uuid AND s.user_id=$2::uuid");
+        expect(sql).toContain("s.aal='aal2'");
+        expect(sql).toContain("f.id=s.factor_id AND f.user_id=s.user_id");
+        expect(sql).toContain("f.status='verified'");
+        expect(params).toEqual([sessionId,subject]);
+        return Promise.resolve({rows:[{verified:factorVerified && sessionAal2}],rowCount:1});
       }
       expect(sql).toContain("auth.sessions");
       expect(params).toEqual([sessionId,subject]);
@@ -45,11 +51,12 @@ function fakeResponse(status = 200, overrides: Record<string,unknown> = {}) {
 }
 function verifier(opts: {
   status?:number;user?:Record<string,unknown>;active?:boolean;
-  dbFail?:boolean; fetchFail?:boolean; factorVerified?:boolean;
+  dbFail?:boolean; fetchFail?:boolean; factorVerified?:boolean; sessionAal2?:boolean;
   calls?: (url: string | URL | Request, options?: RequestInit) => void;
 } = {}) {
   return new SupabaseAuthPrincipalVerifier({
-    projectUrl:origin,publishableKey:key,db:fakeDb(opts.active ?? true,opts.dbFail,opts.factorVerified ?? true),
+    projectUrl:origin,publishableKey:key,
+    db:fakeDb(opts.active ?? true,opts.dbFail,opts.factorVerified ?? true,opts.sessionAal2 ?? true),
     now:()=>now,
     fetchImpl: (url,options) => {
       opts.calls?.(url,options);
@@ -155,6 +162,20 @@ describe("trusted Supabase Auth user and live session workspace boundary", () =>
     await expect(verifier({dbFail:true})
       .verifyPrivilegedAccessToken(jwt({aal:"aal2"})))
       .rejects.toThrow(/verification unavailable/i);
+  });
+
+  it("rejects stale AAL2 after the session-bound primary is unenrolled, even if a backup is verified",async()=>{
+    // SQL must join this session's factor_id. An unrelated verified backup
+    // factor must never make the result true once the original is removed.
+    await expect(verifier({factorVerified:false})
+      .verifyPrivilegedAccessToken(jwt({aal:"aal2"})))
+      .rejects.toThrow("Multi-factor authentication required");
+  });
+
+  it("rejects an issuer-signed AAL2 JWT after the live session has been downgraded",async()=>{
+    await expect(verifier({sessionAal2:false})
+      .verifyPrivilegedAccessToken(jwt({aal:"aal2"})))
+      .rejects.toThrow("Multi-factor authentication required");
   });
 
   it("denies account connection when only aal1 is present without touching storage",async()=>{

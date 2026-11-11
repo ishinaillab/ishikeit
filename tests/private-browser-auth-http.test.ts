@@ -122,21 +122,21 @@ describe("private cookie-only browser auth routes",()=>{
         method:"GET",url:"/app/auth/session",headers:{host,cookie:authCookie()}
       });
       expect(session.statusCode).toBe(200);
-      expect(session.json().memberInvitationsEnabled).toBe(invitesEnabled);
+      expect(session.json()).toMatchObject({memberInvitationsEnabled:invitesEnabled});
 
       const base={...headers,cookie:authCookie(),"x-ishikeit-csrf":csrf};
       const refreshed=await server.inject({
         method:"POST",url:"/app/auth/refresh",headers:base,payload:{}
       });
       expect(refreshed.statusCode).toBe(200);
-      expect(refreshed.json().memberInvitationsEnabled).toBe(invitesEnabled);
+      expect(refreshed.json()).toMatchObject({memberInvitationsEnabled:invitesEnabled});
 
       const verified=await server.inject({
         method:"POST",url:"/app/auth/mfa/totp/verify",headers:base,
         payload:{factorId:"123e4567-e89b-42d3-a456-426614174000",code:"123456"}
       });
       expect(verified.statusCode).toBe(200);
-      expect(verified.json().memberInvitationsEnabled).toBe(invitesEnabled);
+      expect(verified.json()).toMatchObject({memberInvitationsEnabled:invitesEnabled});
       expect(verified.body).not.toContain("access_token");
       expect(verified.body).not.toContain("refresh_token");
       await server.close();

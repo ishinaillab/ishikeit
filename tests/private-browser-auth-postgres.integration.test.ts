@@ -70,6 +70,13 @@ const mfa={
       [id,userId]
     ).then(()=>({factorId:id,secret:"JBSWY3DPEHPK3PXP"}));
   }),
+  unenroll:vi.fn((_token:string,ref:string)=>{
+    void _token;
+    return db!.query("DELETE FROM auth.mfa_factors WHERE id=$1 AND status='unverified'",[ref])
+      .then(result=>{
+        if(result.rowCount!==1)throw new Error("MFA factor not available");
+      });
+  }),
   challengeAndVerify:vi.fn((_token:string,_factorId:string,_code:string)=>{
     void _token;void _factorId;void _code;
     return db!.query("UPDATE auth.mfa_factors SET status='verified' WHERE id=$1",
@@ -364,14 +371,20 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
   it("enrolls only for a freshly verified workspace user, verifies TOTP and rotates tokens",async()=>{
     const nonce=await service!.begin("invited@example.com","one-ip");
     const session=await service!.verify(nonce,"123456","one-ip");
-    expect(await service!.listTotpFactors(session.cookieValue)).toEqual([]);
+    expect(await service!.listTotpFactors(session.cookieValue)).toMatchObject({
+      factors:[],pendingCount:0,canEnroll:true
+    });
     const enrollment=await service!.enrollTotp(session.cookieValue);
     expect(enrollment).toEqual({factorId,secret:"JBSWY3DPEHPK3PXP"});
-    expect(await service!.listTotpFactors(session.cookieValue)).toEqual([]);
+    expect(await service!.listTotpFactors(session.cookieValue)).toMatchObject({
+      factors:[],pendingCount:1,canEnroll:true
+    });
     const verified=await service!.verifyTotp(session.cookieValue,factorId,"234567");
     expect(verified.sessionId).toBe(authSessionId);
     expect(verified.workspaces.items).toHaveLength(1);
-    expect(await service!.listTotpFactors(session.cookieValue)).toEqual([factorId]);
+    expect(await service!.listTotpFactors(session.cookieValue)).toMatchObject({
+      factors:[factorId],pendingCount:0,canEnroll:true
+    });
     const previous=await db!.query<{access_ciphertext:Buffer}>(
       "SELECT access_ciphertext FROM public.ishikeit_browser_sessions"
     );
@@ -381,6 +394,41 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     expect(auth.verifyPrivilegedAccessToken).toHaveBeenCalled();
     await expect(service!.verifyTotp(session.cookieValue,randomUUID(),"123456"))
       .rejects.toThrow(/not available/i);
+  });
+
+  it("resets only incomplete TOTP enrollment through owner-bound provider API",async()=>{
+    const nonce=await service!.begin("invited@example.com","recovery-network");
+    const session=await service!.verify(nonce,"123456","recovery-network");
+    const pending=await service!.enrollTotp(session.cookieValue);
+    expect((await service!.listTotpFactors(session.cookieValue)).pendingCount).toBe(1);
+    const result=await service!.clearIncompleteTotp(session.cookieValue);
+    expect(result).toEqual({cleared:1});
+    expect(mfa.unenroll).toHaveBeenCalledWith(access,pending.factorId);
+    expect((await service!.listTotpFactors(session.cookieValue)).pendingCount).toBe(0);
+    expect((await db!.query("SELECT 1 FROM auth.mfa_factors")).rowCount).toBe(0);
+  });
+
+  it("does not permit AAL1 to reset incomplete backup alongside a verified device",async()=>{
+    const nonce=await service!.begin("invited@example.com","backup-network");
+    const session=await service!.verify(nonce,"123456","backup-network");
+    await service!.enrollTotp(session.cookieValue);
+    await service!.verifyTotp(session.cookieValue,factorId,"123456");
+    const backup=await service!.enrollTotp(session.cookieValue);
+    expect((await service!.listTotpFactors(session.cookieValue)).pendingCount).toBe(1);
+    const normal=await db!.query<{count:string}>(
+      "SELECT count(*)::text AS count FROM auth.mfa_factors WHERE status='verified'");
+    expect(normal.rows[0]?.count).toBe("1");
+    auth.verifyPrivilegedAccessToken.mockRejectedValueOnce(
+      new Error("Multi-factor authentication required")
+    );
+    await expect(service!.clearIncompleteTotp(session.cookieValue))
+      .rejects.toThrow(/multi-factor/i);
+    expect(mfa.unenroll).not.toHaveBeenCalled();
+    expect(await service!.clearIncompleteTotp(session.cookieValue)).toEqual({cleared:1});
+    expect(mfa.unenroll).toHaveBeenCalledWith(
+      "mfa_access_"+"x".repeat(60),backup.factorId);
+    const factors=await service!.listTotpFactors(session.cookieValue);
+    expect(factors).toMatchObject({factors:[factorId],pendingCount:0,canEnroll:true});
   });
 
   it("enforces private RLS and prevents Data API access to all sensitive tables",async()=>{

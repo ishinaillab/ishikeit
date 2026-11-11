@@ -30,7 +30,11 @@ function testServer(enabled=true,invitesEnabled=false){
     });}),
     csrf:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve(csrf);}),
     listTotpFactors:vi.fn((_cookie:string)=>{
-      void _cookie;return Promise.resolve(["123e4567-e89b-42d3-a456-426614174000"]);
+      void _cookie;return Promise.resolve({factors:["123e4567-e89b-42d3-a456-426614174000"],
+        pendingCount:0,canEnroll:false});
+    }),
+    clearIncompleteTotp:vi.fn((_cookie:string)=>{
+      void _cookie;return Promise.resolve({cleared:1});
     }),
     enrollTotp:vi.fn((_cookie:string)=>{
       void _cookie;return Promise.resolve({
@@ -198,6 +202,10 @@ describe("private cookie-only browser auth routes",()=>{
     expect(js.body).toContain('document.createElement("li")');
     expect(js.body).not.toContain("innerHTML");
     expect(js.body).toContain('window.history.replaceState(null,"","/app/login")');
+    expect(js.body).toContain('window.history.replaceState(null,"","/app/workspaces")');
+    expect(js.body).toContain('data.pendingCount>0');
+    expect(js.body).toContain('data.canEnroll===true');
+    expect(html.body).toContain('id="mfa-reset"');
     expect(js.body).not.toContain("localStorage");
     const css=await server.inject({method:"GET",url:"/app/auth/ui.css",headers:{host}});
     expect(css.statusCode).toBe(200);
@@ -206,6 +214,35 @@ describe("private cookie-only browser auth routes",()=>{
       headers:{host:"evil.test"}})).statusCode).toBe(403);
     await server.close();
   });
+  it("serves /app/workspaces only with a live verified server session and membership",async()=>{
+    const {server,controller}=testServer();
+    const unauthenticated=await server.inject({
+      method:"GET",url:"/app/workspaces",headers:{host}
+    });
+    expect(unauthenticated.statusCode).toBe(303);
+    expect(unauthenticated.headers.location).toBe("/app/login");
+    expect(unauthenticated.headers["cache-control"]).toContain("no-store");
+    expect(unauthenticated.body).not.toContain("Your workspaces");
+    const valid=await server.inject({
+      method:"GET",url:"/app/workspaces",headers:{host,cookie:authCookie()}
+    });
+    expect(valid.statusCode).toBe(200);
+    expect(valid.body).toContain("Your workspaces");
+    expect(valid.headers["cache-control"]).toContain("no-store");
+    expect(controller.get).toHaveBeenCalledWith(token);
+    controller.get.mockRejectedValueOnce(new Error("Expired session"));
+    const stale=await server.inject({
+      method:"GET",url:"/app/workspaces",headers:{host,cookie:authCookie()}
+    });
+    expect(stale.statusCode).toBe(303);
+    expect(stale.headers.location).toBe("/app/login");
+    const hostile=await server.inject({
+      method:"GET",url:"/app/workspaces",headers:{host:"wrong.host",cookie:authCookie()}
+    });
+    expect(hostile.statusCode).toBe(403);
+    await server.close();
+  });
+
   it("checks exact Host and Origin for every authentication mutation",async()=>{
     const {server,controller}=testServer();
     for(const h of [
@@ -324,7 +361,10 @@ describe("private cookie-only browser auth routes",()=>{
     const factors=await server.inject({method:"GET",url:"/app/auth/mfa/factors",
       headers:{host,cookie:authCookie()}});
     expect(factors.statusCode).toBe(200);
-    expect(factors.json()).toEqual({factors:["123e4567-e89b-42d3-a456-426614174000"]});
+    expect(factors.json()).toEqual({
+      factors:["123e4567-e89b-42d3-a456-426614174000"],
+      pendingCount:0,canEnroll:false
+    });
     for(const path of ["/app/auth/mfa/totp/enroll","/app/auth/mfa/totp/verify"]){
       const missing=await server.inject({method:"POST",url:path,
         headers:base,payload:path.endsWith("verify")?{
@@ -347,6 +387,24 @@ describe("private cookie-only browser auth routes",()=>{
     expect(verified.json()).toMatchObject({status:"mfa_verified",csrfToken:csrf});
     expect(verified.body).not.toContain("access_token");
     expect(verified.body).not.toContain("refresh_token");
+    const resetWithoutCsrf=await server.inject({
+      method:"POST",url:"/app/auth/mfa/totp/reset",
+      headers:base,payload:{}
+    });
+    expect(resetWithoutCsrf.statusCode).toBe(403);
+    expect(controller.clearIncompleteTotp).not.toHaveBeenCalled();
+    const reset=await server.inject({
+      method:"POST",url:"/app/auth/mfa/totp/reset",
+      headers:{...base,"x-ishikeit-csrf":csrf},payload:{}
+    });
+    expect(reset.statusCode).toBe(200);
+    expect(reset.json()).toEqual({status:"incomplete_setup_cleared",cleared:1});
+    expect(controller.clearIncompleteTotp).toHaveBeenCalledWith(token);
+    const badReset=await server.inject({
+      method:"POST",url:"/app/auth/mfa/totp/reset",
+      headers:{...base,"x-ishikeit-csrf":csrf,origin:"https://evil.test"},payload:{}
+    });
+    expect(badReset.statusCode).toBe(403);
     const foreign=await server.inject({method:"POST",url:"/app/auth/mfa/totp/enroll",
       headers:{...base,origin:"https://evil.test","x-ishikeit-csrf":csrf},payload:{}});
     expect(foreign.statusCode).toBe(403);

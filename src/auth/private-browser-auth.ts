@@ -27,6 +27,7 @@ interface ChallengeRow extends pg.QueryResultRow {
   email_ciphertext:Buffer; email_iv:Buffer; email_tag:Buffer
 }
 interface RateRow extends pg.QueryResultRow { hits:number }
+interface PendingChallengeRow extends pg.QueryResultRow { present:boolean }
 interface TotpFactorRow extends pg.QueryResultRow { id:string; status:string; factor_type:string }
 export interface BrowserMfaFactorStatus {
   factors:readonly string[];
@@ -185,6 +186,60 @@ export class PrivateBrowserAuthService {
     return (result.rows[0]?.hits??max+1)<=max;
   }
 
+  /** HMAC-SHA256 lookup, not a reversible/plain hash of email. */
+  #emailLookup(email:string):string {
+    return createHmac("sha256",this.#csrfKey)
+      .update("ishikeit-browser-email-lookup-v1\0"+email).digest("hex");
+  }
+
+  /** An email link in the requesting browser should resume the code form.
+   * The response never includes the email, code, or private user data. */
+  async hasPendingEmailOtp(cookie:string):Promise<boolean>{
+    if(!bearer.safeParse(cookie).success)return false;
+    const result=await this.deps.db.query<PendingChallengeRow>(
+      `SELECT EXISTS(
+         SELECT 1 FROM public.ishikeit_browser_login_attempts
+         WHERE challenge_hash=$1 AND completed_at IS NULL
+           AND expires_at>now() AND tries<5 AND otp_sent_at IS NOT NULL
+       ) AS present`,[sha256(cookie)]
+    );
+    return result.rows[0]?.present===true;
+  }
+
+  /** Email links can be opened in a different browser. A new, unrelated
+   * nonce is issued only when a genuine recent OTP dispatch is recorded.
+   * The recipient must still enter their emailed OTP, and the existing
+   * per-attempt, account, IP and provider rate limits remain mandatory.
+   * An indistinguishable, unusable nonce is returned on any blocked lookup.
+   */
+  async resumeEmailOtp(emailInput:string,networkId:string):Promise<string>{
+    const email=normalizedEmail.parse(emailInput);
+    const cookie=newSecret();
+    const passed=await Promise.all([
+      this.#limit("otp:resume:email:"+email,3,900),
+      this.#limit("otp:resume:remote:"+networkId,30,900)
+    ]);
+    if(!passed.every(Boolean))return cookie;
+    const hash=sha256(cookie);
+    const value=this.deps.cipher.encrypt(
+      email,"ishikeit-browser-v1\0"+hash+"\0email"
+    );
+    await this.deps.db.query(
+      `INSERT INTO public.ishikeit_browser_login_attempts
+        (challenge_hash,email_ciphertext,email_iv,email_tag,
+         email_lookup_hash,expires_at,otp_sent_at)
+       SELECT $1,$2,$3,$4,$5,source.expires_at,source.otp_sent_at
+       FROM public.ishikeit_browser_login_attempts AS source
+       WHERE source.email_lookup_hash=$5
+         AND source.otp_sent_at IS NOT NULL
+         AND source.completed_at IS NULL AND source.tries<5
+         AND source.expires_at>now()
+       ORDER BY source.otp_sent_at DESC,source.expires_at DESC LIMIT 1`,
+      [hash,value.ciphertext,value.iv,value.tag,this.#emailLookup(email)]
+    );
+    return cookie;
+  }
+
   async begin(emailInput:string,networkId:string):Promise<string> {
     const email=normalizedEmail.parse(emailInput);
     const loginCookie=newSecret();
@@ -200,9 +255,11 @@ export class PrivateBrowserAuthService {
       );
       await this.deps.db.query(
         `INSERT INTO public.ishikeit_browser_login_attempts
-         (challenge_hash,email_ciphertext,email_iv,email_tag,expires_at)
-         VALUES($1,$2,$3,$4,now()+interval '10 minutes')`,
-        [hash,emailValue.ciphertext,emailValue.iv,emailValue.tag]
+         (challenge_hash,email_ciphertext,email_iv,email_tag,
+          email_lookup_hash,expires_at)
+         VALUES($1,$2,$3,$4,$5,now()+interval '10 minutes')`,
+        [hash,emailValue.ciphertext,emailValue.iv,emailValue.tag,
+         this.#emailLookup(email)]
       );
       const known=await this.deps.db.query<MemberRow>(
         `SELECT EXISTS(
@@ -222,8 +279,16 @@ export class PrivateBrowserAuthService {
       if(known.rows[0]?.eligible===true && await this.#limit(
         "otp:cooldown:"+email,1,60
       )){
-        try { await this.deps.otp.sendOtp(email); }
-        catch { /* Stable public response; provider/transport failures are not exposed. */ }
+        try {
+          await this.deps.otp.sendOtp(email);
+          // An emailed link cannot be adopted unless OTP dispatch succeeded.
+          await this.deps.db.query(
+            `UPDATE public.ishikeit_browser_login_attempts
+             SET otp_sent_at=now()
+             WHERE challenge_hash=$1 AND completed_at IS NULL
+               AND expires_at>now()`,[hash]
+          );
+        }catch {/* Same generic public result; never disclose provider state. */}
       }
     }
     return loginCookie;

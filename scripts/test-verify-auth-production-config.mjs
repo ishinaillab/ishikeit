@@ -9,7 +9,7 @@ const valid={
   smtp_host:"smtp.mail.example",smtp_port:587,smtp_user:"smtp-user",
   smtp_admin_email:"no-reply@ishinaillab.com",
   mailer_templates_invite_content:"<a href='{{ .ConfirmationURL }}'>Accept</a>",
-  mailer_templates_magic_link_content:"Your code: {{ .Token }}",
+  mailer_templates_magic_link_content:'Your code: {{ .Token }} <a href="https://apps.ishinaillab.com/app/login#verify-email={{ .Email }}">Continue</a>',
   uri_allow_list:ISHIKEIT_AUTH_REDIRECT,
   mfa_totp_enroll_enabled:true,mfa_totp_verify_enabled:true,
   mfa_max_enrolled_factors:10,
@@ -53,6 +53,7 @@ test("rejects missing redirect allowlist without relying on Site URL fallback",a
 test("denies insecure mail templates and automatic email confirmation",async()=>{
   const cases=[
     {mailer_templates_magic_link_content:"{{ .ConfirmationURL }}"},
+    {mailer_templates_magic_link_content:"Your code: {{ .Token }} <a href='https://apps.ishinaillab.com/app/login'>Sign in</a>"},
     {mailer_templates_invite_content:"No official verification link"},
     {mailer_autoconfirm:true},
     {external_email_enabled:false},

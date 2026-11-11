@@ -38,7 +38,10 @@ class FakeElement {
   addEventListener(name:string,handler:EventHandler):void{this.listeners.set(name,handler);}
 }
 interface UiFixtureOptions {
-  state?:"authenticated"|"mfa_required";
+  state?:"authenticated"|"mfa_required"|"unauthenticated";
+  pendingEmailCookie?:boolean;
+  emailLinkHint?:string;
+  restoreSuccess?:boolean;
   factorCount?:number;
   nearExpiry?:boolean;
   enrollStatus?:number;
@@ -73,11 +76,13 @@ function setup(options:UiFixtureOptions={}){
     createElement:(tag:string)=>new FakeElement(tag),
     addEventListener:(name:string,handler:EventHandler)=>{listeners.set(name,handler);}
   };
-  const url={pathname:"/app/login",hash:"",search:""};
+  const url={pathname:"/app/login",
+    hash:options.emailLinkHint===undefined?"":
+      "#verify-email="+encodeURIComponent(options.emailLinkHint),search:""};
   const window={
     location:url,
     history:{replaceState:(state:unknown,name:string,path:string)=>{
-      void state;void name;url.pathname=path;
+      void state;void name;url.pathname=path;url.hash="";url.search="";
     }},
     confirm:(s:string)=>{void s;return true;}
   };
@@ -87,6 +92,10 @@ function setup(options:UiFixtureOptions={}){
   let refreshRequests=0;
   let logoutRequests=0;
   let factorReads=0;
+  let restoreCalls=0;
+  let pendingChecks=0;
+  let restored=false;
+  let restoredEmail="";
   const workspaces={
     items:options.multiWorkspace?[workspace1,workspace2]:[workspace1]
   };
@@ -104,14 +113,33 @@ function setup(options:UiFixtureOptions={}){
   const response=(payload:unknown,code=200)=>({
     ok:code>=200 && code<300,status:code,json:()=>Promise.resolve(payload)
   });
-  const fetch=(path:string,request?:{method?:string})=>{
+  const fetch=(path:string,request?:{method?:string;body?:string})=>{
     const mutation=request?.method==="POST";
     if(path==="/app/auth/session")return Promise.resolve(
-      response(makeSession(originalState))
+      originalState==="unauthenticated"
+        ? response({status:"unauthenticated"},401)
+        : response(makeSession(originalState))
     );
+    if(path==="/app/auth/csrf")
+      return Promise.resolve(response({status:"unauthenticated"},401));
+    if(path==="/app/auth/pending-otp"){
+      pendingChecks++;
+      return Promise.resolve(
+        options.pendingEmailCookie || restored
+          ? response({status:"awaiting_code"})
+          : response({status:"unavailable"},401)
+      );
+    }
+    if(path==="/app/auth/resume-otp" && mutation){
+      restoreCalls++;
+      const params=JSON.parse((request as {body?:string})?.body??"{}") as {email?:string};
+      restoredEmail=params.email??"";
+      if(options.restoreSuccess!==false)restored=true;
+      return Promise.resolve(response({status:"if_recent_code_sent"},202));
+    }
     if(path==="/app/auth/refresh" && mutation){
       refreshRequests++;
-      return Promise.resolve(response(makeSession(originalState,true)));
+      return Promise.resolve(response(makeSession(originalState==="unauthenticated"?"authenticated":originalState,true)));
     }
     if(path==="/app/auth/mfa/factors"){
       factorReads++;
@@ -180,7 +208,8 @@ function setup(options:UiFixtureOptions={}){
     await flush();
   };
   return {dom,window,click,submit,flush,event,runTimer,timers,
-    stats:()=>({enrollRequests,refreshRequests,logoutRequests,factorReads})};
+    stats:()=>({enrollRequests,refreshRequests,logoutRequests,
+      factorReads,restoreCalls,pendingChecks,restoredEmail})};
 }
 
 describe("secure workspace UX and real static frontend lifecycle",()=>{
@@ -334,6 +363,65 @@ describe("secure workspace UX and real static frontend lifecycle",()=>{
     expect(ui.dom.getElementById("mfa-panel").hidden).toBe(true);
     expect(ui.dom.getElementById("mfa-factor").options).toHaveLength(0);
     expect(ui.dom.getElementById("status").textContent).toContain("Signed out");
+  });
+
+  it("a normal email login from the original browser resumes directly at the emailed OTP input",async()=>{
+    const ui=setup({state:"unauthenticated",pendingEmailCookie:true});
+    await ui.flush();
+    expect(ui.dom.getElementById("boot-panel").hidden).toBe(true);
+    expect(ui.dom.getElementById("auth-shell").hidden).toBe(false);
+    expect(ui.dom.getElementById("email-form").hidden).toBe(true);
+    expect(ui.dom.getElementById("code-form").hidden).toBe(false);
+    expect(ui.dom.getElementById("auth-title").textContent).toBe("Enter your email code");
+    expect(ui.window.location.pathname).toBe("/app/login");
+    expect(ui.stats().restoreCalls).toBe(0);
+    expect(ui.stats().pendingChecks).toBe(1);
+    expect(ui.dom.getElementById("dashboard-shell").hidden).toBe(true);
+    expect(ui.dom.getElementById("mfa-gate").hidden).toBe(true);
+  });
+
+  it("a code email link opened in a different browser restores the challenge without requesting another OTP",async()=>{
+    const email="invited+tag@example.com";
+    const ui=setup({state:"unauthenticated",emailLinkHint:email});
+    await ui.flush();
+    expect(ui.window.location.hash).toBe("");
+    expect(ui.window.location.pathname).toBe("/app/login");
+    expect(ui.stats().restoreCalls).toBe(1);
+    expect(ui.stats().restoredEmail).toBe(email);
+    expect(ui.stats().pendingChecks).toBe(2);
+    expect(ui.dom.getElementById("email-form").hidden).toBe(true);
+    expect(ui.dom.getElementById("code-form").hidden).toBe(false);
+    expect(ui.dom.getElementById("auth-title").textContent).toBe("Enter your email code");
+    expect(ui.dom.getElementById("mfa-gate").hidden).toBe(true);
+    expect(ui.dom.getElementById("dashboard-shell").hidden).toBe(true);
+  });
+
+  it("an expired cross-browser emailed link safely requires a new code without fake authentication",async()=>{
+    const ui=setup({
+      state:"unauthenticated",emailLinkHint:"invited@example.com",restoreSuccess:false
+    });
+    await ui.flush();
+    expect(ui.window.location.hash).toBe("");
+    expect(ui.stats().restoreCalls).toBe(1);
+    expect(ui.dom.getElementById("email-form").hidden).toBe(false);
+    expect(ui.dom.getElementById("code-form").hidden).toBe(true);
+    expect(ui.dom.getElementById("status").textContent).toContain("expired");
+    expect(ui.dom.getElementById("dashboard-shell").hidden).toBe(true);
+  });
+
+  it("an arbitrary direct login visit still presents email, and active AAL2 sessions ignore link fragments",async()=>{
+    const fresh=setup({state:"unauthenticated"});
+    await fresh.flush();
+    expect(fresh.dom.getElementById("email-form").hidden).toBe(false);
+    expect(fresh.dom.getElementById("code-form").hidden).toBe(true);
+    expect(fresh.stats().restoreCalls).toBe(0);
+    const authenticated=setup({state:"authenticated",
+      emailLinkHint:"different@example.com"});
+    await authenticated.flush();
+    expect(authenticated.window.location.hash).toBe("");
+    expect(authenticated.dom.getElementById("dashboard-shell").hidden).toBe(false);
+    expect(authenticated.stats().restoreCalls).toBe(0);
+    expect(authenticated.dom.getElementById("code-form").hidden).toBe(true);
   });
 
   it("provides the security cooldown as a contextual error without generating a phantom QR",async()=>{

@@ -116,6 +116,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     await db!.query(await readFile("migrations/0010_ishikeit_workspace_connections.sql","utf8"));
     await db!.query(await readFile("migrations/0014_private_browser_auth.sql","utf8"));
     await db!.query(await readFile("migrations/0015_browser_login_email_encryption.sql","utf8"));
+    await db!.query(await readFile("migrations/0019_browser_otp_email_link_resume.sql","utf8"));
     await db!.query(`CREATE TABLE IF NOT EXISTS auth.mfa_factors(
       id uuid PRIMARY KEY,user_id uuid NOT NULL,status text NOT NULL,
       factor_type text NOT NULL,created_at timestamptz DEFAULT now() NOT NULL)`);
@@ -187,6 +188,94 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     expect(dbRows.rows.map(r=>r.challenge_hash)).toContain(
       createHash("sha256").update(legit).digest("hex")
     );
+  });
+
+
+  it("recognizes only an unexpired, emailed, unconsumed, cookie-bound code challenge",async()=>{
+    const active=await service!.begin("invited@example.com","entry-ip");
+    const guest=await service!.begin("stranger@example.com","guest-ip");
+    expect(await service!.hasPendingEmailOtp(active)).toBe(true);
+    expect(await service!.hasPendingEmailOtp(guest)).toBe(false);
+    expect(await service!.hasPendingEmailOtp("not-a-cookie")).toBe(false);
+    const row=await db!.query<{
+      email_lookup_hash:string;otp_sent_at:Date|null
+    }>("SELECT email_lookup_hash,otp_sent_at FROM public.ishikeit_browser_login_attempts WHERE challenge_hash=$1",
+      [createHash("sha256").update(active).digest("hex")]);
+    expect(row.rows[0]?.email_lookup_hash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(row.rows[0]?.otp_sent_at).toBeInstanceOf(Date);
+    expect(row.rows[0]?.email_lookup_hash).not.toBe(
+      createHash("sha256").update("invited@example.com").digest("hex")
+    );
+    await db!.query(
+      "UPDATE public.ishikeit_browser_login_attempts SET tries=5 WHERE challenge_hash=$1",
+      [createHash("sha256").update(active).digest("hex")]
+    );
+    expect(await service!.hasPendingEmailOtp(active)).toBe(false);
+  });
+
+  it("restores email code entry across browsers without sending another OTP or bypassing code verification",async()=>{
+    const original=await service!.begin("invited@example.com","send-ip");
+    const resumed=await service!.resumeEmailOtp("invited@example.com","email-link-ip");
+    expect(resumed).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(resumed).not.toBe(original);
+    expect(await service!.hasPendingEmailOtp(resumed)).toBe(true);
+    expect(otpClient.sendOtp).toHaveBeenCalledTimes(1);
+    expect(otpClient.verifyOtp).not.toHaveBeenCalled();
+    const row=await db!.query<{
+      email_ciphertext:Buffer;email_lookup_hash:string;expires_at:Date
+    }>(
+      "SELECT email_ciphertext,email_lookup_hash,expires_at FROM public.ishikeit_browser_login_attempts WHERE challenge_hash=$1",
+      [createHash("sha256").update(resumed).digest("hex")]
+    );
+    expect(row.rowCount).toBe(1);
+    expect(row.rows[0]?.email_ciphertext.includes(
+      Buffer.from("invited@example.com"))).toBe(false);
+    expect(row.rows[0]?.email_lookup_hash).toMatch(/^[a-f0-9]{64}$/u);
+    const verified=await service!.verify(resumed,"123456","email-link-ip");
+    expect(verified.cookieValue).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(otpClient.verifyOtp).toHaveBeenCalledWith("invited@example.com","123456");
+    expect(await service!.hasPendingEmailOtp(resumed)).toBe(false);
+    expect(otpClient.sendOtp).toHaveBeenCalledTimes(1);
+  });
+
+  it("never adopts a non-emailed, expired or completed challenge and limits cross-browser resume requests",async()=>{
+    const guest=await service!.begin("unknown@example.com","unknown-ip");
+    const pretender=await service!.resumeEmailOtp("unknown@example.com","resume-unknown");
+    expect(pretender).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(await service!.hasPendingEmailOtp(guest)).toBe(false);
+    expect(await service!.hasPendingEmailOtp(pretender)).toBe(false);
+    await expect(service!.verify(pretender,"123456","resume-unknown"))
+      .rejects.toThrow();
+    expect(otpClient.verifyOtp).not.toHaveBeenCalled();
+    const first=await service!.begin("invited@example.com","replay-ip");
+    const child1=await service!.resumeEmailOtp("invited@example.com","restore-ip-1");
+    const child2=await service!.resumeEmailOtp("invited@example.com","restore-ip-2");
+    const child3=await service!.resumeEmailOtp("invited@example.com","restore-ip-3");
+    const blocked=await service!.resumeEmailOtp("invited@example.com","restore-ip-4");
+    expect(await service!.hasPendingEmailOtp(child1)).toBe(true);
+    expect(await service!.hasPendingEmailOtp(child2)).toBe(true);
+    expect(await service!.hasPendingEmailOtp(child3)).toBe(true);
+    expect(await service!.hasPendingEmailOtp(blocked)).toBe(false);
+    expect(otpClient.sendOtp).toHaveBeenCalledTimes(1);
+    await db!.query(
+      "UPDATE public.ishikeit_browser_login_attempts SET completed_at=now() WHERE challenge_hash=$1",
+      [createHash("sha256").update(first).digest("hex")]
+    );
+    // A still-unconsumed transferable challenge is independently bounded and
+    // cannot grant access without Supabase OTP. Account-level guessing also
+    // remains 10/900s and per-challenge tries<5.
+    expect(await service!.hasPendingEmailOtp(first)).toBe(false);
+  });
+
+  it("does not resume an expired original OTP after email link navigation",async()=>{
+    await service!.begin("invited@example.com","expired-send-ip");
+    await db!.query(
+      "UPDATE public.ishikeit_browser_login_attempts SET requested_at=now()-interval '11 minutes',expires_at=now()-interval '1 minute'"
+    );
+    const resumed=await service!.resumeEmailOtp("invited@example.com","expired-link-ip");
+    expect(await service!.hasPendingEmailOtp(resumed)).toBe(false);
+    await expect(service!.verify(resumed,"123456","expired-link-ip")).rejects.toThrow();
+    expect(otpClient.verifyOtp).not.toHaveBeenCalled();
   });
 
   it("creates encrypted browser session, refreshes provider token with DB lock and revokes locally",async()=>{

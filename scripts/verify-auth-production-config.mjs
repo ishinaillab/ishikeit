@@ -67,7 +67,12 @@ export async function verifyAuthProductionConfiguration({
   const inviteTemplate=typeof body.mailer_templates_invite_content==="string" &&
     /\{\{\s*\.ConfirmationURL\s*\}\}/u.test(body.mailer_templates_invite_content);
   const emailOtpTemplate=typeof body.mailer_templates_magic_link_content==="string" &&
-    /\{\{\s*\.Token\s*\}\}/u.test(body.mailer_templates_magic_link_content);
+    /\{\{\s*\.Token\s*\}\}/u.test(body.mailer_templates_magic_link_content) &&
+    // An email code must deep-link to code entry, not restart the email
+    // request. Only the address appears in a URL fragment, never Token,
+    // TokenHash, ConfirmationURL or an Auth session.
+    /href="https:\/\/apps\.ishinaillab\.com\/app\/login#verify-email=\{\{\s*\.Email\s*\}\}"/u
+      .test(body.mailer_templates_magic_link_content);
   // Supabase supports configurable email OTP lengths of 6–10 digits;
   // the BFF accepts that exact range. Restrict expiry to the provider's
   // documented one-hour default or shorter, and require verified identities.

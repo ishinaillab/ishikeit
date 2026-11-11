@@ -625,6 +625,9 @@ function showPanel(panel){
   }
   closeAccountMenu();
   message("");
+  // Security settings and verified device switches are visible upon entering
+  // the page; no "Set up" or hidden accordion is needed to list them.
+  if(panel==="security")void loadMfaFactors();
 }
 function showDashboard(data,preserve){
   if(data.status!=="authenticated" || !data.workspaces || !Array.isArray(data.workspaces.items)
@@ -959,18 +962,64 @@ document.addEventListener("keydown",event=>{
 document.addEventListener("click",event=>{
   if(!get("account-area").contains(event.target))closeAccountMenu();
 });
-get("manage-authenticators").addEventListener("click",async()=>{
-  securityExpanded=!securityExpanded;
-  mfaSettingsSlot.hidden=!securityExpanded;
-  get("manage-authenticators").setAttribute("aria-expanded",securityExpanded?"true":"false");
-  if(securityExpanded){
-    mfaSettingsSlot.append(mfaPanel);
-    mfaPanel.hidden=false;
+get("mfa-account-toggle").addEventListener("click",()=>{
+  if(!mfaState)return;
+  openSecurityChange({kind:"sign_in",enabled:!mfaState.signIn2faEnabled});
+});
+get("mfa-add").addEventListener("click",()=>{void beginEnrollment();});
+get("mfa-change-cancel").addEventListener("click",()=>{
+  securityChange=null;
+  mfaChangePanel.hidden=true;
+  get("mfa-change-code").value="";
+});
+get("mfa-change-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  if(mode!=="dashboard" || !csrfToken || !securityChange)return;
+  const requestChange=securityChange;
+  const proofFactorId=mfaProofFactor.value;
+  const code=get("mfa-change-code").value.trim();
+  const submit=get("mfa-change-confirm");submit.disabled=true;
+  try{
+    if(requestChange.kind==="enroll"){
+      // Sign-in 2FA can be switched off, but enrolling a backup still needs
+      // fresh AAL2 before GoTrue will create the factor.
+      const verified=await request("/app/auth/mfa/totp/verify",
+        {factorId:proofFactorId,code},csrfToken);
+      if(!verified.ok)throw Error("Proof not verified");
+      const result=await verified.json();
+      csrfToken=result.csrfToken;
+      setSessionExpiry(result);
+      securityChange=null;mfaChangePanel.hidden=true;
+      if(mfaState)mfaState.canEnroll=true;
+      await beginEnrollment();
+      return;
+    }
+    const payload=requestChange.kind==="sign_in"
+      ? {kind:"sign_in",enabled:requestChange.enabled,proofFactorId,code}
+      : {kind:"factor",factorId:requestChange.factorId,
+          enabled:requestChange.enabled,proofFactorId,code};
+    const response=await request("/app/auth/mfa/preferences",payload,csrfToken);
+    if(response.status===409){
+      message("Keep at least one active authenticator. You can disable another device after enabling a backup.");
+      await loadMfaFactors();
+      return;
+    }
+    if(response.status===429){
+      message("Security changes are temporarily limited. Try again after the 15-minute cooldown.");
+      return;
+    }
+    if(!response.ok)throw Error("Security change rejected");
+    const updated=await response.json();
+    if(updated.status!=="changed" || typeof updated.csrfToken!=="string")
+      throw Error("Security update incomplete");
+    csrfToken=updated.csrfToken;
+    securityChange=null;mfaChangePanel.hidden=true;
+    get("mfa-change-code").value="";
     await loadMfaFactors();
-  }else{
-    // Hide management actions; never erase an in-progress one-use key.
-    mfaPanel.hidden=true;
-  }
+    message("Security settings updated. Other signed-in sessions were signed out.");
+  }catch{
+    message("The code wasn't accepted or the security change couldn't be saved. Try a current code.");
+  }finally{submit.disabled=false;}
 });
 memberInviteForm.addEventListener("submit",async event=>{
   event.preventDefault();

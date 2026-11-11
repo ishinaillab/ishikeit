@@ -39,14 +39,14 @@ function setup(status=200){
       if(!item)throw new Error("Missing DOM element "+id);
       return item;
     },
-    createElement:(_tag:string)=>new FakeElement()
+    createElement:(tag:string)=>{void tag;return new FakeElement();}
   };
   let pendingCount=0,requests=0;
   const url={hash:"",search:"",pathname:"/app/login"};
   const window={
     location:url,
-    history:{replaceState:(_state:unknown,_name:string,path:string)=>{url.pathname=path;}},
-    confirm:(_message:string)=>true
+    history:{replaceState:(state:unknown,name:string,path:string)=>{void state;void name;url.pathname=path;}},
+    confirm:(message:string)=>{void message;return true;}
   };
   const response=(data:unknown,code=200)=>({
     ok:code>=200 && code<300,status:code,json:()=>Promise.resolve(data)

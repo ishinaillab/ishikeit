@@ -137,8 +137,8 @@ export class SupabaseTotpMfaClient {
       // SVG is provider-supplied untrusted markup. The browser MUST load it
       // only as an image, never inject it into the document. Disallow active
       // content or external references as defense in depth.
-      if(!/^\\s*<svg\\b/iu.test(svg) || !/<\\/svg>\\s*$/iu.test(svg)
-        || /<!doctype|<!entity|<script|<foreignobject|<iframe|<image|<use\\b|<a\\b|<style\\b|<animate|<set\\b|<feimage|\\s(?:on[a-z]+|(?:xlink:)?href)\\s*=|url\\s*\\(/iu.test(svg)){
+      if(!/^\s*<svg\b/iu.test(svg) || !/<\/svg>\s*$/iu.test(svg)
+        || /<!doctype|<!entity|<script|<foreignobject|<iframe|<image|<use\b|<a\b|<style\b|<animate|<set\b|<feimage|\s(?:on[a-z]+|(?:xlink:)?href)\s*=|url\s*\(/iu.test(svg)){
         try {await this.unenroll(token,parsed.data.id);}catch{/* do not leak error */}
         throw new Error("Invalid MFA provider response");
       }

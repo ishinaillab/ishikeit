@@ -23,7 +23,7 @@ export const privateLoginHtml = `<!doctype html>
     </form>
     <form id="code-form" hidden>
       <label for="code">Email verification code</label>
-      <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="8" pattern="[0-9]{6,8}" required>
+      <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="10" pattern="[0-9]{6,10}" required>
       <button type="submit" id="verify-code">Verify and sign in</button>
       <button type="button" class="secondary" id="another-email">Use another email</button>
     </form>

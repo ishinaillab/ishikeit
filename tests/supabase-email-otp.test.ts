@@ -54,6 +54,36 @@ describe("official Supabase Auth REST BFF transport",()=>{
     });
   });
 
+  it("accepts valid short opaque refresh tokens from real Supabase Auth responses",async()=>{
+    // Production Supabase Auth refresh_tokens rows issued 12-character tokens.
+    // This is not an arbitrary application credential-length requirement.
+    const providerRefresh="abcd1234wxyz";
+    const response=new Response(JSON.stringify({
+      access_token:access,
+      refresh_token:providerRefresh,
+      token_type:"bearer",
+      expires_in:3600,
+      expires_at:Math.floor(Date.now()/1000)+3600,
+      user:{id:"0d3acdbc-bf77-40dc-8f4b-b1c4877b8708",aud:"authenticated"}
+    }),{status:200,headers:{"content-type":"application/json"}});
+    const {client,calls}=setup(()=>response);
+    const tokens=await client.verifyOtp("invited@example.com","654321");
+    expect(tokens.refresh_token).toBe(providerRefresh);
+    expect(calls[0]?.url).toBe(origin+"/auth/v1/verify");
+    expect(tokens.access_token).toBe(access);
+  });
+
+  it("rejects absent or empty opaque refresh tokens without logging payload",async()=>{
+    for(const invalid of ["",null]){
+      const {client}=setup(()=>new Response(JSON.stringify({
+        access_token:access,refresh_token:invalid,
+        token_type:"bearer",expires_in:3600
+      }),{status:200,headers:{"content-type":"application/json"}}));
+      await expect(client.verifyOtp("invited@example.com","654321"))
+        .rejects.toThrow("Supabase authentication response invalid");
+    }
+  });
+
   it("uses documented refresh_token grant and the exact one-time token",async()=>{
     const {client,calls}=setup(()=>issued(refreshTwo));
     const result=await client.refresh(refreshOne);

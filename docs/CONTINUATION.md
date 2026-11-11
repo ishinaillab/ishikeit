@@ -3569,6 +3569,12 @@ Read-only WordPress plugin inventory on 2026-10-29 shows **LatePoint 5.7.5**, **
 - No production API, migration, provider configuration, invitation, session, or authentication flag is changed by this regression-only patch. Prior authorized first-owner record remains activated; dedicated workflow retirement still pending native GitHub disable/obsolete schedule removal.
 
 
+## Private BFF member invitation capability restoration — 2026-11-11
+- Source review found the private `PrivateBrowserAuthService` correctly computes `memberInvitationsEnabled` when an invitation service is configured, but HTTP `/app/auth/session`, `/app/auth/refresh`, and `/app/auth/mfa/totp/verify` had omitted the field. The Phase-3 login shell therefore hid the owner invitation interface even after MFA.
+- The HTTP boundary now returns a boolean only if **both** the independent `allowWorkspaceInvitations` registration flag and the service-provided capability are true. This is a UI feature indication only, not permission to invite: the invitation endpoint still requires an active verified Supabase session, recent AAL2, current factor, exact workspace ownership and CSRF.
+- Added HTTP regression for all three session transitions with gate ON and OFF; bearer tokens remain absent from responses. The BFF and invitations remain disabled by default, production feature flags, credentials and DB were not changed. Run Node 24/PG17, PHP and context-continuity CI prior to merge; a real first-owner OTP/TOTP canary and provider SMTP readiness are still outstanding.
+
+
 ## First-owner provisioning cron defense-in-depth — 2026-11-11
 - The protected one-time GitHub Actions workflow still contains an obsolete hourly scheduled trigger. Repeated scheduled runs have been skipped by the variable gate, but a changed variable must not silently reactivate privileged reconciliation. Pending an authorized workflow-file edit, the **CLI itself** now refuses any GitHub invocation except a manual `workflow_dispatch` from the exact `ishinaillab/ishikeit` repository, `main` branch, and `.github/workflows/initial-admin-provisioning.yml` workflow.
 - Source module `src/auth/provisioning-action-context.ts` is fail-closed on absent or mismatched GitHub-provided context; deterministic regression covers cron, PR, push, wrong ref/repository/workflow and local/no-context cases. This check is *additional* to the protected environment's human reviewer, official database and Supabase Auth preflights, and approval fields; environment strings alone are not independent authorization evidence.

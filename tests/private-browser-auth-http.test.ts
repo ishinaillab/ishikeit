@@ -205,8 +205,10 @@ describe("private cookie-only browser auth routes",()=>{
     expect(html.headers["content-security-policy"]).toContain("form-action 'none'");
     expect(html.headers["content-security-policy"]).toContain("img-src 'self' data:");
     expect(html.headers["content-security-policy"]).toContain("object-src 'none'");
-    expect(html.body).toContain("Your workspaces");
-    expect(html.body).toContain("ISHIKEIT · Secure workspace access");
+    expect(html.body).toContain('id="dashboard-shell" hidden');
+    expect(html.body).toContain('id="auth-shell" hidden');
+    expect(html.body).toContain('id="boot-panel"');
+    expect(html.body).toContain("Protected access to your Ishikeit workspace");
     expect(html.body).not.toContain("Technique-first. Style-forward. Always clean.");
     expect(html.body).toContain('autocomplete="one-time-code"');
     expect(html.body).toContain('minlength="6" maxlength="10" pattern="[0-9]{6,10}"');
@@ -215,15 +217,21 @@ describe("private cookie-only browser auth routes",()=>{
     const js=await server.inject({method:"GET",url:"/app/auth/ui.js",headers:{host}});
     expect(js.statusCode).toBe(200);
     expect(js.headers["content-type"]).toContain("javascript");
-    expect(js.body).toContain('document.createElement("li")');
+    expect(js.body).toContain('document.createElement("option")');
     expect(js.body).not.toContain("innerHTML");
     expect(js.body).toContain('window.history.replaceState(null,"","/app/login")');
-    expect(js.body).toContain('privileged?"/app/workspaces":"/app/login"');
-    expect(js.body).toContain('const pendingCount=Number.isInteger(data.pendingCount)');
+    expect(js.body).toContain('document.title="ISHIKEIT · "+workspaceRows[0].displayName');
+    expect(js.body).toContain('Number.isInteger(data.pendingCount)');
     expect(js.body).toContain('const canEnroll=data.canEnroll===true;');
     expect(html.body).toContain('id="mfa-reset"');
     expect(html.body).toContain('id="mfa-qr"');
-    expect(html.body).toContain('id="mfa-reload"');
+    expect(html.body).not.toContain('id="mfa-reload"');
+    expect(html.body).not.toContain('id="refresh-session"');
+    expect(html.body).toContain('id="account-menu"');
+    expect(html.body).toContain('id="security-view"');
+    expect(html.body).toContain('id="nav-overview"');
+    expect(html.body).toContain('id="manage-authenticators"');
+    expect(html.body).toContain('id="skip-link"');
     // Prior regression: the setup key lived INSIDE hidden #mfa-setup;
     // hiding that parent made the key invisible while the dropdown showed.
     const setupStart=html.body.indexOf('id="mfa-setup"');
@@ -236,13 +244,17 @@ describe("private cookie-only browser auth routes",()=>{
     expect(js.body).toContain('mfaEnrollment.hidden=false');
     expect(js.body).toContain('response.status===429');
     expect(js.body).toContain('response.status===409');
-    expect(js.body).toContain('mfaSetup.hidden=!canEnroll || keepPending || pendingCount>0');
+    expect(js.body).toContain('mfaSetup.hidden=!canEnroll || keepPending || pending>0');
+    expect(js.body).toContain('workspaceRows=data.workspaces.items');
+    expect(js.body).toContain('authShell.hidden=true');
+    expect(js.body).toContain('mfaSettingsSlot.append(mfaPanel)');
+    expect(js.body).toContain('setTimeout(()=>{void maintainSession();},delay)');
     expect(js.body).not.toContain("localStorage");
     const css=await server.inject({method:"GET",url:"/app/auth/ui.css",headers:{host}});
     expect(css.statusCode).toBe(200);
     expect(css.headers["content-type"]).toContain("text/css");
-    expect(css.body).toContain("min-height:46px");
-    expect(css.body).toContain("display:grid;gap:18px");
+    expect(css.body).toContain("min-height:44px");
+    expect(css.body).toContain(".mfa-content{display:grid;gap:18px}");
     expect(css.body).toContain("#mfa-enrollment{");
     expect((await server.inject({method:"GET",url:"/app/login",
       headers:{host:"evil.test"}})).statusCode).toBe(403);
@@ -261,7 +273,7 @@ describe("private cookie-only browser auth routes",()=>{
       method:"GET",url:"/app/workspaces",headers:{host,cookie:authCookie()}
     });
     expect(valid.statusCode).toBe(200);
-    expect(valid.body).toContain("Your workspaces");
+    expect(valid.body).toContain('id="overview-view"');
     expect(valid.headers["cache-control"]).toContain("no-store");
     expect(controller.get).toHaveBeenCalledWith(token);
     controller.get.mockRejectedValueOnce(new Error("Expired session"));

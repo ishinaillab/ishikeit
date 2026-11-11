@@ -209,8 +209,8 @@ describe("private cookie-only browser auth routes",()=>{
     expect(js.body).not.toContain("innerHTML");
     expect(js.body).toContain('window.history.replaceState(null,"","/app/login")');
     expect(js.body).toContain('window.history.replaceState(null,"","/app/workspaces")');
-    expect(js.body).toContain('data.pendingCount>0');
-    expect(js.body).toContain('data.canEnroll===true');
+    expect(js.body).toContain('const pendingCount=Number.isInteger(data.pendingCount)');
+    expect(js.body).toContain('const canEnroll=data.canEnroll===true;');
     expect(html.body).toContain('id="mfa-reset"');
     expect(html.body).toContain('id="mfa-qr"');
     expect(html.body).toContain('id="mfa-reload"');

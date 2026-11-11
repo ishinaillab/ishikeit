@@ -1,7 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {privateLoginHtml,privateLoginCss,privateLoginJs} from "./private-browser-ui.js";
-import { BrowserLoginSessionSetupError, type PrivateBrowserAuthService } from "../auth/private-browser-auth.js";
+import {
+  BrowserLoginSessionSetupError, BrowserMfaEnrollmentRateLimited,
+  BrowserMfaPendingEnrollment, type PrivateBrowserAuthService
+} from "../auth/private-browser-auth.js";
 
 export interface BrowserAuthController {
   begin(email:string,networkId:string):Promise<string>;
@@ -124,7 +127,8 @@ export function registerPrivateBrowserAuthRoutes(
     if(type==="html"){
       return reply
         .header("content-security-policy",
-          "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "+
+          "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "+
+          "connect-src 'self'; object-src 'none'; "+
           "frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
         .type("text/html; charset=utf-8").send(privateLoginHtml);
     }
@@ -251,7 +255,14 @@ export function registerPrivateBrowserAuthRoutes(
     try{
       const enrollment=await deps.controller.enrollTotp(value);
       return reply.code(200).send(enrollment);
-    }catch{return deny(reply,403).send({status:"mfa_enrollment_unavailable"});}
+    }catch(error){
+      if(error instanceof BrowserMfaPendingEnrollment)
+        return deny(reply,409).send({status:"mfa_incomplete_setup"});
+      if(error instanceof BrowserMfaEnrollmentRateLimited)
+        return deny(reply,429).header("retry-after","900")
+          .send({status:"mfa_enrollment_rate_limited"});
+      return deny(reply,403).send({status:"mfa_enrollment_unavailable"});
+    }
   });
   // Reset only owner-controlled incomplete factors, never verified factors.
   // Strict host/origin, session and CSRF protections match MFA enrollment.

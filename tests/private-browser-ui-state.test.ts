@@ -280,54 +280,119 @@ describe("secure workspace UX and real static frontend lifecycle",()=>{
     expect(ui.dom.getElementById("skip-link").href).toBe("#primary-content");
   });
 
-  it("makes security settings discoverable but keeps authenticator controls closed by default",async()=>{
+  it("shows already-enrolled authenticators immediately on Security, separate from Add",async()=>{
     const ui=setup({factorCount:2});
     await ui.flush();
     await ui.click("account-button");
     expect(ui.dom.getElementById("account-menu").hidden).toBe(false);
-    expect(ui.dom.getElementById("account-button").getAttribute("aria-expanded")).toBe("true");
     await ui.click("account-security");
-    expect(ui.dom.getElementById("account-menu").hidden).toBe(true);
     expect(ui.dom.getElementById("security-view").hidden).toBe(false);
     expect(ui.dom.getElementById("overview-view").hidden).toBe(true);
+    expect(ui.dom.getElementById("account-menu").hidden).toBe(true);
+    expect(ui.dom.getElementById("mfa-devices").children).toHaveLength(2);
+    expect(ui.dom.getElementById("mfa-account-toggle").getAttribute("aria-checked")).toBe("true");
+    expect(ui.dom.getElementById("mfa-devices").children[0]?.children[1]?.getAttribute("aria-checked")).toBe("true");
     expect(ui.dom.getElementById("mfa-settings-slot").hidden).toBe(true);
-    expect(ui.dom.getElementById("mfa-panel").hidden).toBe(true);
-    await ui.click("manage-authenticators");
-    expect(ui.dom.getElementById("mfa-settings-slot").hidden).toBe(false);
-    expect(ui.dom.getElementById("mfa-summary").textContent).toContain("2 verified");
-    expect(ui.dom.getElementById("mfa-form").hidden).toBe(true);
     expect(ui.dom.getElementById("mfa-enrollment").hidden).toBe(true);
+    expect(ui.dom.getElementById("mfa-form").hidden).toBe(true);
+    expect(ui.stats().enrollRequests).toBe(0);
     expect(ui.stats().factorReads).toBe(1);
-    await ui.click("manage-authenticators");
-    expect(ui.dom.getElementById("mfa-panel").hidden).toBe(true);
   });
 
-  it("shows QR and manual key only inside an explicit security setup and hides them after verification",async()=>{
+  it("shows QR and setup key only on Add and returns to Security with verified devices afterward",async()=>{
     const ui=setup({factorCount:0});
     await ui.flush();
     await ui.click("nav-security");
-    await ui.click("manage-authenticators");
-    expect(ui.dom.getElementById("mfa-setup").hidden).toBe(false);
-    await ui.click("mfa-enroll");
+    expect(ui.dom.getElementById("mfa-devices").children).toHaveLength(0);
+    await ui.click("mfa-add");
     expect(ui.stats().enrollRequests).toBe(1);
     expect(ui.dom.getElementById("mfa-qr").src).toMatch(/^data:image\/svg\+xml;base64,/u);
     expect(ui.dom.getElementById("mfa-qr").hidden).toBe(false);
     expect(ui.dom.getElementById("mfa-secret").textContent).toBe("JBSWY3DPEHPK3PXP");
     expect(ui.dom.getElementById("mfa-form").hidden).toBe(false);
-    await ui.click("manage-authenticators");
-    await ui.click("manage-authenticators");
-    expect(ui.dom.getElementById("mfa-secret").textContent).toBe("JBSWY3DPEHPK3PXP");
-    expect(ui.stats().enrollRequests).toBe(1);
+    expect(ui.dom.getElementById("mfa-cancel").hidden).toBe(false);
+    expect(ui.dom.getElementById("mfa-pending-help").hidden).toBe(true);
     ui.dom.getElementById("mfa-factor").value=workspace1.workspaceId;
     ui.dom.getElementById("mfa-code").value="123456";
     await ui.submit("mfa-form");
     expect(ui.dom.getElementById("dashboard-shell").hidden).toBe(false);
-    expect(ui.dom.getElementById("overview-view").hidden).toBe(false);
-    expect(ui.dom.getElementById("security-view").hidden).toBe(true);
+    expect(ui.dom.getElementById("security-view").hidden).toBe(false);
+    expect(ui.dom.getElementById("overview-view").hidden).toBe(true);
     expect(ui.dom.getElementById("mfa-panel").hidden).toBe(true);
     expect(ui.dom.getElementById("mfa-secret").textContent).toBe("");
     expect(ui.dom.getElementById("mfa-qr").src).toBe("");
     expect(ui.dom.getElementById("mfa-form").hidden).toBe(true);
+    expect(ui.dom.getElementById("mfa-devices").children).toHaveLength(1);
+  });
+
+  it("Cancel below setup code and dropdown removes only unfinished enrollment",async()=>{
+    expect(privateLoginHtml.indexOf('id="mfa-cancel"'))
+      .toBeGreaterThan(privateLoginHtml.indexOf('id="mfa-submit"'));
+    expect(privateLoginHtml).not.toContain("Discard unfinished setup");
+    expect(privateLoginHtml).not.toContain("An earlier authenticator setup was not finished.");
+    const ui=setup({factorCount:2});
+    await ui.flush();
+    await ui.click("nav-security");
+    await ui.click("mfa-add");
+    expect(ui.dom.getElementById("mfa-cancel").hidden).toBe(false);
+    await ui.click("mfa-cancel");
+    expect(ui.stats().resetRequests).toBe(1);
+    expect(ui.dom.getElementById("mfa-secret").textContent).toBe("");
+    expect(ui.dom.getElementById("mfa-qr").src).toBe("");
+    expect(ui.dom.getElementById("mfa-form").hidden).toBe(true);
+    expect(ui.dom.getElementById("mfa-devices").children).toHaveLength(2);
+    expect(ui.dom.getElementById("security-view").hidden).toBe(false);
+  });
+
+  it("changes only the selected authenticator after proof from another active device",async()=>{
+    const ui=setup({factorCount:2});
+    await ui.flush();
+    await ui.click("nav-security");
+    await ui.clickDevice(1);
+    expect(ui.dom.getElementById("mfa-change-panel").hidden).toBe(false);
+    expect(ui.dom.getElementById("mfa-proof-factor").options).toHaveLength(1);
+    expect(ui.dom.getElementById("mfa-devices").children[1]?.children[1]?.getAttribute("aria-checked")).toBe("true");
+    expect(ui.stats().securityChanges).toBe(0);
+    ui.dom.getElementById("mfa-change-code").value="123456";
+    await ui.submit("mfa-change-form");
+    expect(ui.stats().securityChanges).toBe(1);
+    expect(ui.dom.getElementById("mfa-devices").children[1]?.children[1]?.getAttribute("aria-checked")).toBe("false");
+    expect(ui.dom.getElementById("mfa-change-panel").hidden).toBe(true);
+    await ui.clickDevice(1);
+    ui.dom.getElementById("mfa-change-code").value="654321";
+    await ui.submit("mfa-change-form");
+    expect(ui.stats().securityChanges).toBe(2);
+    expect(ui.dom.getElementById("mfa-devices").children[1]?.children[1]?.getAttribute("aria-checked")).toBe("true");
+    expect(ui.dom.getElementById("mfa-devices").children).toHaveLength(2);
+  });
+
+  it("makes account-wide sign-in 2FA On/Off an explicit reauthentication step",async()=>{
+    const ui=setup({factorCount:2});
+    await ui.flush();
+    await ui.click("nav-security");
+    await ui.click("mfa-account-toggle");
+    expect(ui.dom.getElementById("mfa-change-panel").hidden).toBe(false);
+    expect(ui.dom.getElementById("mfa-account-toggle").getAttribute("aria-checked")).toBe("true");
+    expect(ui.dom.getElementById("mfa-change-description").textContent)
+      .toContain("Future sign-ins");
+    ui.dom.getElementById("mfa-change-code").value="123456";
+    await ui.submit("mfa-change-form");
+    expect(ui.stats().signIn2faEnabled).toBe(false);
+    expect(ui.dom.getElementById("mfa-account-toggle").getAttribute("aria-checked")).toBe("false");
+    expect(ui.dom.getElementById("mfa-devices").children).toHaveLength(2);
+    await ui.click("mfa-account-toggle");
+    ui.dom.getElementById("mfa-change-code").value="654321";
+    await ui.submit("mfa-change-form");
+    expect(ui.stats().signIn2faEnabled).toBe(true);
+    expect(ui.dom.getElementById("mfa-account-toggle").getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("never offers a switch to disable the last usable authenticator",async()=>{
+    const ui=setup({factorCount:1});
+    await ui.flush();
+    await ui.click("nav-security");
+    expect(ui.dom.getElementById("mfa-devices").children[0]?.children[1]?.disabled).toBe(true);
+    expect(ui.dom.getElementById("mfa-account-toggle").disabled).toBe(false);
   });
 
   it("requires MFA after email step-up, then hides the login and challenge on success",async()=>{
@@ -386,7 +451,6 @@ describe("secure workspace UX and real static frontend lifecycle",()=>{
     const ui=setup({factorCount:2});
     await ui.flush();
     await ui.click("nav-security");
-    await ui.click("manage-authenticators");
     await ui.click("sign-out");
     expect(ui.stats().logoutRequests).toBe(1);
     expect(ui.window.location.pathname).toBe("/app/login");
@@ -461,8 +525,7 @@ describe("secure workspace UX and real static frontend lifecycle",()=>{
     const ui=setup({enrollStatus:429});
     await ui.flush();
     await ui.click("nav-security");
-    await ui.click("manage-authenticators");
-    await ui.click("mfa-enroll");
+    await ui.click("mfa-add");
     expect(ui.stats().enrollRequests).toBe(1);
     expect(ui.dom.getElementById("mfa-qr").src).toBe("");
     expect(ui.dom.getElementById("mfa-enrollment").hidden).toBe(true);

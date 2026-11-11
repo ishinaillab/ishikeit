@@ -53,6 +53,7 @@ test("rejects missing redirect allowlist without relying on Site URL fallback",a
 test("denies insecure mail templates and automatic email confirmation",async()=>{
   const cases=[
     {mailer_templates_magic_link_content:"{{ .ConfirmationURL }}"},
+    {mailer_templates_magic_link_content:"Your code: {{ .Token }} <a href='https://apps.ishinaillab.com/app/login'>Sign in</a>"},
     {mailer_templates_invite_content:"No official verification link"},
     {mailer_autoconfirm:true},
     {external_email_enabled:false},

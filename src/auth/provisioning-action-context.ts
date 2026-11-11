@@ -1,14 +1,14 @@
 /**
  * Defensive execution context for the one-time platform administrator job.
- * GitHub currently retains an obsolete scheduled trigger in its protected
- * workflow. Refuse any cron, push, pull_request or foreign-workflow invocation
- * even if a repository variable accidentally re-enables the job.
+ * GitHub's protected workflow is manual-only. Refuse any schedule,
+ * push, pull_request or foreign-workflow invocation even if a later
+ * workflow change accidentally adds an unsafe trigger.
  *
  * This is NOT proof of human authorization by itself: the GitHub protected
  * environment's required reviewer, exact deployment branch, official Auth
  * configuration and database audit must also be verified before credentials
- * are used. Remove the obsolete workflow schedule when workflow edits are
- * available; retain this defense as an independent fail-closed check.
+ * are used. Retain this independent fail-closed check even with the
+ * obsolete scheduled trigger removed from the workflow.
  *
  * GitHub-managed GITHUB_* environment variables are documented at:
  * https://docs.github.com/en/actions/reference/workflows-and-actions/variables

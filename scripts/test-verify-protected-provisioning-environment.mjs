@@ -126,3 +126,22 @@ test("network errors never reflect provider responses or job credentials",async(
     fetchImpl:async()=>{throw new Error("PRIVATE-TOKEN="+jobToken);}
   }),/unavailable/);
 });
+
+
+test("initial administrator workflow remains manual-only without a cron path",async()=>{
+  const {readFile}=await import("node:fs/promises");
+  const workflow=await readFile(
+    new URL("../.github/workflows/initial-admin-provisioning.yml",import.meta.url),
+    "utf8"
+  );
+  const triggerEnd=workflow.indexOf("\npermissions:");
+  assert.ok(triggerEnd>0,"The workflow must retain its scoped permissions");
+  const header=workflow.slice(0,triggerEnd);
+  const events=Array.from(header.matchAll(/^ {2}([a-z_]+):\s*$/gmu),m=>m[1]);
+  assert.deepEqual(events,["workflow_dispatch"]);
+  assert.doesNotMatch(workflow,/^\s*schedule:\s*$|^\s*-\s*cron:|ISHIKEIT_AUTO_ADMIN_RECONCILIATION|GITHUB_EVENT_NAME[^\n]*schedule/imu);
+  assert.match(workflow,/&& github\.event_name == 'workflow_dispatch'/u);
+  assert.match(workflow,/environment: ishikeit-provisioning/u);
+  assert.match(workflow,/scripts\/verify-protected-provisioning-environment\.mjs/u);
+  assert.match(workflow,/node dist\/operations\/provision-platform-admin\.js --reconcile/u);
+});

@@ -138,7 +138,7 @@ export const privateLoginHtml = `<!doctype html>
               class="security-switch" aria-label="Two-step verification for sign-in"
               aria-checked="true" aria-describedby="mfa-account-description" disabled>
               <span class="switch-track" aria-hidden="true"><span></span></span>
-              <span class="switch-label">On</span>
+              <span class="switch-label" id="mfa-account-switch-label">On</span>
             </button>
           </div>
           <p class="muted security-footnote">Security-sensitive changes always require an authenticator code, even when 2FA for sign-in is off.</p>

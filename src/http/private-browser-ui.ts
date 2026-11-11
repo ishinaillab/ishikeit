@@ -1,196 +1,377 @@
-/** Static, framework-free login and read-only workspace switcher shell.
- * It contains NO provider tokens, session secrets, inline event handlers,
- * dynamic HTML injection or third-party scripts. BFF is OFF by default.
- * This is the pre-Phase-3 access shell, not the full conversations dashboard.
+/** Static, progressive login, step-up and workspace shell.
+ * All workspace data and AAL2 are authorized by the server, not the UI.
+ * Never persist or render Supabase bearer/refresh tokens or TOTP secrets
+ * outside their one-use, authenticated enrollment response. No dependencies.
  */
 export const privateLoginHtml = `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
-<title>ISHIKEIT · Private access</title>
+<title>ISHIKEIT · Secure access</title>
 <link rel="stylesheet" href="/app/auth/ui.css">
 <script src="/app/auth/ui.js" defer></script>
 </head><body>
-<main class="layout">
-  <header><p class="eyebrow">ISHIKEIT</p><h1 id="page-title">Private workspace access</h1>
-  <p class="intro">Sign in using the verification code sent to your invited email address.</p></header>
-  <section class="surface" id="login-panel">
-    <form id="email-form" autocomplete="on">
-      <label for="email">Work email</label>
-      <input id="email" name="email" type="email" autocomplete="email" required maxlength="320" placeholder="you@example.com">
-      <button type="submit" id="send-code">Send verification code</button>
-    </form>
-    <form id="code-form" hidden>
-      <label for="code">Email verification code</label>
-      <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="10" pattern="[0-9]{6,10}" required>
-      <button type="submit" id="verify-code">Verify and sign in</button>
-      <button type="button" class="secondary" id="another-email">Use another email</button>
-    </form>
-    <p class="note">Only existing authorized workspace members can sign in. This does not create an account.</p>
-  </section>
-  <section class="surface" id="account-panel" hidden>
-    <div class="section-head"><h2 id="account-heading">Your workspaces</h2>
-      <button type="button" class="secondary" id="sign-out">Sign out</button></div>
-    <div id="workspace-content">
-    <p class="note">Only workspaces your current membership permits are shown. Conversation management is not yet enabled here.</p>
-    <ul id="workspace-list" class="workspaces"></ul>
-    <section class="mfa-panel" id="member-invite-panel" aria-labelledby="member-invite-heading" hidden>
-      <h2 id="member-invite-heading">Invite a workspace member</h2>
-      <p class="note">Workspace owners can invite new teammates after verifying an authenticator. Invitations cannot grant owner or platform administrator privileges.</p>
-      <form id="member-invite-form">
-        <label for="member-invite-workspace">Workspace</label>
-        <select id="member-invite-workspace" required></select>
-        <label for="member-invite-email">Teammate email</label>
-        <input id="member-invite-email" type="email" autocomplete="off" required maxlength="320">
-        <label for="member-invite-role">Workspace role</label>
-        <select id="member-invite-role">
-          <option value="viewer">Viewer</option>
-          <option value="agent">Agent</option>
-          <option value="admin">Workspace admin</option>
-        </select>
-        <button type="submit" id="member-invite-send">Send invitation</button>
+<a class="skip-link" href="#primary-content">Skip to main content</a>
+<div id="boot-panel" class="boot-panel" role="status" aria-live="polite">
+  <div class="brand"><span class="brand-symbol" aria-hidden="true">i</span><span>ISHIKEIT</span></div>
+  <p class="muted">Checking your session…</p>
+</div>
+
+<div id="auth-shell" class="auth-shell" hidden>
+  <header class="auth-brand"><span class="brand"><span class="brand-symbol" aria-hidden="true">i</span><span>ISHIKEIT</span></span></header>
+  <main id="auth-main" class="auth-card">
+    <p class="eyebrow" id="auth-step">SECURE ACCESS</p>
+    <h1 id="auth-title">Sign in to Ishikeit</h1>
+    <p id="auth-description" class="muted">Enter your email address to receive a sign-in code.</p>
+
+    <section id="login-panel">
+      <form id="email-form">
+        <label for="email">Email address</label>
+        <input id="email" name="email" type="email" autocomplete="email" required maxlength="320" placeholder="you@example.com">
+        <button id="send-code" type="submit">Continue with email</button>
       </form>
+      <form id="code-form" hidden>
+        <label for="code">Email verification code</label>
+        <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="10" pattern="[0-9]{6,10}" required>
+        <button id="verify-code" type="submit">Verify email</button>
+        <button id="another-email" type="button" class="text-button">Use a different email</button>
+      </form>
+      <p class="auth-footnote">Access is limited to invited workspace members.</p>
     </section>
+
+    <section id="mfa-gate" aria-label="Two-step verification" hidden>
+      <div id="mfa-gate-slot">
+        <section class="mfa-content" id="mfa-panel" aria-label="Authenticator verification" hidden>
+          <p id="mfa-summary" class="muted"></p>
+          <div id="mfa-recovery" class="notice" hidden>
+            <p>An earlier authenticator setup was not finished. You can discard it without removing a verified device.</p>
+            <button type="button" class="secondary" id="mfa-reset">Discard unfinished setup</button>
+          </div>
+          <div id="mfa-setup" hidden>
+            <button type="button" id="mfa-enroll">Set up an authenticator</button>
+          </div>
+          <section id="mfa-enrollment" aria-labelledby="mfa-enrollment-title" hidden>
+            <h3 id="mfa-enrollment-title">Connect your authenticator</h3>
+            <p class="muted">Scan this QR code with an authenticator app, or enter the setup key manually.</p>
+            <img id="mfa-qr" class="mfa-qr" width="240" height="240" alt="Private QR code for authenticator setup" hidden>
+            <p id="mfa-qr-fallback" class="muted" hidden>QR code unavailable. Use the manual key instead.</p>
+            <label class="key-label" for="mfa-secret">Manual setup key</label>
+            <output id="mfa-secret" class="mfa-secret"></output>
+            <p class="muted">Keep this setup key private. Finish setup using the six-digit code below.</p>
+          </section>
+          <form id="mfa-form" hidden>
+            <div id="mfa-factor-picker" hidden>
+              <label for="mfa-factor">Authenticator</label>
+              <select id="mfa-factor" aria-label="Choose authenticator"></select>
+            </div>
+            <label for="mfa-code">Six-digit authenticator code</label>
+            <input id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="6" pattern="[0-9]{6}" required>
+            <button id="mfa-submit" type="submit">Verify and continue</button>
+          </form>
+        </section>
+      </div>
+      <button type="button" class="text-button auth-switch-account" id="gate-sign-out">Use another account</button>
+    </section>
+  </main>
+  <footer class="auth-footer">Protected access to your Ishikeit workspace</footer>
+</div>
+
+<div id="dashboard-shell" class="dashboard-shell" hidden>
+  <header class="topbar">
+    <div class="topbar-brand"><span class="brand"><span class="brand-symbol" aria-hidden="true">i</span><span>ISHIKEIT</span></span>
+      <span class="topbar-divider" aria-hidden="true"></span>
+      <span id="top-workspace" class="topbar-workspace">Workspace</span>
     </div>
-    <section class="mfa-panel" aria-labelledby="mfa-heading">
-      <h2 id="mfa-heading">Two-step verification</h2>
-      <p class="note">Protect account connections with an authenticator app. Verify a code to confirm your device before sensitive actions.</p>
-      <div id="mfa-recovery" hidden>
-        <p class="note">An earlier authenticator setup was not completed. You can discard that unverified setup and start again. Verified devices will not be removed.</p>
-        <button type="button" class="secondary" id="mfa-reset">Discard incomplete setup</button>
+    <div class="account-area">
+      <button type="button" id="account-button" class="account-button" aria-haspopup="true" aria-controls="account-menu" aria-expanded="false">
+        <span class="account-avatar" aria-hidden="true">A</span><span>Account</span><span class="chevron" aria-hidden="true">⌄</span>
+      </button>
+      <div id="account-menu" class="account-menu" hidden>
+        <button type="button" id="account-security">Account security</button>
+        <button type="button" id="sign-out">Sign out</button>
       </div>
-      <div id="mfa-setup" hidden>
-        <button type="button" class="secondary" id="mfa-enroll">Set up an authenticator</button>
-      </div>
-      <section id="mfa-enrollment" aria-labelledby="mfa-enrollment-title" hidden>
-        <h3 id="mfa-enrollment-title">Connect your authenticator app</h3>
-        <p class="note">Scan this QR code with Google Authenticator or another authenticator app. If scanning is unavailable, enter the setup key manually.</p>
-        <img id="mfa-qr" class="mfa-qr" width="260" height="260" alt="Authenticator setup QR code; keep private" hidden>
-        <p id="mfa-qr-fallback" class="note" hidden>QR code unavailable. Use the manual setup key below.</p>
-        <p class="setup-key-label">Manual setup key</p>
-        <output id="mfa-secret" class="mfa-secret" aria-label="Manual authenticator setup key"></output>
-        <p class="note">Keep the key private. It disappears when you verify, discard this setup, or sign out. Then enter the current six-digit code below.</p>
-      </section>
-      <form id="mfa-form" hidden>
-        <div id="mfa-factor-picker" hidden>
-          <label for="mfa-factor">Authenticator device</label>
-          <select id="mfa-factor" aria-label="Choose authenticator"></select>
+    </div>
+  </header>
+
+  <div class="app-layout">
+    <nav class="sidebar" aria-label="Workspace navigation">
+      <span class="sidebar-label">WORKSPACE</span>
+      <button type="button" class="nav-item" id="nav-overview" aria-current="page">Overview</button>
+      <button type="button" class="nav-item" id="nav-team" hidden>Team</button>
+      <span class="sidebar-label sidebar-label-secondary">ACCOUNT</span>
+      <button type="button" class="nav-item" id="nav-security">Security</button>
+    </nav>
+    <main id="primary-content" class="main-content" tabindex="-1">
+      <section id="overview-view" aria-labelledby="workspace-title">
+        <p class="eyebrow">WORKSPACE OVERVIEW</p>
+        <h1 id="workspace-title">Workspace</h1>
+        <p class="page-description">Your space to manage your business in Ishikeit.</p>
+        <div id="workspace-switcher" class="workspace-switcher" hidden>
+          <label for="workspace-select">Current workspace</label>
+          <select id="workspace-select"></select>
         </div>
-        <label for="mfa-code">Six-digit authenticator code</label>
-        <input id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="6" pattern="[0-9]{6}" required>
-        <button type="submit" id="mfa-submit">Verify authenticator</button>
-      </form>
-      <button type="button" class="secondary" id="mfa-reload">Refresh authenticator status</button>
-    </section>
-    <button type="button" class="secondary" id="refresh-session">Renew session</button>
-  </section>
-  <p id="status" class="status" role="status" aria-live="polite"></p>
-  <footer>ISHIKEIT · Secure workspace access</footer>
-</main>
+        <article class="feature-card" aria-labelledby="workspace-card-title">
+          <div class="workspace-icon" aria-hidden="true">I</div>
+          <div class="feature-card-body">
+            <h2 id="workspace-card-title">Workspace</h2>
+            <p id="workspace-role" class="muted">Your workspace</p>
+          </div>
+          <span class="state-label">Active</span>
+        </article>
+        <section class="next-section" aria-labelledby="next-heading">
+          <h2 id="next-heading">Your workspace is ready</h2>
+          <p>Messaging and automation tools will become available here as they are enabled. Your workspace access is secured with two-step verification.</p>
+        </section>
+      </section>
+
+      <section id="security-view" aria-labelledby="security-heading" hidden>
+        <p class="eyebrow">ACCOUNT SETTINGS</p>
+        <h1 id="security-heading">Account security</h1>
+        <p class="page-description">Manage how you verify your identity and protect your account.</p>
+        <article class="settings-card">
+          <div class="settings-card-head"><span class="security-icon" aria-hidden="true">✓</span>
+            <div><h2>Two-step verification</h2><p class="muted">Your account is protected with an authenticator.</p></div>
+            <span class="state-label">On</span>
+          </div>
+          <button type="button" class="secondary" id="manage-authenticators" aria-controls="mfa-settings-slot" aria-expanded="false">Manage authenticators</button>
+          <div id="mfa-settings-slot" class="security-detail" hidden></div>
+        </article>
+      </section>
+
+      <section id="team-view" aria-labelledby="team-heading" hidden>
+        <p class="eyebrow">WORKSPACE SETTINGS</p>
+        <h1 id="team-heading">Invite a teammate</h1>
+        <p class="page-description">Send an invitation to someone who needs access to your workspace.</p>
+        <div class="settings-card">
+          <form id="member-invite-form">
+            <label for="member-invite-workspace">Workspace</label>
+            <select id="member-invite-workspace" required></select>
+            <label for="member-invite-email">Teammate email</label>
+            <input id="member-invite-email" type="email" autocomplete="off" required maxlength="320">
+            <label for="member-invite-role">Role</label>
+            <select id="member-invite-role">
+              <option value="viewer">Viewer</option><option value="agent">Agent</option><option value="admin">Admin</option>
+            </select>
+            <button type="submit" id="member-invite-send">Send invitation</button>
+          </form>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+<p id="status" class="toast" role="status" aria-live="polite" aria-atomic="true" hidden></p>
 </body></html>`;
 
 export const privateLoginCss = `
-:root{
-  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  color:#332b2d;background:#f7f1ec;line-height:1.55
-}
+:root{color-scheme:light;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-synthesis:none;color:#272329;background:#f7f6f4;line-height:1.55}
 *{box-sizing:border-box}
+html{min-height:100%}
 body{margin:0;min-height:100vh}
-.layout{max-width:680px;margin:auto;padding:clamp(24px,6vh,70px) clamp(18px,4vw,30px) 50px}
-.eyebrow{font-size:.83rem;font-weight:750;letter-spacing:.24em;color:#9b6171}
-h1{font-size:clamp(1.95rem,4vw,2.65rem);letter-spacing:-.045em;line-height:1.12;margin:.6rem 0 1rem}
-h2{font-size:1.28rem;margin:0}
-h3{font-size:1rem;margin:0}
-.intro{color:#6f6063;max-width:520px}
-.surface{background:#fffdfb;border:1px solid #e7d9d9;border-radius:18px;
-  padding:clamp(22px,5vw,34px);margin:24px 0 0;
-  box-shadow:0 8px 38px #452e3411}
-#login-panel,#account-panel{display:grid;gap:20px}
-form{display:grid;gap:14px;min-width:0}
-label,.setup-key-label{font-weight:650;font-size:.94rem}
-input,select{min-width:0;width:100%;min-height:46px;padding:12px 14px;font:inherit;
-  border:1px solid #cbbdbf;border-radius:10px;background:#fff;color:#332b2d}
-input:focus-visible,button:focus-visible,select:focus-visible{
-  outline:3px solid #df95ae;outline-offset:2px
-}
-button{min-height:46px;padding:12px 16px;font:inherit;font-weight:700;
-  border-radius:10px;border:1px solid #8f5365;background:#8f5365;
-  color:white;cursor:pointer;max-width:100%;white-space:normal}
-button:hover{filter:brightness(.95)}
-button:disabled{opacity:.55;cursor:wait}
-button.secondary{background:transparent;color:#8f5365}
-.note{font-size:.88rem;color:#76676b;margin:0;line-height:1.55}
-.section-head{display:flex;justify-content:space-between;align-items:center;
-  gap:14px;flex-wrap:wrap}
-.workspaces{padding:0;list-style:none;display:grid;gap:12px;margin:0}
-.workspaces li{padding:16px;border-radius:12px;background:#faf3f3;border:1px solid #f0dddd}
-.workspaces strong{display:block}
-.workspaces small{color:#735f65}
-.status{min-height:1.4rem;font-size:.95rem;font-weight:550;color:#774455;margin:20px 0}
-.mfa-panel{display:grid;gap:18px;margin-top:6px;border-top:1px solid #eadedd;padding-top:26px}
-#workspace-content{display:grid;gap:18px}
-.mfa-panel h2{font-size:1.12rem}
-#mfa-recovery,#mfa-setup,#mfa-enrollment,#mfa-factor-picker{
-  display:grid;gap:14px;min-width:0
-}
-#mfa-recovery{padding:16px;border-radius:12px;background:#faf3f3}
-#mfa-enrollment{padding:18px;border:1px solid #e7d9d9;border-radius:12px;
-  background:#fff8f6}
-.mfa-qr{display:block;width:min(100%,260px);height:auto;aspect-ratio:1;
-  padding:8px;border:1px solid #eee;background:white;border-radius:10px;
-  image-rendering:pixelated;margin:2px auto}
-.mfa-secret{display:block;min-width:0;max-width:100%;overflow-wrap:anywhere;
-  background:#f8ecec;border-radius:9px;padding:14px;font-family:ui-monospace,monospace;
-  font-size:1rem;font-weight:700;letter-spacing:.08em;user-select:all}
-#refresh-session{margin-top:8px}
-footer{margin-top:56px;font-size:.81rem;color:#89777b;text-align:center}
 [hidden]{display:none!important}
-@media(max-width:480px){
-  .section-head{align-items:stretch}
-  .section-head button{width:100%}
-  .mfa-panel button,#refresh-session{width:100%}
+button,input,select{font:inherit}
+button{min-height:44px;padding:10px 18px;border:1px solid #775365;border-radius:11px;
+  background:#775365;color:#fff;font-weight:650;cursor:pointer;
+  transition:background .15s ease,box-shadow .15s ease}
+button:hover{background:#684759}
+button:disabled{cursor:wait;opacity:.57}
+button.secondary{background:#fff;color:#684759;border-color:#dfd4da}
+button.secondary:hover{background:#faf5f8}
+button.text-button{background:transparent;color:#684759;border:0;padding:8px 4px;font-weight:650}
+button.text-button:hover{text-decoration:underline;background:transparent}
+input,select{min-width:0;width:100%;min-height:48px;padding:11px 14px;
+  border:1px solid #cfc8cd;border-radius:10px;background:#fff;color:#272329}
+input::placeholder{color:#817983}
+input:focus-visible,select:focus-visible,button:focus-visible,.skip-link:focus-visible{
+  outline:3px solid #b4799a;outline-offset:3px}
+form{display:grid;gap:12px}
+form>button{margin-top:8px}
+label{font-size:.9rem;font-weight:650;color:#393038}
+h1,h2,h3,p{margin-top:0}
+h1{font-size:clamp(1.85rem,3vw,2.45rem);line-height:1.16;letter-spacing:-.045em;margin-bottom:12px}
+h2{font-size:1.12rem;letter-spacing:-.012em;line-height:1.3;margin-bottom:7px}
+h3{font-size:1rem;margin-bottom:8px}
+p{margin-bottom:0}
+.muted,.page-description{color:#736d76}
+.page-description{font-size:1rem;margin-bottom:30px;max-width:620px}
+.eyebrow{font-size:.73rem;font-weight:780;letter-spacing:.14em;color:#886b7b;margin-bottom:13px}
+.brand{display:inline-flex;align-items:center;gap:10px;font-size:.92rem;letter-spacing:.16em;
+  color:#433340;font-weight:820;white-space:nowrap}
+.brand-symbol{display:grid;place-items:center;height:34px;width:34px;color:#fff;
+  background:#775365;border-radius:11px;font-family:Georgia,serif;font-size:1.25rem;letter-spacing:0}
+.skip-link{position:absolute;left:14px;top:-90px;padding:11px 16px;border-radius:8px;
+  color:#fff;background:#493342;z-index:1000}
+.skip-link:focus{top:12px}
+.boot-panel{min-height:100vh;display:grid;place-content:center;justify-items:center;gap:18px}
+.boot-panel p{font-size:.9rem}
+.auth-shell{min-height:100vh;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;padding:36px 20px;background:radial-gradient(ellipse at top,#f3eae9,#f8f6f4 60%)}
+.auth-brand{width:100%;max-width:464px;margin:0 auto 28px}
+.auth-card{width:100%;max-width:464px;padding:clamp(26px,5vw,40px);background:#fff;
+  border:1px solid #e9e2e6;box-shadow:0 14px 45px #3c2d3610;
+  border-radius:19px}
+.auth-card h1{font-size:clamp(1.8rem,4vw,2.1rem)}
+.auth-card #auth-description{margin-bottom:28px;line-height:1.6}
+.auth-footnote{margin-top:24px;color:#817981;font-size:.79rem}
+.auth-footer{color:#8a8288;font-size:.78rem;margin-top:28px;text-align:center}
+#login-panel,#mfa-gate{display:grid;gap:16px}
+.auth-switch-account{justify-self:center;margin-top:10px}
+.mfa-content{display:grid;gap:18px}
+.mfa-content form{gap:12px}
+.mfa-content #mfa-summary{font-size:.91rem}
+.mfa-content #mfa-setup{display:grid}
+.mfa-content #mfa-recovery,.mfa-content #mfa-enrollment{display:grid;gap:13px}
+.notice{padding:16px;border:1px solid #e4d6d6;background:#fcf6f5;border-radius:12px;font-size:.89rem}
+.notice button{justify-self:start}
+#mfa-enrollment{padding:18px;background:#fdfbfc;border:1px solid #ebe2e7;border-radius:13px}
+.mfa-qr{display:block;width:min(100%,240px);height:auto;aspect-ratio:1;
+  image-rendering:pixelated;background:#fff;padding:9px;border:1px solid #e8e0e5;border-radius:11px;margin:3px auto}
+.mfa-secret{display:block;max-width:100%;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
+  font-size:.95rem;font-weight:700;letter-spacing:.05em;user-select:all;
+  background:#f5eef1;border-radius:8px;padding:13px}
+.key-label{display:block;margin-bottom:-6px}
+.dashboard-shell{min-height:100vh;background:#f8f8f7}
+.topbar{height:74px;position:sticky;top:0;z-index:40;display:flex;align-items:center;
+  justify-content:space-between;gap:20px;padding:0 clamp(20px,4vw,42px);
+  border-bottom:1px solid #e9e7e6;background:#fff}
+.topbar-brand{display:flex;align-items:center;min-width:0;gap:22px}
+.topbar-divider{height:25px;width:1px;background:#ded8dc}
+.topbar-workspace{color:#6c626c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.91rem;font-weight:590}
+.account-area{position:relative;flex-shrink:0}
+.account-button{border:1px solid transparent;background:transparent;color:#42343e;
+  display:flex;align-items:center;gap:10px;font-size:.87rem;font-weight:650;padding:7px 12px}
+.account-button:hover{background:#f5f1f3}
+.account-avatar{display:grid;place-items:center;width:32px;height:32px;border-radius:50%;background:#e7dbe2;color:#654c5a;font-size:.82rem}
+.chevron{font-size:1.2rem;color:#8c7d87;line-height:1}
+.account-menu{position:absolute;right:0;top:calc(100% + 10px);width:220px;
+  background:#fff;border:1px solid #e6dfe3;border-radius:13px;box-shadow:0 17px 48px #382e3820;padding:6px;display:grid;gap:2px;z-index:60}
+.account-menu button{border:0;background:transparent;color:#362c36;text-align:left;font-weight:550;
+  min-height:44px;padding:11px 13px}
+.account-menu button:hover{background:#f6f1f4}
+.app-layout{display:grid;grid-template-columns:228px minmax(0,1fr);max-width:1480px;margin:0 auto;min-height:calc(100vh - 74px)}
+.sidebar{border-right:1px solid #ebe8e8;padding:30px 17px;display:flex;flex-direction:column;gap:5px}
+.sidebar-label{font-size:.7rem;letter-spacing:.13em;font-weight:750;color:#918890;padding:7px 14px 10px}
+.sidebar-label-secondary{margin-top:25px}
+.nav-item{color:#635b64;background:transparent;border:0;font-weight:590;text-align:left;min-height:45px;border-radius:9px;padding:10px 14px}
+.nav-item:hover{background:#f0ebee;color:#533e4d}
+.nav-item[aria-current="page"]{background:#eee5eb;color:#634353;font-weight:750}
+.main-content{min-width:0;width:100%;max-width:1000px;padding:clamp(30px,5vw,62px) clamp(20px,5vw,64px) 80px}
+.main-content h1{margin-bottom:10px}
+.feature-card,.settings-card{background:#fff;border:1px solid #e6e3e6;border-radius:16px;box-shadow:0 6px 20px #31283306}
+.feature-card{display:flex;align-items:center;gap:17px;padding:24px;margin-top:18px}
+.workspace-icon{flex-shrink:0;display:grid;place-items:center;width:54px;height:54px;
+  font-size:1.3rem;font-weight:750;background:#f2e8ee;color:#775365;border-radius:14px}
+.feature-card-body{min-width:0;flex:1}
+.feature-card-body h2{font-size:1.1rem;margin-bottom:3px;overflow-wrap:anywhere}
+.feature-card-body p{font-size:.88rem}
+.state-label{font-size:.77rem;font-weight:750;color:#356f58;background:#e7f4ee;border-radius:99px;padding:6px 11px;white-space:nowrap}
+.next-section{margin-top:34px;max-width:650px;padding:24px;background:#fff;border:1px solid #ede8ec;border-radius:14px}
+.next-section h2{font-size:1rem;margin-bottom:8px}
+.next-section p{font-size:.91rem;line-height:1.65;color:#777078}
+.settings-card{padding:clamp(22px,4vw,30px);max-width:720px}
+.settings-card-head{display:flex;align-items:center;gap:15px;flex-wrap:wrap;margin-bottom:24px}
+.settings-card-head>div{flex:1;min-width:160px}
+.settings-card-head p{font-size:.88rem}
+.security-icon{display:grid;place-items:center;width:46px;height:46px;border-radius:12px;background:#e9f5ee;color:#356f58;font-size:1.25rem}
+.security-detail{margin-top:23px;padding-top:22px;border-top:1px solid #eee8ec}
+.workspace-switcher{max-width:420px;margin-bottom:22px;display:grid;gap:8px}
+.toast{position:fixed;bottom:20px;right:20px;z-index:90;max-width:min(420px,calc(100vw - 40px));
+  color:#fff;background:#433740;padding:13px 18px;border-radius:11px;
+  box-shadow:0 12px 36px #251a2540;font-size:.9rem;overflow-wrap:anywhere}
+@media(max-width:760px){
+  .topbar{height:68px;padding:0 17px}
+  .topbar-brand{gap:12px}
+  .topbar-divider{display:none}
+  .topbar-workspace{display:none}
+  .app-layout{display:block}
+  .sidebar{flex-direction:row;flex-wrap:wrap;gap:7px;border-right:0;border-bottom:1px solid #ebe8e8;padding:12px 15px}
+  .sidebar-label{display:none}
+  .nav-item{flex:0 0 auto;padding:9px 13px;min-height:42px}
+  .main-content{padding:30px 20px 70px}
 }
-@media(prefers-reduced-motion:no-preference){button{transition:filter .15s ease}}
+@media(max-width:460px){
+  .auth-shell{padding:28px 16px;justify-content:flex-start}
+  .auth-brand{margin-bottom:22px}
+  .auth-card{padding:28px 23px}
+  .feature-card{align-items:flex-start;flex-wrap:wrap;gap:13px}
+  .feature-card .state-label{margin-left:67px}
+  .settings-card-head{align-items:flex-start}
+  .settings-card-head .state-label{margin-left:60px}
+  .account-button{padding:6px}
+  .account-button .account-avatar{width:30px;height:30px}
+  .account-menu{right:0}
+  .toast{left:15px;right:15px;bottom:15px;max-width:none}
+}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 `;
 
 export const privateLoginJs = `"use strict";
-// Auth Admin invite links may append a short-lived session fragment.
-// Ishikeit deliberately never reads or stores Supabase tokens from URL
-// fragments; clear them from browser history before any other UI work.
+// Never accept Supabase credentials from query strings or URL fragments.
 if(window.location.hash || window.location.search){
-  // Preserve the only two supported route paths; discard token fragments
-  // and query strings without accidentally sending a signed-in user to login.
   window.history.replaceState(null,"",window.location.pathname==="/app/workspaces"
     ? "/app/workspaces" : "/app/login");
 }
-const emailForm=document.getElementById("email-form");
-const codeForm=document.getElementById("code-form");
-const loginPanel=document.getElementById("login-panel");
-const accountPanel=document.getElementById("account-panel");
-const status=document.getElementById("status");
-const workspaceList=document.getElementById("workspace-list");
-const invitePanel=document.getElementById("member-invite-panel");
-const inviteWorkspace=document.getElementById("member-invite-workspace");
-const inviteForm=document.getElementById("member-invite-form");
+const get=id=>document.getElementById(id);
+const bootPanel=get("boot-panel");
+const authShell=get("auth-shell");
+const dashboardShell=get("dashboard-shell");
+const authTitle=get("auth-title");
+const authDescription=get("auth-description");
+const authStep=get("auth-step");
+const loginPanel=get("login-panel");
+const emailForm=get("email-form");
+const codeForm=get("code-form");
+const mfaGate=get("mfa-gate");
+const mfaGateSlot=get("mfa-gate-slot");
+const mfaSettingsSlot=get("mfa-settings-slot");
+const mfaPanel=get("mfa-panel");
+const mfaForm=get("mfa-form");
+const mfaFactor=get("mfa-factor");
+const mfaFactorPicker=get("mfa-factor-picker");
+const mfaSummary=get("mfa-summary");
+const mfaSetup=get("mfa-setup");
+const mfaRecovery=get("mfa-recovery");
+const mfaEnrollment=get("mfa-enrollment");
+const mfaSecret=get("mfa-secret");
+const mfaQr=get("mfa-qr");
+const mfaQrFallback=get("mfa-qr-fallback");
+const memberInviteForm=get("member-invite-form");
+const inviteWorkspace=get("member-invite-workspace");
+const status=get("status");
+const accountMenu=get("account-menu");
+const accountButton=get("account-button");
+let mode="boot"; // "login", "gate", "dashboard"
+let selectedPanel="overview";
 let csrfToken="";
 let enrollmentFactorId="";
-const mfaSetup=document.getElementById("mfa-setup");
-const mfaEnrollment=document.getElementById("mfa-enrollment");
-const mfaSecret=document.getElementById("mfa-secret");
-const mfaQr=document.getElementById("mfa-qr");
-const mfaQrFallback=document.getElementById("mfa-qr-fallback");
-const mfaFactorPicker=document.getElementById("mfa-factor-picker");
-const mfaRecovery=document.getElementById("mfa-recovery");
-const workspaceContent=document.getElementById("workspace-content");
-const accountHeading=document.getElementById("account-heading");
-const pageTitle=document.getElementById("page-title");
-let mfaLoadGeneration=0;
-const mfaForm=document.getElementById("mfa-form");
-const mfaFactor=document.getElementById("mfa-factor");
+let mfaGeneration=0;
+let authEpoch=0;
+let sessionExpiresAt=0;
+let refreshTimer=null;
+let refreshInFlight=null;
+let workspaceRows=[];
+let currentWorkspaceId="";
+let invitingEnabled=false;
+let securityExpanded=false;
+let mfaRetryTimer=null;
+
+function message(value){
+  status.textContent=value;
+  status.hidden=!value;
+}
+function request(path,body,csrf){
+  const headers={"content-type":"application/json"};
+  if(csrf)headers["x-ishikeit-csrf"]=csrf;
+  return fetch(path,{method:"POST",credentials:"same-origin",headers,
+    body:JSON.stringify(body),cache:"no-store",redirect:"error"});
+}
+function invalidateTimers(){
+  if(refreshTimer!==null){clearTimeout(refreshTimer);refreshTimer=null;}
+  if(mfaRetryTimer!==null){clearTimeout(mfaRetryTimer);mfaRetryTimer=null;}
+}
 function clearMfa(){
-  mfaLoadGeneration++;
-  mfaRecovery.hidden=true;
+  mfaGeneration++;
   enrollmentFactorId="";
   mfaSecret.textContent="";
   mfaQr.removeAttribute("src");
@@ -199,328 +380,465 @@ function clearMfa(){
   mfaEnrollment.hidden=true;
   mfaForm.hidden=true;
   mfaSetup.hidden=true;
-  mfaFactor.replaceChildren();
+  mfaRecovery.hidden=true;
   mfaFactorPicker.hidden=true;
-  document.getElementById("mfa-code").value="";
+  mfaFactor.replaceChildren();
+  get("mfa-code").value="";
+  mfaSummary.textContent="";
+  mfaPanel.hidden=true;
 }
-async function loadMfaFactors(){
-  const generation=++mfaLoadGeneration;
+function closeAccountMenu(){
+  accountMenu.hidden=true;
+  accountButton.setAttribute("aria-expanded","false");
+}
+function setSessionExpiry(data){
+  const expires=Date.parse(data.expiresAt);
+  sessionExpiresAt=Number.isFinite(expires)?expires:0;
+  scheduleRefresh();
+}
+function scheduleRefresh(){
+  if(refreshTimer!==null){clearTimeout(refreshTimer);refreshTimer=null;}
+  if(!sessionExpiresAt || (mode!=="dashboard" && mode!=="gate"))return;
+  if(document.visibilityState==="hidden")return;
+  // Automatic refresh only while the app is in the foreground. The 12-hour
+  // absolute BFF session bound is enforced on the server, not extended here.
+  const delay=Math.max(1000,Math.min(2147483647,sessionExpiresAt-Date.now()-180000));
+  refreshTimer=setTimeout(()=>{void maintainSession();},delay);
+}
+async function maintainSession(){
+  if((mode!=="dashboard" && mode!=="gate") || !csrfToken)return false;
+  if(document.visibilityState==="hidden")return false;
+  if(sessionExpiresAt && sessionExpiresAt-Date.now()>240000){scheduleRefresh();return true;}
+  if(refreshInFlight!==null)return refreshInFlight;
+  const generation=authEpoch;
+  const operation=(async()=>{
+    try{
+      const response=await request("/app/auth/refresh",{},csrfToken);
+      if(generation!==authEpoch)return false;
+      if(response.status===401 || response.status===403){
+        showLogin("Your session ended. Sign in to continue.");
+        return false;
+      }
+      if(!response.ok)throw Error("Session service unavailable");
+      const data=await response.json();
+      if(generation!==authEpoch)return false;
+      if(data.status==="mfa_required")showGate(data,true);
+      else if(data.status==="authenticated")showDashboard(data,true);
+      else throw Error("Invalid session response");
+      return true;
+    }catch{
+      if(generation===authEpoch){
+        message("Connection interrupted. Your session will be checked again when you return.");
+        if(refreshTimer!==null)clearTimeout(refreshTimer);
+        refreshTimer=setTimeout(()=>{void maintainSession();},30000);
+      }
+      return false;
+    }
+  })();
+  refreshInFlight=operation;
+  try{return await operation;}finally{if(refreshInFlight===operation)refreshInFlight=null;}
+}
+function showLogin(notice){
+  authEpoch++;
+  invalidateTimers();
+  mode="login";
+  csrfToken="";
+  sessionExpiresAt=0;
+  workspaceRows=[];
+  currentWorkspaceId="";
+  invitingEnabled=false;
+  clearMfa();
+  closeAccountMenu();
+  mfaGateSlot.append(mfaPanel);
+  mfaGate.hidden=true;
+  loginPanel.hidden=false;
+  authShell.hidden=false;
+  dashboardShell.hidden=true;
+  bootPanel.hidden=true;
+  emailForm.hidden=false;
+  codeForm.hidden=true;
+  get("code").value="";
+  authStep.textContent="SECURE ACCESS";
+  authTitle.textContent="Sign in to Ishikeit";
+  authDescription.textContent="Enter your email address to receive a sign-in code.";
+  document.title="ISHIKEIT · Sign in";
+  window.history.replaceState(null,"","/app/login");
+  message(notice||"");
+}
+function showGate(data,preserve){
+  if(typeof data.csrfToken!=="string"){showLogin("Please sign in again.");return;}
+  const previousMode=mode;
+  mode="gate";
+  authStep.textContent="TWO-STEP VERIFICATION";
+  authTitle.textContent="Verify it's you";
+  authDescription.textContent="Enter the six-digit code from your authenticator app to continue.";
+  document.title="ISHIKEIT · Verify your identity";
+  window.history.replaceState(null,"","/app/login");
+  bootPanel.hidden=true;
+  dashboardShell.hidden=true;
+  authShell.hidden=false;
+  loginPanel.hidden=true;
+  mfaGate.hidden=false;
+  csrfToken=data.csrfToken;
+  workspaceRows=[];
+  currentWorkspaceId="";
+  invitingEnabled=false;
+  mfaGateSlot.append(mfaPanel);
+  mfaPanel.hidden=false;
+  if(!preserve && previousMode!=="gate")clearMfa();
+  mfaPanel.hidden=false;
+  setSessionExpiry(data);
+  if(!preserve || previousMode!=="gate")void loadMfaFactors();
+  message("");
+}
+function renderWorkspace(){
+  const workspace=workspaceRows.find(item=>item.workspaceId===currentWorkspaceId)
+    || workspaceRows[0];
+  if(!workspace)return;
+  currentWorkspaceId=workspace.workspaceId;
+  const name=workspace.displayName;
+  const role=workspace.role;
+  get("top-workspace").textContent=name;
+  get("workspace-title").textContent=name;
+  get("workspace-card-title").textContent=name;
+  get("workspace-role").textContent=role==="owner"?"Owner access":
+    role==="admin"?"Admin access":role==="agent"?"Agent access":"Viewer access";
+  get("workspace-icon").textContent=name.slice(0,1).toUpperCase();
+  const selector=get("workspace-select");
+  selector.replaceChildren();
+  for(const item of workspaceRows){
+    const option=document.createElement("option");
+    option.value=item.workspaceId;
+    option.textContent=item.displayName;
+    selector.append(option);
+  }
+  selector.value=currentWorkspaceId;
+  get("workspace-switcher").hidden=workspaceRows.length<=1;
+}
+function showPanel(panel){
+  if(mode!=="dashboard")return;
+  if(panel==="team" && !invitingEnabled)panel="overview";
+  selectedPanel=panel;
+  get("overview-view").hidden=panel!=="overview";
+  get("team-view").hidden=panel!=="team";
+  get("security-view").hidden=panel!=="security";
+  for(const item of ["overview","team","security"]){
+    const button=get("nav-"+item);
+    if(item===panel)button.setAttribute("aria-current","page");
+    else button.removeAttribute("aria-current");
+  }
+  closeAccountMenu();
+  message("");
+}
+function showDashboard(data,preserve){
+  if(data.status!=="authenticated" || !data.workspaces || !Array.isArray(data.workspaces.items)
+    || data.workspaces.items.length===0 || typeof data.csrfToken!=="string"){
+    showLogin("We couldn't confirm your workspace access. Sign in again.");
+    return;
+  }
+  const priorMode=mode;
+  mode="dashboard";
+  csrfToken=data.csrfToken;
+  workspaceRows=data.workspaces.items;
+  invitingEnabled=data.memberInvitationsEnabled===true;
+  if(!workspaceRows.some(item=>item.workspaceId===currentWorkspaceId))
+    currentWorkspaceId=workspaceRows[0].workspaceId;
+  renderWorkspace();
+  const teamNav=get("nav-team");
+  teamNav.hidden=!invitingEnabled;
+  inviteWorkspace.replaceChildren();
+  if(invitingEnabled){
+    for(const workspace of workspaceRows){
+      if(workspace.role!=="owner")continue;
+      const option=document.createElement("option");
+      option.value=workspace.workspaceId;option.textContent=workspace.displayName;
+      inviteWorkspace.append(option);
+    }
+    teamNav.hidden=inviteWorkspace.options.length===0;
+  }
+  if(teamNav.hidden && selectedPanel==="team")selectedPanel="overview";
+  authShell.hidden=true;
+  dashboardShell.hidden=false;
+  bootPanel.hidden=true;
+  document.title="ISHIKEIT · "+workspaceRows[0].displayName;
+  window.history.replaceState(null,"","/app/workspaces");
+  if(priorMode!=="dashboard" || !preserve){
+    clearMfa();
+    securityExpanded=false;
+    mfaSettingsSlot.hidden=true;
+    get("manage-authenticators").setAttribute("aria-expanded","false");
+  }
+  mfaSettingsSlot.append(mfaPanel);
+  setSessionExpiry(data);
+  showPanel(preserve && priorMode==="dashboard"?selectedPanel:"overview");
+}
+async function loadMfaFactors(retried){
+  const generation=++mfaGeneration;
   try{
-    const response=await fetch("/app/auth/mfa/factors",{credentials:"same-origin",cache:"no-store"});
-    if(!response.ok)throw Error("MFA factors unavailable");
+    const response=await fetch("/app/auth/mfa/factors",{
+      credentials:"same-origin",cache:"no-store",redirect:"error"
+    });
+    if(!response.ok)throw Error("Factor status unavailable");
     const data=await response.json();
-    if(generation!==mfaLoadGeneration || accountPanel.hidden)return;
-    const verifiedIds=Array.isArray(data.factors) ? data.factors : [];
-    const pendingCount=Number.isInteger(data.pendingCount) && data.pendingCount>=0
-      ? data.pendingCount : 0;
+    if(generation!==mfaGeneration || (mode!=="gate" && mode!=="dashboard"))return;
+    const ids=Array.isArray(data.factors)?data.factors:[];
+    const pending=Number.isInteger(data.pendingCount) && data.pendingCount>=0?data.pendingCount:0;
     const canEnroll=data.canEnroll===true;
-    // Supabase shares an unverified TOTP seed ONLY in the original enroll response.
-    // Never discard that one-use key merely because factor listing fails or
-    // an authenticated session is renewed in the background.
     const keepPending=!!enrollmentFactorId && !!mfaSecret.textContent;
     mfaFactor.replaceChildren();
     if(keepPending){
-      const pending=document.createElement("option");
-      pending.value=enrollmentFactorId;
-      pending.textContent="New authenticator (verify setup)";
-      mfaFactor.append(pending);
+      const item=document.createElement("option");
+      item.value=enrollmentFactorId;item.textContent="New authenticator (finish setup)";
+      mfaFactor.append(item);
     }
-    for(const id of verifiedIds){
+    for(let i=0;i<ids.length;i++){
       const option=document.createElement("option");
-      option.value=id;
-      option.textContent="Verified authenticator "+String(mfaFactor.options.length+1);
+      option.value=ids[i];option.textContent="Authenticator "+String(i+1);
       mfaFactor.append(option);
     }
     if(keepPending)mfaFactor.value=enrollmentFactorId;
-    mfaEnrollment.hidden=!keepPending;
+    mfaForm.hidden=!(keepPending || (mode==="gate" && ids.length>0));
     mfaFactorPicker.hidden=mfaFactor.options.length<=1;
-    mfaForm.hidden=mfaFactor.options.length===0;
-    // An in-progress setup must be verified or explicitly discarded BEFORE
-    // starting a new one. Otherwise the seed is lost and the provider
-    // accumulates unusable unverified factors.
-    mfaSetup.hidden=!canEnroll || keepPending || pendingCount>0;
-    mfaRecovery.hidden=!(canEnroll && pendingCount>0);
-    if(keepPending){
-      message("Finish connecting your authenticator with the QR code or setup key.");
-    }else if(pendingCount>0 && canEnroll){
-      message("An incomplete authenticator setup exists. Discard it before starting again.");
-    }else if(!canEnroll && verifiedIds.length>0){
-      message("Verify an existing authenticator before enrolling a backup device.");
-    }else if(canEnroll && verifiedIds.length===0){
-      message("Set up an authenticator to protect your account.");
-    }
+    mfaEnrollment.hidden=!keepPending;
+    mfaSetup.hidden=!canEnroll || keepPending || pending>0;
+    mfaRecovery.hidden=!(canEnroll && pending>0);
+    mfaSummary.textContent=keepPending
+      ? "Finish setup using the QR code or manual key below."
+      : mode==="gate" && ids.length>0
+        ? "Choose an authenticator and enter its current code."
+        : pending>0 && canEnroll
+          ? "An unfinished setup needs to be discarded before you can try again."
+          : ids.length>0
+            ? String(ids.length)+" verified authenticator"+(ids.length===1?"":"s")+"."
+            : "Set up an authenticator to secure your account.";
+    mfaPanel.hidden=false;
   }catch{
-    if(generation!==mfaLoadGeneration || accountPanel.hidden)return;
-    // Do not erase a received setup secret on transient network/factor-list
-    // errors. A simple Refresh authenticator status can retry the readback.
+    if(generation!==mfaGeneration || (mode!=="gate" && mode!=="dashboard"))return;
     if(!enrollmentFactorId){
-      mfaSetup.hidden=true;
-      mfaRecovery.hidden=true;
-      mfaForm.hidden=true;
+      mfaForm.hidden=true;mfaSetup.hidden=true;mfaRecovery.hidden=true;
     }
-    message("Could not refresh authenticator status. Keep this page open and try again.");
-  }
-}
-
-function message(s){status.textContent=s;}
-async function request(path,body,csrf){
-  const headers={"content-type":"application/json"};
-  if(csrf)headers["x-ishikeit-csrf"]=csrf;
-  return fetch(path,{method:"POST",credentials:"same-origin",headers,
-    body:JSON.stringify(body),cache:"no-store",redirect:"error"});
-}
-function showLogin(){
-  window.history.replaceState(null,"","/app/login");
-  pageTitle.textContent="Private workspace access";
-  document.title="ISHIKEIT · Private access";
-  loginPanel.hidden=false;accountPanel.hidden=true;workspaceList.replaceChildren();csrfToken="";clearMfa();
-  inviteWorkspace.replaceChildren();invitePanel.hidden=true;
-}
-function showAccount(data){
-  // Only the server-verified AAL2 state may display workspace details.
-  // A valid email-OTP (AAL1) session sees a factor challenge, not workspace
-  // names, roles, connected accounts or invitation controls.
-  if(data.status!=="authenticated" && data.status!=="mfa_required"){
-    showLogin();message("Session confirmation unavailable. Sign in again.");
-    return;
-  }
-  const privileged=data.status==="authenticated";
-  if(privileged && (!data.workspaces || !Array.isArray(data.workspaces.items))){
-    showLogin();message("Session verification unavailable. Sign in again.");
-    return;
-  }
-  window.history.replaceState(null,"",privileged?"/app/workspaces":"/app/login");
-  pageTitle.textContent=privileged?"Your workspaces":"Verify your authenticator";
-  accountHeading.textContent=privileged?"Your workspaces":"Complete two-step verification";
-  document.title=privileged?"ISHIKEIT · Your workspaces":"ISHIKEIT · Verify authenticator";
-  csrfToken=data.csrfToken;
-  workspaceList.replaceChildren();
-  inviteWorkspace.replaceChildren();
-  workspaceContent.hidden=!privileged;
-  if(privileged){
-    for(const workspace of data.workspaces.items){
-      if(data.memberInvitationsEnabled===true && workspace.role==="owner"){
-        const option=document.createElement("option");
-        option.value=workspace.workspaceId;
-        option.textContent=workspace.displayName;
-        inviteWorkspace.append(option);
-      }
-      const li=document.createElement("li");
-      const title=document.createElement("strong");
-      title.textContent=workspace.displayName;
-      const details=document.createElement("small");
-      details.textContent=workspace.role+" · "+workspace.connectedAccounts+" connected accounts";
-      li.append(title,details);workspaceList.append(li);
+    mfaSummary.textContent="We couldn't load your authenticators. Checking again…";
+    if(!retried){
+      mfaRetryTimer=setTimeout(()=>{
+        mfaRetryTimer=null;
+        if(generation===mfaGeneration)void loadMfaFactors(true);
+      },2200);
+    }else{
+      mfaSummary.textContent="Authenticator information is temporarily unavailable. Reload this page to reconnect.";
     }
   }
-  invitePanel.hidden=!privileged || inviteWorkspace.options.length===0;
-  accountPanel.hidden=false;loginPanel.hidden=true;
-  message(privileged?"Signed in.":"Email verified. Enter a code from your authenticator to access workspaces.");
-  void loadMfaFactors();
 }
 async function recoverSession(){
-  const r=await fetch("/app/auth/csrf",{credentials:"same-origin",cache:"no-store"});
-  if(!r.ok)return false;
-  const b=await r.json();
-  if(typeof b.csrfToken!=="string")return false;
-  const refreshed=await request("/app/auth/refresh",{},b.csrfToken);
-  if(!refreshed.ok)return false;
-  showAccount(await refreshed.json());return true;
+  const response=await fetch("/app/auth/csrf",{credentials:"same-origin",cache:"no-store"});
+  if(!response.ok)return false;
+  const data=await response.json();
+  if(typeof data.csrfToken!=="string")return false;
+  const fresh=await request("/app/auth/refresh",{},data.csrfToken);
+  if(!fresh.ok)return false;
+  const session=await fresh.json();
+  if(session.status==="mfa_required")showGate(session,false);
+  else if(session.status==="authenticated")showDashboard(session,false);
+  else return false;
+  return true;
 }
 async function initialize(){
   try{
-    const r=await fetch("/app/auth/session",{credentials:"same-origin",cache:"no-store"});
-    if(r.ok){showAccount(await r.json());return;}
+    const response=await fetch("/app/auth/session",{
+      credentials:"same-origin",cache:"no-store",redirect:"error"
+    });
+    if(response.ok){
+      const session=await response.json();
+      if(session.status==="mfa_required"){showGate(session,false);return;}
+      if(session.status==="authenticated"){showDashboard(session,false);return;}
+    }
     if(await recoverSession())return;
-  }catch{/* Offline or not yet configured. */}
-  showLogin();
+  }catch{ /* No stored session or temporary service error. */ }
+  showLogin("");
 }
+
 emailForm.addEventListener("submit",async event=>{
   event.preventDefault();
-  const button=document.getElementById("send-code");button.disabled=true;
-  try {
-    const email=document.getElementById("email").value.trim();
-    const r=await request("/app/auth/request-otp",{email});
-    if(r.status===202){
-      emailForm.hidden=true;codeForm.hidden=false;
-      message("If this email is invited, a verification code was sent.");
-    }else message("Unable to request a code. Check your email and try again.");
-  }catch{message("Connection unavailable. Try again.");}
+  const button=get("send-code");button.disabled=true;
+  try{
+    const email=get("email").value.trim();
+    const response=await request("/app/auth/request-otp",{email});
+    if(response.status===202){
+      emailForm.hidden=true;
+      codeForm.hidden=false;
+      authStep.textContent="CHECK YOUR EMAIL";
+      authTitle.textContent="Enter your email code";
+      authDescription.textContent="We sent a code if the email belongs to an invited member.";
+      get("code").focus();
+      message("");
+    }else message("We couldn't send a code right now. Please try again.");
+  }catch{message("Connection interrupted. Try again.");}
   finally{button.disabled=false;}
 });
-document.getElementById("another-email").addEventListener("click",()=>{
-  codeForm.hidden=true;emailForm.hidden=false;message("");
-});
+get("another-email").addEventListener("click",()=>showLogin(""));
 codeForm.addEventListener("submit",async event=>{
   event.preventDefault();
-  const button=document.getElementById("verify-code");button.disabled=true;
-  try {
-    const code=document.getElementById("code").value.trim();
-    const r=await request("/app/auth/verify-otp",{code});
-    if(r.status===503){
-      // Supabase may already have consumed a valid OTP. Never invite the
-      // user to retry that code: a fresh login challenge is necessary.
-      document.getElementById("code").value="";
-      codeForm.hidden=true;emailForm.hidden=false;
-      message("A secure session could not be established. The code may have been accepted already. Request a new code after the email cooldown.");
+  const button=get("verify-code");button.disabled=true;
+  try{
+    const code=get("code").value.trim();
+    const response=await request("/app/auth/verify-otp",{code});
+    get("code").value="";
+    if(response.status===503){
+      showLogin("Your code may already have been used. Request a new code after the email cooldown.");
       return;
     }
-    if(!r.ok){message("Verification unsuccessful. Check your code.");return;}
-    document.getElementById("code").value="";
+    if(!response.ok){message("That code wasn't accepted. Check the email code and try again.");return;}
     const session=await fetch("/app/auth/session",{credentials:"same-origin",cache:"no-store"});
-    if(!session.ok)throw Error("session");
-    showAccount(await session.json());
-  }catch{message("Could not establish a session. Please sign in again.");}
+    if(!session.ok)throw Error("Session unavailable");
+    const data=await session.json();
+    if(data.status==="mfa_required")showGate(data,false);
+    else showDashboard(data,false);
+  }catch{message("We couldn't complete sign-in. Please try again.");}
   finally{button.disabled=false;}
 });
-inviteForm.addEventListener("submit",async event=>{
-  event.preventDefault();
-  if(!csrfToken || !inviteWorkspace.value){
-    message("An authorized workspace session is required.");return;
+function openSecurity(){
+  showPanel("security");
+}
+get("nav-overview").addEventListener("click",()=>showPanel("overview"));
+get("nav-security").addEventListener("click",openSecurity);
+get("nav-team").addEventListener("click",()=>showPanel("team"));
+get("workspace-select").addEventListener("change",()=>{
+  const value=get("workspace-select").value;
+  if(workspaceRows.some(item=>item.workspaceId===value)){
+    currentWorkspaceId=value;renderWorkspace();
   }
-  const button=document.getElementById("member-invite-send");
-  button.disabled=true;
-  try{
-    const workspaceId=inviteWorkspace.value;
-    const email=document.getElementById("member-invite-email").value.trim();
-    const role=document.getElementById("member-invite-role").value;
-    const response=await request(
-      "/app/auth/workspaces/"+encodeURIComponent(workspaceId)+"/invitations",
-      {email,role},csrfToken
-    );
-    if(!response.ok)throw Error("invitation rejected");
-    const result=await response.json();
-    document.getElementById("member-invite-email").value="";
-    message(result.status==="invited"
-      ? "Invitation requested. Workspace access begins only after email confirmation."
-      : "Invitation status requires administrator review; it will not be automatically resent.");
-  }catch{
-    message("Invitation unavailable. Verify your authenticator, workspace ownership, and recipient.");
-  }finally{button.disabled=false;}
 });
-document.getElementById("mfa-enroll").addEventListener("click",async()=>{
-  if(!csrfToken){message("Session expired. Renew your session first.");return;}
-  if(enrollmentFactorId){message("Finish or discard the current authenticator setup.");return;}
-  const button=document.getElementById("mfa-enroll");
-  button.disabled=true;
-  message("Starting authenticator setup...");
+accountButton.addEventListener("click",()=>{
+  const next=accountMenu.hidden;
+  accountMenu.hidden=!next;
+  accountButton.setAttribute("aria-expanded",next?"true":"false");
+});
+get("account-security").addEventListener("click",openSecurity);
+document.addEventListener("keydown",event=>{
+  if(event.key==="Escape")closeAccountMenu();
+});
+document.addEventListener("click",event=>{
+  if(!get("account-area").contains(event.target))closeAccountMenu();
+});
+get("manage-authenticators").addEventListener("click",async()=>{
+  securityExpanded=!securityExpanded;
+  mfaSettingsSlot.hidden=!securityExpanded;
+  get("manage-authenticators").setAttribute("aria-expanded",securityExpanded?"true":"false");
+  if(securityExpanded){
+    mfaSettingsSlot.append(mfaPanel);
+    mfaPanel.hidden=false;
+    await loadMfaFactors();
+  }else{
+    // Hide management actions; never erase an in-progress one-use key.
+    mfaPanel.hidden=true;
+  }
+});
+memberInviteForm.addEventListener("submit",async event=>{
+  event.preventDefault();
+  const button=get("member-invite-send");button.disabled=true;
+  try{
+    if(mode!=="dashboard" || !invitingEnabled || !csrfToken
+       || !inviteWorkspace.value)throw Error("Not authorized");
+    const response=await request(
+      "/app/auth/workspaces/"+encodeURIComponent(inviteWorkspace.value)+"/invitations",
+      {email:get("member-invite-email").value.trim(),role:get("member-invite-role").value},
+      csrfToken
+    );
+    if(!response.ok)throw Error("Invitation unavailable");
+    const result=await response.json();
+    get("member-invite-email").value="";
+    message(result.status==="invited"
+      ? "Invitation sent. Access begins after email verification."
+      : "Invitation needs administrator review.");
+  }catch{message("Couldn't send invitation. Check workspace permissions and recipient.");}
+  finally{button.disabled=false;}
+});
+get("mfa-enroll").addEventListener("click",async()=>{
+  if(!csrfToken){message("Please sign in again.");return;}
+  if(enrollmentFactorId){message("Complete or discard the current setup first.");return;}
+  const button=get("mfa-enroll");button.disabled=true;
   try{
     const response=await request("/app/auth/mfa/totp/enroll",{},csrfToken);
-    if(response.status===409){
-      await loadMfaFactors();
-      message("An incomplete setup already exists. Discard it before starting another.");
-      return;
-    }
-    if(response.status===429){
-      message("Too many setup attempts. Wait for the security cooldown (up to 15 minutes) before trying again. Do not repeatedly click the button.");
-      return;
-    }
-    if(!response.ok){
-      message("Unable to start authenticator setup. Refresh authenticator status or renew your session.");
-      return;
-    }
+    if(response.status===409){await loadMfaFactors();message("Discard the unfinished setup before adding another authenticator.");return;}
+    if(response.status===429){message("Too many attempts. Please try again after the security cooldown (up to 15 minutes).");return;}
+    if(!response.ok){message("Authenticator setup is unavailable. Please try again.");return;}
     const data=await response.json();
     if(typeof data.factorId!=="string" || typeof data.secret!=="string"
       || !/^[A-Z2-7]{16,128}$/.test(data.secret)){
-      message("Authenticator setup response unavailable. Refresh status to discard incomplete setup.");
       await loadMfaFactors();
+      message("The setup response was incomplete. Please try again.");
       return;
     }
     enrollmentFactorId=data.factorId;
     mfaSecret.textContent=data.secret;
     const qr=typeof data.qrCodeDataUrl==="string" && data.qrCodeDataUrl.length<1500000
       && data.qrCodeDataUrl.startsWith("data:image/svg+xml;base64,")
-      ? data.qrCodeDataUrl : "";
-    if(qr){
-      mfaQr.src=qr;
-      mfaQr.hidden=false;
-      mfaQrFallback.hidden=true;
-    }else{
-      mfaQr.removeAttribute("src");
-      mfaQr.hidden=true;
-      mfaQrFallback.hidden=false;
-    }
+      ? data.qrCodeDataUrl:"";
+    if(qr){mfaQr.src=qr;mfaQr.hidden=false;mfaQrFallback.hidden=true;}
+    else{mfaQr.removeAttribute("src");mfaQr.hidden=true;mfaQrFallback.hidden=false;}
     mfaEnrollment.hidden=false;
-    mfaForm.hidden=false;
     mfaSetup.hidden=true;
     mfaRecovery.hidden=false;
+    mfaForm.hidden=false;
     const option=document.createElement("option");
-    option.value=data.factorId;
-    option.textContent="New authenticator (verify setup)";
+    option.value=data.factorId;option.textContent="New authenticator (finish setup)";
     mfaFactor.prepend(option);
     mfaFactor.value=data.factorId;
     mfaFactorPicker.hidden=mfaFactor.options.length<=1;
-    message("Scan the QR code or enter the setup key in your authenticator, then verify a six-digit code below.");
-  }catch{
-    message("Connection unavailable. Refresh authenticator status before retrying; a new factor may have been created.");
-  }finally{button.disabled=false;}
-});
-
-document.getElementById("mfa-reload").addEventListener("click",async()=>{
-  const button=document.getElementById("mfa-reload");
-  button.disabled=true;
-  try{await loadMfaFactors();}
+    mfaSummary.textContent="Scan the QR code or enter the key, then verify a six-digit code.";
+    get("mfa-code").focus();
+    message("");
+  }catch{message("Connection interrupted. The setup may already exist. Reopen this page if necessary.");}
   finally{button.disabled=false;}
 });
-document.getElementById("mfa-reset").addEventListener("click",async()=>{
-  if(!csrfToken){message("Session expired. Sign in again.");return;}
-  if(!window.confirm("Discard any incomplete authenticator setup? Verified authenticators will stay active."))return;
-  const button=document.getElementById("mfa-reset");button.disabled=true;
+get("mfa-reset").addEventListener("click",async()=>{
+  if(!csrfToken){message("Please sign in again.");return;}
+  if(!window.confirm("Discard unfinished authenticator setup? Verified devices won't be removed."))return;
+  const button=get("mfa-reset");button.disabled=true;
   try{
     const response=await request("/app/auth/mfa/totp/reset",{},csrfToken);
     if(!response.ok)throw Error("Reset unavailable");
-    const result=await response.json();
     clearMfa();
+    mfaPanel.hidden=false;
     await loadMfaFactors();
-    message(result.cleared>0
-      ? "Incomplete setup discarded. You can now set up an authenticator."
-      : "No incomplete authenticator setup remained.");
-  }catch{
-    message("Could not discard the incomplete setup. Renew your session or contact support.");
-  }finally{button.disabled=false;}
+    message("Unfinished setup discarded.");
+  }catch{message("Couldn't discard setup. Please try again.");}
+  finally{button.disabled=false;}
 });
 mfaForm.addEventListener("submit",async event=>{
   event.preventDefault();
-  const button=document.getElementById("mfa-submit");
+  const button=get("mfa-submit");
   const factorId=mfaFactor.value;
-  const code=document.getElementById("mfa-code").value.trim();
+  const code=get("mfa-code").value.trim();
   button.disabled=true;
   try{
     const response=await request("/app/auth/mfa/totp/verify",{factorId,code},csrfToken);
-    if(!response.ok)throw Error("MFA verification failed");
-    document.getElementById("mfa-code").value="";
-    // Clear both the manual key and its QR from DOM, including image data URL.
-    enrollmentFactorId="";
-    mfaSecret.textContent="";
-    mfaQr.removeAttribute("src");
-    mfaQr.hidden=true;
-    mfaQrFallback.hidden=true;
-    mfaEnrollment.hidden=true;
+    if(!response.ok)throw Error("Authenticator verification failed");
+    get("mfa-code").value="";
     const result=await response.json();
-    showAccount(result);
-    message("Authenticator verified. Your session is protected for privileged actions.");
-  }catch{message("Authenticator code was not accepted. Check the code and try again.");}
+    // A successful challenge always completes the flow: no QR, code field,
+    // factor list or setup controls remain on the workspace landing screen.
+    clearMfa();
+    showDashboard(result,false);
+    message("");
+  }catch{message("That authenticator code wasn't accepted. Try the current code.");}
   finally{button.disabled=false;}
 });
-document.getElementById("refresh-session").addEventListener("click",async()=>{
+async function logoutSession(){
+  if(refreshInFlight!==null)await refreshInFlight;
+  if(!csrfToken){showLogin("");return;}
+  const generation=authEpoch;
   try{
-    if(!csrfToken){
-      if(!await recoverSession())throw Error("missing session");
-      message("Session renewed.");
-      return;
-    }
-    const r=await request("/app/auth/refresh",{},csrfToken);
-    if(!r.ok)throw Error("session expired");
-    showAccount(await r.json());message("Session renewed.");
-  }catch{showLogin();message("Please sign in again.");}
+    const response=await request("/app/auth/logout",{},csrfToken);
+    if(generation!==authEpoch)return;
+    if(!response.ok)throw Error("Sign-out unavailable");
+    showLogin("");
+    message("Signed out securely.");
+  }catch{message("Couldn't sign out. Check your connection and try again.");}
+}
+get("sign-out").addEventListener("click",()=>{void logoutSession();});
+get("gate-sign-out").addEventListener("click",()=>{void logoutSession();});
+document.addEventListener("visibilitychange",()=>{
+  if(document.visibilityState==="visible")void maintainSession();
+  else if(refreshTimer!==null){clearTimeout(refreshTimer);refreshTimer=null;}
 });
-document.getElementById("sign-out").addEventListener("click",async()=>{
-  try{
-    const r=await request("/app/auth/logout",{},csrfToken);
-    if(!r.ok)throw Error("sign-out");
-    showLogin();codeForm.hidden=true;emailForm.hidden=false;
-    message("Signed out.");
-  }catch{message("Sign-out unavailable. Please try again.");}
-});
-void initialize();
-`;
+void initialize();`;

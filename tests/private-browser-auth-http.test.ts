@@ -533,7 +533,10 @@ describe("private cookie-only browser auth routes",()=>{
       headers:{...base,"x-ishikeit-csrf":csrf},payload:{}
     });
     expect(logged.statusCode).toBe(200);
-    expect(logged.headers["set-cookie"]).toContain("Max-Age=0");
+    expect(logged.headers["set-cookie"]).toEqual(expect.arrayContaining([
+      expect.stringContaining("__Host-ishikeit-session=; Path=/; Max-Age=0"),
+      expect.stringContaining("__Host-ishikeit-login=; Path=/; Max-Age=0")
+    ]));
     expect(controller.logout).toHaveBeenCalledWith(token);
     await server.close();
   });

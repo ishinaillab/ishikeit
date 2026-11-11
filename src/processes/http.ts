@@ -593,6 +593,12 @@ const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
     "Private browser OTP verification rejected stage="
     +diagnostic.stage+" reason="+diagnostic.reason
   ),
+  // Only fixed enums: never log TOTP seeds, QR, session cookies, provider
+  // errors, verification codes, identity, or bearer tokens.
+  onMfaEnrollmentFailure: diagnostic => logger.warn(
+    "Private browser MFA enrollment rejected stage="
+    +diagnostic.stage+" reason="+diagnostic.reason
+  ),
   ...(workspaceInvites===undefined?{}:{memberInvites:workspaceInvites}),
   auth: new SupabaseAuthPrincipalVerifier({
     projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,

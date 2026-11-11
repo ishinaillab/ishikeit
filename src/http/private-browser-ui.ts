@@ -60,18 +60,26 @@ export const privateLoginHtml = `<!doctype html>
       </div>
       <div id="mfa-setup" hidden>
         <button type="button" class="secondary" id="mfa-enroll">Set up an authenticator</button>
-        <div id="mfa-enrollment" hidden>
-          <p class="note">Enter this setup key in your authenticator app. Keep it private. It will disappear after verification or sign-out.</p>
-          <output id="mfa-secret" class="mfa-secret"></output>
-        </div>
       </div>
+      <section id="mfa-enrollment" aria-labelledby="mfa-enrollment-title" hidden>
+        <h3 id="mfa-enrollment-title">Connect your authenticator app</h3>
+        <p class="note">Scan this QR code with Google Authenticator or another authenticator app. If scanning is unavailable, enter the setup key manually.</p>
+        <img id="mfa-qr" class="mfa-qr" width="260" height="260" alt="Authenticator setup QR code; keep private" hidden>
+        <p id="mfa-qr-fallback" class="note" hidden>QR code unavailable. Use the manual setup key below.</p>
+        <p class="setup-key-label">Manual setup key</p>
+        <output id="mfa-secret" class="mfa-secret" aria-label="Manual authenticator setup key"></output>
+        <p class="note">Keep the key private. It disappears when you verify, discard this setup, or sign out. Then enter the current six-digit code below.</p>
+      </section>
       <form id="mfa-form" hidden>
-        <label for="mfa-factor">Authenticator</label>
-        <select id="mfa-factor" aria-label="Choose verified authenticator"></select>
+        <div id="mfa-factor-picker" hidden>
+          <label for="mfa-factor">Authenticator device</label>
+          <select id="mfa-factor" aria-label="Choose authenticator"></select>
+        </div>
         <label for="mfa-code">Six-digit authenticator code</label>
         <input id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="6" pattern="[0-9]{6}" required>
         <button type="submit" id="mfa-submit">Verify authenticator</button>
       </form>
+      <button type="button" class="secondary" id="mfa-reload">Refresh authenticator status</button>
     </section>
     <button type="button" class="secondary" id="refresh-session">Renew session</button>
   </section>
@@ -81,36 +89,65 @@ export const privateLoginHtml = `<!doctype html>
 </body></html>`;
 
 export const privateLoginCss = `
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#332b2d;background:#f7f1ec;line-height:1.5}
+:root{
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  color:#332b2d;background:#f7f1ec;line-height:1.55
+}
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh}
-.layout{max-width:600px;margin:auto;padding:7vh 24px 50px}
+.layout{max-width:680px;margin:auto;padding:clamp(24px,6vh,70px) clamp(18px,4vw,30px) 50px}
 .eyebrow{font-size:.83rem;font-weight:750;letter-spacing:.24em;color:#9b6171}
 h1{font-size:clamp(1.95rem,4vw,2.65rem);letter-spacing:-.045em;line-height:1.12;margin:.6rem 0 1rem}
 h2{font-size:1.28rem;margin:0}
-.intro{color:#6f6063;max-width:480px}
-.surface{background:#fffdfb;border:1px solid #e7d9d9;border-radius:18px;padding:clamp(22px,5vw,34px);margin:26px 0 0;box-shadow:0 8px 38px #452e3411}
-form{display:flex;flex-direction:column;gap:12px}
-label{font-weight:650;font-size:.94rem}
-input{width:100%;padding:14px 15px;font:inherit;border:1px solid #cbbdbf;border-radius:10px;background:#fff;color:#332b2d}
-input:focus-visible,button:focus-visible{outline:3px solid #df95ae;outline-offset:2px}
-button{padding:13px 16px;font:inherit;font-weight:700;border-radius:10px;border:1px solid #8f5365;background:#8f5365;color:white;cursor:pointer}
+h3{font-size:1rem;margin:0}
+.intro{color:#6f6063;max-width:520px}
+.surface{background:#fffdfb;border:1px solid #e7d9d9;border-radius:18px;
+  padding:clamp(22px,5vw,34px);margin:24px 0 0;
+  box-shadow:0 8px 38px #452e3411}
+#login-panel,#account-panel{display:grid;gap:20px}
+form{display:grid;gap:14px;min-width:0}
+label,.setup-key-label{font-weight:650;font-size:.94rem}
+input,select{min-width:0;width:100%;min-height:46px;padding:12px 14px;font:inherit;
+  border:1px solid #cbbdbf;border-radius:10px;background:#fff;color:#332b2d}
+input:focus-visible,button:focus-visible,select:focus-visible{
+  outline:3px solid #df95ae;outline-offset:2px
+}
+button{min-height:46px;padding:12px 16px;font:inherit;font-weight:700;
+  border-radius:10px;border:1px solid #8f5365;background:#8f5365;
+  color:white;cursor:pointer;max-width:100%;white-space:normal}
 button:hover{filter:brightness(.95)}
 button:disabled{opacity:.55;cursor:wait}
 button.secondary{background:transparent;color:#8f5365}
-.note{font-size:.85rem;color:#76676b;margin:17px 0 0}
-.section-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
-.workspaces{padding:0;list-style:none;display:grid;gap:12px;margin:22px 0}
+.note{font-size:.88rem;color:#76676b;margin:0;line-height:1.55}
+.section-head{display:flex;justify-content:space-between;align-items:center;
+  gap:14px;flex-wrap:wrap}
+.workspaces{padding:0;list-style:none;display:grid;gap:12px;margin:0}
 .workspaces li{padding:16px;border-radius:12px;background:#faf3f3;border:1px solid #f0dddd}
 .workspaces strong{display:block}
 .workspaces small{color:#735f65}
 .status{min-height:1.4rem;font-size:.95rem;font-weight:550;color:#774455;margin:20px 0}
-.mfa-panel{margin-top:26px;border-top:1px solid #eadedd;padding-top:24px}
+.mfa-panel{display:grid;gap:18px;margin-top:6px;border-top:1px solid #eadedd;padding-top:26px}
 .mfa-panel h2{font-size:1.12rem}
-.mfa-secret{display:block;overflow-wrap:anywhere;background:#f8ecec;border-radius:9px;padding:12px;margin:12px 0;font-family:ui-monospace,monospace;font-size:.93rem;user-select:all}
-select{width:100%;padding:12px;border:1px solid #cbbdbf;border-radius:10px;background:#fff;color:#332b2d;font:inherit}
-footer{margin-top:58px;font-size:.81rem;color:#89777b;text-align:center}
+#mfa-recovery,#mfa-setup,#mfa-enrollment,#mfa-factor-picker{
+  display:grid;gap:14px;min-width:0
+}
+#mfa-recovery{padding:16px;border-radius:12px;background:#faf3f3}
+#mfa-enrollment{padding:18px;border:1px solid #e7d9d9;border-radius:12px;
+  background:#fff8f6}
+.mfa-qr{display:block;width:min(100%,260px);height:auto;aspect-ratio:1;
+  padding:8px;border:1px solid #eee;background:white;border-radius:10px;
+  image-rendering:pixelated;margin:2px auto}
+.mfa-secret{display:block;min-width:0;max-width:100%;overflow-wrap:anywhere;
+  background:#f8ecec;border-radius:9px;padding:14px;font-family:ui-monospace,monospace;
+  font-size:1rem;font-weight:700;letter-spacing:.08em;user-select:all}
+#refresh-session{margin-top:8px}
+footer{margin-top:56px;font-size:.81rem;color:#89777b;text-align:center}
 [hidden]{display:none!important}
+@media(max-width:480px){
+  .section-head{align-items:stretch}
+  .section-head button{width:100%}
+  .mfa-panel button,#refresh-session{width:100%}
+}
 @media(prefers-reduced-motion:no-preference){button{transition:filter .15s ease}}
 `;
 
@@ -138,6 +175,9 @@ let enrollmentFactorId="";
 const mfaSetup=document.getElementById("mfa-setup");
 const mfaEnrollment=document.getElementById("mfa-enrollment");
 const mfaSecret=document.getElementById("mfa-secret");
+const mfaQr=document.getElementById("mfa-qr");
+const mfaQrFallback=document.getElementById("mfa-qr-fallback");
+const mfaFactorPicker=document.getElementById("mfa-factor-picker");
 const mfaRecovery=document.getElementById("mfa-recovery");
 const pageTitle=document.getElementById("page-title");
 let mfaLoadGeneration=0;
@@ -148,47 +188,72 @@ function clearMfa(){
   mfaRecovery.hidden=true;
   enrollmentFactorId="";
   mfaSecret.textContent="";
+  mfaQr.removeAttribute("src");
+  mfaQr.hidden=true;
+  mfaQrFallback.hidden=true;
   mfaEnrollment.hidden=true;
   mfaForm.hidden=true;
   mfaSetup.hidden=true;
   mfaFactor.replaceChildren();
+  mfaFactorPicker.hidden=true;
   document.getElementById("mfa-code").value="";
 }
 async function loadMfaFactors(){
   const generation=++mfaLoadGeneration;
   try{
     const response=await fetch("/app/auth/mfa/factors",{credentials:"same-origin",cache:"no-store"});
-    if(!response.ok)throw Error("No MFA data");
+    if(!response.ok)throw Error("MFA factors unavailable");
     const data=await response.json();
     if(generation!==mfaLoadGeneration || accountPanel.hidden)return;
-    // A successful enrollment response returns the secret only once. Preserve
-    // it and its factor ID during session renewal / asynchronous UI refresh.
+    const verifiedIds=Array.isArray(data.factors) ? data.factors : [];
+    const pendingCount=Number.isInteger(data.pendingCount) && data.pendingCount>=0
+      ? data.pendingCount : 0;
+    const canEnroll=data.canEnroll===true;
+    // Supabase shares an unverified TOTP seed ONLY in the original enroll response.
+    // Never discard that one-use key merely because factor listing fails or
+    // an authenticated session is renewed in the background.
     const keepPending=!!enrollmentFactorId && !!mfaSecret.textContent;
     mfaFactor.replaceChildren();
     if(keepPending){
       const pending=document.createElement("option");
       pending.value=enrollmentFactorId;
-      pending.textContent="New authenticator (not verified)";
+      pending.textContent="New authenticator (verify setup)";
       mfaFactor.append(pending);
     }
-    for(const id of data.factors){
+    for(const id of verifiedIds){
       const option=document.createElement("option");
       option.value=id;
       option.textContent="Verified authenticator "+String(mfaFactor.options.length+1);
       mfaFactor.append(option);
     }
     if(keepPending)mfaFactor.value=enrollmentFactorId;
-    mfaSetup.hidden=data.canEnroll!==true || keepPending;
-    mfaRecovery.hidden=!(data.pendingCount>0 && data.canEnroll===true);
+    mfaEnrollment.hidden=!keepPending;
+    mfaFactorPicker.hidden=mfaFactor.options.length<=1;
     mfaForm.hidden=mfaFactor.options.length===0;
-    if(mfaFactor.options.length===0 && data.canEnroll===true)
-      message(data.pendingCount>0
-        ? "An incomplete authenticator setup needs to be discarded before starting again."
-        : "Set up an authenticator to protect account connections.");
-    else if(data.canEnroll===false && data.factors.length>0)
+    // An in-progress setup must be verified or explicitly discarded BEFORE
+    // starting a new one. Otherwise the seed is lost and the provider
+    // accumulates unusable unverified factors.
+    mfaSetup.hidden=!canEnroll || keepPending || pendingCount>0;
+    mfaRecovery.hidden=!(canEnroll && pendingCount>0);
+    if(keepPending){
+      message("Finish connecting your authenticator with the QR code or setup key.");
+    }else if(pendingCount>0 && canEnroll){
+      message("An incomplete authenticator setup exists. Discard it before starting again.");
+    }else if(!canEnroll && verifiedIds.length>0){
       message("Verify an existing authenticator before enrolling a backup device.");
+    }else if(canEnroll && verifiedIds.length===0){
+      message("Set up an authenticator to protect your account.");
+    }
   }catch{
-    if(generation===mfaLoadGeneration)clearMfa();
+    if(generation!==mfaLoadGeneration || accountPanel.hidden)return;
+    // Do not erase a received setup secret on transient network/factor-list
+    // errors. A simple Refresh authenticator status can retry the readback.
+    if(!enrollmentFactorId){
+      mfaSetup.hidden=true;
+      mfaRecovery.hidden=true;
+      mfaForm.hidden=true;
+    }
+    message("Could not refresh authenticator status. Keep this page open and try again.");
   }
 }
 
@@ -313,25 +378,66 @@ inviteForm.addEventListener("submit",async event=>{
 });
 document.getElementById("mfa-enroll").addEventListener("click",async()=>{
   if(!csrfToken){message("Session expired. Renew your session first.");return;}
+  if(enrollmentFactorId){message("Finish or discard the current authenticator setup.");return;}
   const button=document.getElementById("mfa-enroll");
   button.disabled=true;
+  message("Starting authenticator setup...");
   try{
     const response=await request("/app/auth/mfa/totp/enroll",{},csrfToken);
-    if(!response.ok)throw Error("MFA enrollment unavailable");
+    if(response.status===409){
+      await loadMfaFactors();
+      message("An incomplete setup already exists. Discard it before starting another.");
+      return;
+    }
+    if(response.status===429){
+      message("Too many setup attempts. Wait for the security cooldown (up to 15 minutes) before trying again. Do not repeatedly click the button.");
+      return;
+    }
+    if(!response.ok){
+      message("Unable to start authenticator setup. Refresh authenticator status or renew your session.");
+      return;
+    }
     const data=await response.json();
+    if(typeof data.factorId!=="string" || typeof data.secret!=="string"
+      || !/^[A-Z2-7]{16,128}$/.test(data.secret)){
+      message("Authenticator setup response unavailable. Refresh status to discard incomplete setup.");
+      await loadMfaFactors();
+      return;
+    }
     enrollmentFactorId=data.factorId;
     mfaSecret.textContent=data.secret;
+    const qr=typeof data.qrCodeDataUrl==="string" && data.qrCodeDataUrl.length<1500000
+      && data.qrCodeDataUrl.startsWith("data:image/svg+xml;base64,")
+      ? data.qrCodeDataUrl : "";
+    if(qr){
+      mfaQr.src=qr;
+      mfaQr.hidden=false;
+      mfaQrFallback.hidden=true;
+    }else{
+      mfaQr.removeAttribute("src");
+      mfaQr.hidden=true;
+      mfaQrFallback.hidden=false;
+    }
     mfaEnrollment.hidden=false;
     mfaForm.hidden=false;
     mfaSetup.hidden=true;
     mfaRecovery.hidden=false;
     const option=document.createElement("option");
     option.value=data.factorId;
-    option.textContent="New authenticator";
+    option.textContent="New authenticator (verify setup)";
     mfaFactor.prepend(option);
     mfaFactor.value=data.factorId;
-    message("Enter the setup key in your authenticator app, then verify a code.");
-  }catch{message("Unable to enroll an authenticator. Renew your session or contact support.");}
+    mfaFactorPicker.hidden=mfaFactor.options.length<=1;
+    message("Scan the QR code or enter the setup key in your authenticator, then verify a six-digit code below.");
+  }catch{
+    message("Connection unavailable. Refresh authenticator status before retrying; a new factor may have been created.");
+  }finally{button.disabled=false;}
+});
+
+document.getElementById("mfa-reload").addEventListener("click",async()=>{
+  const button=document.getElementById("mfa-reload");
+  button.disabled=true;
+  try{await loadMfaFactors();}
   finally{button.disabled=false;}
 });
 document.getElementById("mfa-reset").addEventListener("click",async()=>{
@@ -361,9 +467,13 @@ mfaForm.addEventListener("submit",async event=>{
     const response=await request("/app/auth/mfa/totp/verify",{factorId,code},csrfToken);
     if(!response.ok)throw Error("MFA verification failed");
     document.getElementById("mfa-code").value="";
-    mfaSecret.textContent="";
-    mfaEnrollment.hidden=true;
+    // Clear both the manual key and its QR from DOM, including image data URL.
     enrollmentFactorId="";
+    mfaSecret.textContent="";
+    mfaQr.removeAttribute("src");
+    mfaQr.hidden=true;
+    mfaQrFallback.hidden=true;
+    mfaEnrollment.hidden=true;
     const result=await response.json();
     showAccount(result);
     message("Authenticator verified. Your session is protected for privileged actions.");

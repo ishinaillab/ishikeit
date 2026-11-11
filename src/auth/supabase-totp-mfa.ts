@@ -9,6 +9,8 @@ const totpEnrollment=z.object({
   type:z.literal("totp"),
   totp:z.object({
     secret:z.string().min(16).max(128).regex(/^[A-Z2-7]+$/u),
+    // Official GoTrue sends an SVG QR alongside the manual TOTP secret.
+    qr_code:z.string().min(16).max(900000).optional(),
     uri:z.string().max(2048).optional()
   })
 }).passthrough();
@@ -24,6 +26,8 @@ const verifiedTokens=z.object({
 export interface TotpEnrollment {
   factorId:string;
   secret:string;
+  /** Optional data: URI for use only as an <img> source; never inline HTML. */
+  qrCodeDataUrl?:string;
 }
 
 /** Narrow server-to-server adapter for *documented* GoTrue MFA endpoints.
@@ -128,7 +132,23 @@ export class SupabaseTotpMfaClient {
       }
       throw new Error("Invalid MFA provider response");
     }
-    return {factorId:parsed.data.id,secret:parsed.data.totp.secret};
+    const svg=parsed.data.totp.qr_code;
+    if(svg!==undefined){
+      // SVG is provider-supplied untrusted markup. The browser MUST load it
+      // only as an image, never inject it into the document. Disallow active
+      // content or external references as defense in depth.
+      if(!/^\s*<svg\b/iu.test(svg) || !/<\/svg>\s*$/iu.test(svg)
+        || /<!doctype|<!entity|<script|<foreignobject|<iframe|<image|<use\b|<a\b|<style\b|<animate|<set\b|<feimage|\s(?:on[a-z]+|(?:xlink:)?href)\s*=|url\s*\(/iu.test(svg)){
+        try {await this.unenroll(token,parsed.data.id);}catch{/* do not leak error */}
+        throw new Error("Invalid MFA provider response");
+      }
+    }
+    return {
+      factorId:parsed.data.id,
+      secret:parsed.data.totp.secret,
+      ...(svg===undefined?{}:{qrCodeDataUrl:"data:image/svg+xml;base64,"
+        +Buffer.from(svg,"utf8").toString("base64")})
+    };
   }
   async challengeAndVerify(token:string,factorId:string,otpCode:string):
     Promise<SupabaseIssuedTokens>{

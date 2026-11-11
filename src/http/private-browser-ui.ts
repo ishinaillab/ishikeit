@@ -12,7 +12,7 @@ export const privateLoginHtml = `<!doctype html>
 <link rel="stylesheet" href="/app/auth/ui.css">
 <script src="/app/auth/ui.js" defer></script>
 </head><body>
-<a class="skip-link" href="#primary-content">Skip to main content</a>
+<a class="skip-link" id="skip-link" href="#auth-main">Skip to main content</a>
 <div id="boot-panel" class="boot-panel" role="status" aria-live="polite">
   <div class="brand"><span class="brand-symbol" aria-hidden="true">i</span><span>ISHIKEIT</span></div>
   <p class="muted">Checking your session…</p>
@@ -83,7 +83,7 @@ export const privateLoginHtml = `<!doctype html>
       <span class="topbar-divider" aria-hidden="true"></span>
       <span id="top-workspace" class="topbar-workspace">Workspace</span>
     </div>
-    <div class="account-area">
+    <div class="account-area" id="account-area">
       <button type="button" id="account-button" class="account-button" aria-haspopup="true" aria-controls="account-menu" aria-expanded="false">
         <span class="account-avatar" aria-hidden="true">A</span><span>Account</span><span class="chevron" aria-hidden="true">⌄</span>
       </button>
@@ -112,7 +112,7 @@ export const privateLoginHtml = `<!doctype html>
           <select id="workspace-select"></select>
         </div>
         <article class="feature-card" aria-labelledby="workspace-card-title">
-          <div class="workspace-icon" aria-hidden="true">I</div>
+          <div class="workspace-icon" id="workspace-icon" aria-hidden="true">I</div>
           <div class="feature-card-body">
             <h2 id="workspace-card-title">Workspace</h2>
             <p id="workspace-role" class="muted">Your workspace</p>
@@ -459,6 +459,7 @@ function showLogin(notice){
   codeForm.hidden=true;
   get("code").value="";
   authStep.textContent="SECURE ACCESS";
+  get("skip-link").href="#auth-main";
   authTitle.textContent="Sign in to Ishikeit";
   authDescription.textContent="Enter your email address to receive a sign-in code.";
   document.title="ISHIKEIT · Sign in";
@@ -469,6 +470,7 @@ function showGate(data,preserve){
   if(typeof data.csrfToken!=="string"){showLogin("Please sign in again.");return;}
   const previousMode=mode;
   mode="gate";
+  get("skip-link").href="#auth-main";
   authStep.textContent="TWO-STEP VERIFICATION";
   authTitle.textContent="Verify it's you";
   authDescription.textContent="Enter the six-digit code from your authenticator app to continue.";
@@ -560,6 +562,7 @@ function showDashboard(data,preserve){
   authShell.hidden=true;
   dashboardShell.hidden=false;
   bootPanel.hidden=true;
+  get("skip-link").href="#primary-content";
   document.title="ISHIKEIT · "+workspaceRows[0].displayName;
   window.history.replaceState(null,"","/app/workspaces");
   if(priorMode!=="dashboard" || !preserve){

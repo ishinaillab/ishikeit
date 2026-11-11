@@ -3,7 +3,10 @@ import { randomUUID, createHash } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PostgresDatabase } from "../src/persistence/postgres.js";
 import { CredentialCipher } from "../src/auth/credential-cipher.js";
-import { PrivateBrowserAuthService } from "../src/auth/private-browser-auth.js";
+import {
+  PrivateBrowserAuthService, BrowserLoginSessionSetupError,
+  type BrowserOtpFailureDiagnostic
+} from "../src/auth/private-browser-auth.js";
 import { PostgresBrowserAuthMaintenance } from "../src/auth/private-browser-auth-maintenance.js";
 
 const connectionString=process.env.PG_OUTBOX_TEST_DATABASE_URL;
@@ -57,6 +60,7 @@ const portfolio={
 };
 const cipher=new CredentialCipher(Buffer.alloc(32,37));
 const secret=Buffer.alloc(32,39).toString("base64");
+const otpDiagnostics=vi.fn((_entry:BrowserOtpFailureDiagnostic)=>{ /* non-sensitive only */ });
 const mfa={
   enroll:vi.fn((_token:string)=>{
     void _token;
@@ -81,7 +85,7 @@ const memberInvites={invite:vi.fn((_token:string,_input:{workspaceId:string;emai
 })};
 const service=db===undefined?undefined:new PrivateBrowserAuthService({
   projectUrl:"https://abcdefghijklmnopqrst.supabase.co",
-  db,cipher,csrfKeyBase64:secret,
+  db,cipher,csrfKeyBase64:secret,onOtpFailure:otpDiagnostics,
   otp:otpClient,
   mfa,
   auth,
@@ -203,6 +207,36 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     expect(otpClient.refresh).toHaveBeenCalledTimes(2);
     expect(otpClient.refresh.mock.calls.map(args=>args[0])).toEqual([refreshOne,refreshTwo]);
     expect(refreshUses).toBe(2);
+  });
+
+  it("revokes an already issued Supabase session after downstream identity failure",async()=>{
+    const login=await service!.begin("invited@example.com","test-network-a");
+    auth.verifyAccessToken.mockRejectedValueOnce(new Error("User authentication invalid"));
+    await expect(service!.verify(login,"123456","test-network-a"))
+      .rejects.toThrow(BrowserLoginSessionSetupError);
+    expect(otpClient.revoke).toHaveBeenCalledExactlyOnceWith(access);
+    expect(otpDiagnostics).toHaveBeenCalledWith({
+      stage:"principal",reason:"identity_invalid"
+    });
+    const browserRows=await db!.query("SELECT 1 FROM public.ishikeit_browser_sessions");
+    expect(browserRows.rowCount).toBe(0);
+    const pending=await db!.query<{completed_at:Date|null}>(
+      "SELECT completed_at FROM public.ishikeit_browser_login_attempts"
+    );
+    expect(pending.rows[0]?.completed_at).toBeNull();
+  });
+
+  it("reports 2xx provider payload failures as setup errors without secrets or token replay",async()=>{
+    const login=await service!.begin("invited@example.com","test-network-b");
+    otpClient.verifyOtp.mockRejectedValueOnce(
+      new Error("Supabase authentication response invalid")
+    );
+    await expect(service!.verify(login,"123456","test-network-b"))
+      .rejects.toThrow(BrowserLoginSessionSetupError);
+    expect(otpDiagnostics).toHaveBeenCalledWith({
+      stage:"provider_exchange",reason:"upstream_response_invalid"
+    });
+    expect(otpClient.revoke).not.toHaveBeenCalled();
   });
 
   it("limits OTP delivery per email and blocks replay and exhausted codes",async()=>{

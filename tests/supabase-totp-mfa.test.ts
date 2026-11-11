@@ -173,7 +173,9 @@ describe("Supabase Auth MFA server transport",()=>{
         controller.enqueue(new Uint8Array(19000));
       }
     })));
-    await expect(client.enroll(bearer)).rejects.toThrow("Invalid MFA provider response");
+    // Challenge/verify still use 32 KiB; only enrollment allows a large QR SVG.
+    await expect(client.challengeAndVerify(bearer,factorId,"123456"))
+      .rejects.toThrow("Invalid MFA provider response");
   });
   it("rejects ambiguous or malformed verification result instead of claiming AAL2",async()=>{
     const {client}=mockClient(url=>url.endsWith("/challenge")

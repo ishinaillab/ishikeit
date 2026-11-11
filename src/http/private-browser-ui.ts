@@ -13,7 +13,7 @@ export const privateLoginHtml = `<!doctype html>
 <script src="/app/auth/ui.js" defer></script>
 </head><body>
 <main class="layout">
-  <header><p class="eyebrow">ISHIKEIT</p><h1>Private workspace access</h1>
+  <header><p class="eyebrow">ISHIKEIT</p><h1 id="page-title">Private workspace access</h1>
   <p class="intro">Sign in using the verification code sent to your invited email address.</p></header>
   <section class="surface" id="login-panel">
     <form id="email-form" autocomplete="on">
@@ -54,6 +54,10 @@ export const privateLoginHtml = `<!doctype html>
     <section class="mfa-panel" aria-labelledby="mfa-heading">
       <h2 id="mfa-heading">Two-step verification</h2>
       <p class="note">Protect account connections with an authenticator app. Verify a code to confirm your device before sensitive actions.</p>
+      <div id="mfa-recovery" hidden>
+        <p class="note">An earlier authenticator setup was not completed. You can discard that unverified setup and start again. Verified devices will not be removed.</p>
+        <button type="button" class="secondary" id="mfa-reset">Discard incomplete setup</button>
+      </div>
       <div id="mfa-setup" hidden>
         <button type="button" class="secondary" id="mfa-enroll">Set up an authenticator</button>
         <div id="mfa-enrollment" hidden>
@@ -115,7 +119,10 @@ export const privateLoginJs = `"use strict";
 // Ishikeit deliberately never reads or stores Supabase tokens from URL
 // fragments; clear them from browser history before any other UI work.
 if(window.location.hash || window.location.search){
-  window.history.replaceState(null,"","/app/login");
+  // Preserve the only two supported route paths; discard token fragments
+  // and query strings without accidentally sending a signed-in user to login.
+  window.history.replaceState(null,"",window.location.pathname==="/app/workspaces"
+    ? "/app/workspaces" : "/app/login");
 }
 const emailForm=document.getElementById("email-form");
 const codeForm=document.getElementById("code-form");
@@ -131,9 +138,14 @@ let enrollmentFactorId="";
 const mfaSetup=document.getElementById("mfa-setup");
 const mfaEnrollment=document.getElementById("mfa-enrollment");
 const mfaSecret=document.getElementById("mfa-secret");
+const mfaRecovery=document.getElementById("mfa-recovery");
+const pageTitle=document.getElementById("page-title");
+let mfaLoadGeneration=0;
 const mfaForm=document.getElementById("mfa-form");
 const mfaFactor=document.getElementById("mfa-factor");
 function clearMfa(){
+  mfaLoadGeneration++;
+  mfaRecovery.hidden=true;
   enrollmentFactorId="";
   mfaSecret.textContent="";
   mfaEnrollment.hidden=true;
@@ -143,21 +155,41 @@ function clearMfa(){
   document.getElementById("mfa-code").value="";
 }
 async function loadMfaFactors(){
+  const generation=++mfaLoadGeneration;
   try{
     const response=await fetch("/app/auth/mfa/factors",{credentials:"same-origin",cache:"no-store"});
     if(!response.ok)throw Error("No MFA data");
     const data=await response.json();
+    if(generation!==mfaLoadGeneration || accountPanel.hidden)return;
+    // A successful enrollment response returns the secret only once. Preserve
+    // it and its factor ID during session renewal / asynchronous UI refresh.
+    const keepPending=!!enrollmentFactorId && !!mfaSecret.textContent;
     mfaFactor.replaceChildren();
+    if(keepPending){
+      const pending=document.createElement("option");
+      pending.value=enrollmentFactorId;
+      pending.textContent="New authenticator (not verified)";
+      mfaFactor.append(pending);
+    }
     for(const id of data.factors){
       const option=document.createElement("option");
       option.value=id;
-      option.textContent="Authenticator "+String(mfaFactor.options.length+1);
+      option.textContent="Verified authenticator "+String(mfaFactor.options.length+1);
       mfaFactor.append(option);
     }
-    mfaSetup.hidden=false;
+    if(keepPending)mfaFactor.value=enrollmentFactorId;
+    mfaSetup.hidden=data.canEnroll!==true || keepPending;
+    mfaRecovery.hidden=!(data.pendingCount>0 && data.canEnroll===true);
     mfaForm.hidden=mfaFactor.options.length===0;
-    if(mfaFactor.options.length===0)message("Set up an authenticator to protect account connections.");
-  }catch{clearMfa();}
+    if(mfaFactor.options.length===0 && data.canEnroll===true)
+      message(data.pendingCount>0
+        ? "An incomplete authenticator setup needs to be discarded before starting again."
+        : "Set up an authenticator to protect account connections.");
+    else if(data.canEnroll===false && data.factors.length>0)
+      message("Verify an existing authenticator before enrolling a backup device.");
+  }catch{
+    if(generation===mfaLoadGeneration)clearMfa();
+  }
 }
 
 function message(s){status.textContent=s;}
@@ -168,10 +200,16 @@ async function request(path,body,csrf){
     body:JSON.stringify(body),cache:"no-store",redirect:"error"});
 }
 function showLogin(){
+  window.history.replaceState(null,"","/app/login");
+  pageTitle.textContent="Private workspace access";
+  document.title="ISHIKEIT · Private access";
   loginPanel.hidden=false;accountPanel.hidden=true;workspaceList.replaceChildren();csrfToken="";clearMfa();
   inviteWorkspace.replaceChildren();invitePanel.hidden=true;
 }
 function showAccount(data){
+  window.history.replaceState(null,"","/app/workspaces");
+  pageTitle.textContent="Your workspaces";
+  document.title="ISHIKEIT · Your workspaces";
   csrfToken=data.csrfToken;
   workspaceList.replaceChildren();
   inviteWorkspace.replaceChildren();
@@ -285,6 +323,8 @@ document.getElementById("mfa-enroll").addEventListener("click",async()=>{
     mfaSecret.textContent=data.secret;
     mfaEnrollment.hidden=false;
     mfaForm.hidden=false;
+    mfaSetup.hidden=true;
+    mfaRecovery.hidden=false;
     const option=document.createElement("option");
     option.value=data.factorId;
     option.textContent="New authenticator";
@@ -293,6 +333,23 @@ document.getElementById("mfa-enroll").addEventListener("click",async()=>{
     message("Enter the setup key in your authenticator app, then verify a code.");
   }catch{message("Unable to enroll an authenticator. Renew your session or contact support.");}
   finally{button.disabled=false;}
+});
+document.getElementById("mfa-reset").addEventListener("click",async()=>{
+  if(!csrfToken){message("Session expired. Sign in again.");return;}
+  if(!window.confirm("Discard any incomplete authenticator setup? Verified authenticators will stay active."))return;
+  const button=document.getElementById("mfa-reset");button.disabled=true;
+  try{
+    const response=await request("/app/auth/mfa/totp/reset",{},csrfToken);
+    if(!response.ok)throw Error("Reset unavailable");
+    const result=await response.json();
+    clearMfa();
+    await loadMfaFactors();
+    message(result.cleared>0
+      ? "Incomplete setup discarded. You can now set up an authenticator."
+      : "No incomplete authenticator setup remained.");
+  }catch{
+    message("Could not discard the incomplete setup. Renew your session or contact support.");
+  }finally{button.disabled=false;}
 });
 mfaForm.addEventListener("submit",async event=>{
   event.preventDefault();

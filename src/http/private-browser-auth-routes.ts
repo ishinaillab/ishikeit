@@ -11,6 +11,7 @@ export interface BrowserAuthController {
   verify(cookie:string,code:string,networkId:string):
     Promise<{cookieValue:string;csrfToken:string}>;
   get(cookie:string):ReturnType<PrivateBrowserAuthService["get"]>;
+  sessionStatus(cookie:string):ReturnType<PrivateBrowserAuthService["sessionStatus"]>;
   clearIncompleteTotp(cookie:string):ReturnType<PrivateBrowserAuthService["clearIncompleteTotp"]>;
   listWorkspaces(cookie:string,after?:string):
     ReturnType<PrivateBrowserAuthService["listWorkspaces"]>;
@@ -201,7 +202,10 @@ export function registerPrivateBrowserAuthRoutes(
     const value=session(req,reply);
     if(value===undefined)return deny(reply).send({status:"unauthenticated"});
     try {
-      const data=await deps.controller.get(value);
+      const data=await deps.controller.sessionStatus(value);
+      if(data.status==="mfa_required")
+        return reply.code(200).send({status:"mfa_required",expiresAt:data.expiresAt,
+          csrfToken:data.csrfToken});
       return reply.code(200).send({
         status:"authenticated",expiresAt:data.expiresAt,
         csrfToken:data.csrfToken,workspaces:data.workspaces,
@@ -228,6 +232,9 @@ export function registerPrivateBrowserAuthRoutes(
     if(!csrf(req,reply,value))return reply;
     try {
       const data=await deps.controller.refresh(value);
+      if(data.status==="mfa_required")
+        return reply.code(200).send({status:"mfa_required",expiresAt:data.expiresAt,
+          csrfToken:data.csrfToken});
       return reply.code(200).send({status:"authenticated",expiresAt:data.expiresAt,
         csrfToken:data.csrfToken,workspaces:data.workspaces,
         memberInvitationsEnabled:invitationCapability(data)});
@@ -291,11 +298,12 @@ export function registerPrivateBrowserAuthRoutes(
     if(!body.success)return deny(reply,400).send({status:"invalid_request"});
     try{
       const data=await deps.controller.verifyTotp(value,body.data.factorId,body.data.code);
-      return reply.code(200).send({
-        status:"mfa_verified",expiresAt:data.expiresAt,csrfToken:data.csrfToken,
-        workspaces:data.workspaces,
-        memberInvitationsEnabled:invitationCapability(data)
-      });
+      return reply.header("set-cookie",cookie(sessionName,data.cookieValue,43200))
+        .code(200).send({
+          status:"authenticated",expiresAt:data.expiresAt,csrfToken:data.csrfToken,
+          workspaces:data.workspaces,
+          memberInvitationsEnabled:invitationCapability(data)
+        });
     }catch{return deny(reply,403).send({status:"mfa_verification_failed"});}
   });
   if(deps.allowWorkspaceInvitations===true){
@@ -330,8 +338,9 @@ export function registerPrivateBrowserAuthRoutes(
     if(!csrf(req,reply,value))return reply;
     try {
       await deps.controller.logout(value);
-      return reply.header("set-cookie",clearCookie(sessionName))
-        .code(200).send({status:"signed_out"});
+      return reply.header("set-cookie",[
+        clearCookie(sessionName),clearCookie(pendingName)
+      ]).code(200).send({status:"signed_out"});
     }catch{return reply.code(503).send({status:"temporarily_unavailable"});}
   });
 }

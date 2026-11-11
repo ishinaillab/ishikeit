@@ -5,6 +5,7 @@ import { PostgresDatabase } from "../src/persistence/postgres.js";
 import { CredentialCipher } from "../src/auth/credential-cipher.js";
 import {
   PrivateBrowserAuthService, BrowserLoginSessionSetupError,
+  BrowserMfaEnrollmentRateLimited, BrowserMfaPendingEnrollment,
   type BrowserOtpFailureDiagnostic
 } from "../src/auth/private-browser-auth.js";
 import { PostgresBrowserAuthMaintenance } from "../src/auth/private-browser-auth-maintenance.js";
@@ -394,6 +395,33 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     expect(auth.verifyPrivilegedAccessToken).toHaveBeenCalled();
     await expect(service!.verifyTotp(session.cookieValue,randomUUID(),"123456"))
       .rejects.toThrow(/not available/i);
+  });
+
+  it("blocks duplicate pending enrollments without consuming rate budget",async()=>{
+    const nonce=await service!.begin("invited@example.com","pending-guard-ip");
+    const session=await service!.verify(nonce,"123456","pending-guard-ip");
+    const first=await service!.enrollTotp(session.cookieValue);
+    expect(first.secret).toBe("JBSWY3DPEHPK3PXP");
+    await expect(service!.enrollTotp(session.cookieValue))
+      .rejects.toBeInstanceOf(BrowserMfaPendingEnrollment);
+    expect(mfa.enroll).toHaveBeenCalledTimes(1);
+    expect((await service!.listTotpFactors(session.cookieValue)).pendingCount).toBe(1);
+    await service!.clearIncompleteTotp(session.cookieValue);
+    const next=await service!.enrollTotp(session.cookieValue);
+    expect(next.factorId).not.toBe(first.factorId);
+    expect(mfa.enroll).toHaveBeenCalledTimes(2);
+  });
+
+  it("makes repeated MFA enrollments explicitly rate limited, not 403 provider errors",async()=>{
+    const nonce=await service!.begin("invited@example.com","rate-guard-ip");
+    const session=await service!.verify(nonce,"123456","rate-guard-ip");
+    for(let i=0;i<3;i++){
+      await service!.enrollTotp(session.cookieValue);
+      await service!.clearIncompleteTotp(session.cookieValue);
+    }
+    await expect(service!.enrollTotp(session.cookieValue))
+      .rejects.toBeInstanceOf(BrowserMfaEnrollmentRateLimited);
+    expect(mfa.enroll).toHaveBeenCalledTimes(3);
   });
 
   it("resets only incomplete TOTP enrollment through owner-bound provider API",async()=>{

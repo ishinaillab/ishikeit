@@ -270,7 +270,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
   it("does not resume an expired original OTP after email link navigation",async()=>{
     await service!.begin("invited@example.com","expired-send-ip");
     await db!.query(
-      "UPDATE public.ishikeit_browser_login_attempts SET expires_at=now()-interval '1 second'"
+      "UPDATE public.ishikeit_browser_login_attempts SET requested_at=now()-interval '11 minutes',expires_at=now()-interval '1 minute'"
     );
     const resumed=await service!.resumeEmailOtp("invited@example.com","expired-link-ip");
     expect(await service!.hasPendingEmailOtp(resumed)).toBe(false);

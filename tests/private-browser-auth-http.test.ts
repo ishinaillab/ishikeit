@@ -2,7 +2,10 @@ import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 import { buildServer } from "../src/http/server.js";
 import type { BrowserAuthController } from "../src/http/private-browser-auth-routes.js";
-import { BrowserLoginSessionSetupError } from "../src/auth/private-browser-auth.js";
+import {
+  BrowserLoginSessionSetupError, BrowserMfaEnrollmentRateLimited,
+  BrowserMfaPendingEnrollment
+} from "../src/auth/private-browser-auth.js";
 import type { InboundStore } from "../src/persistence/inbound.js";
 
 const origin="https://apps.ishinaillab.com";
@@ -39,7 +42,8 @@ function testServer(enabled=true,invitesEnabled=false){
     enrollTotp:vi.fn((_cookie:string)=>{
       void _cookie;return Promise.resolve({
         factorId:"123e4567-e89b-42d3-a456-426614174000",
-        secret:"JBSWY3DPEHPK3PXP"
+        secret:"JBSWY3DPEHPK3PXP",
+        qrCodeDataUrl:"data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="
       });
     }),
     verifyTotp:vi.fn((_cookie:string,_factorId:string,_code:string)=>{
@@ -189,6 +193,8 @@ describe("private cookie-only browser auth routes",()=>{
     expect(html.headers["content-type"]).toContain("text/html");
     expect(html.headers["content-security-policy"]).toContain("script-src 'self'");
     expect(html.headers["content-security-policy"]).toContain("form-action 'none'");
+    expect(html.headers["content-security-policy"]).toContain("img-src 'self' data:");
+    expect(html.headers["content-security-policy"]).toContain("object-src 'none'");
     expect(html.body).toContain("Your workspaces");
     expect(html.body).toContain("ISHIKEIT · Secure workspace access");
     expect(html.body).not.toContain("Technique-first. Style-forward. Always clean.");
@@ -206,10 +212,28 @@ describe("private cookie-only browser auth routes",()=>{
     expect(js.body).toContain('data.pendingCount>0');
     expect(js.body).toContain('data.canEnroll===true');
     expect(html.body).toContain('id="mfa-reset"');
+    expect(html.body).toContain('id="mfa-qr"');
+    expect(html.body).toContain('id="mfa-reload"');
+    // Prior regression: the setup key lived INSIDE hidden #mfa-setup;
+    // hiding that parent made the key invisible while the dropdown showed.
+    const setupStart=html.body.indexOf('id="mfa-setup"');
+    const setupClosingDiv=html.body.indexOf('</div>',setupStart);
+    const keySection=html.body.indexOf('id="mfa-enrollment"');
+    expect(setupClosingDiv).toBeGreaterThan(setupStart);
+    expect(keySection).toBeGreaterThan(setupClosingDiv);
+    expect(html.body).toContain('id="mfa-secret"');
+    expect(js.body).toContain('mfaQr.src=qr');
+    expect(js.body).toContain('mfaEnrollment.hidden=false');
+    expect(js.body).toContain('response.status===429');
+    expect(js.body).toContain('response.status===409');
+    expect(js.body).toContain('mfaSetup.hidden=!canEnroll || keepPending || pendingCount>0');
     expect(js.body).not.toContain("localStorage");
     const css=await server.inject({method:"GET",url:"/app/auth/ui.css",headers:{host}});
     expect(css.statusCode).toBe(200);
     expect(css.headers["content-type"]).toContain("text/css");
+    expect(css.body).toContain("min-height:46px");
+    expect(css.body).toContain("display:grid;gap:18px");
+    expect(css.body).toContain("#mfa-enrollment{");
     expect((await server.inject({method:"GET",url:"/app/login",
       headers:{host:"evil.test"}})).statusCode).toBe(403);
     await server.close();
@@ -376,7 +400,9 @@ describe("private cookie-only browser auth routes",()=>{
       headers:{...base,"x-ishikeit-csrf":csrf},payload:{}});
     expect(enrolled.statusCode).toBe(200);
     expect(enrolled.json()).toEqual({
-      factorId:"123e4567-e89b-42d3-a456-426614174000",secret:"JBSWY3DPEHPK3PXP"
+      factorId:"123e4567-e89b-42d3-a456-426614174000",
+      secret:"JBSWY3DPEHPK3PXP",
+      qrCodeDataUrl:"data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="
     });
     expect(enrolled.headers["cache-control"]).toContain("no-store");
     const verified=await server.inject({method:"POST",url:"/app/auth/mfa/totp/verify",
@@ -409,6 +435,26 @@ describe("private cookie-only browser auth routes",()=>{
       headers:{...base,origin:"https://evil.test","x-ishikeit-csrf":csrf},payload:{}});
     expect(foreign.statusCode).toBe(403);
     expect(controller.enrollTotp).toHaveBeenCalledTimes(1);
+    await server.close();
+  });
+
+  it("returns actionable 409 and 429 states for pending TOTP setup and enrollment cooldown",async()=>{
+    const {server,controller}=testServer();
+    const authHeaders={...headers,cookie:authCookie(),"x-ishikeit-csrf":csrf};
+    controller.enrollTotp.mockRejectedValueOnce(new BrowserMfaPendingEnrollment());
+    const pending=await server.inject({
+      method:"POST",url:"/app/auth/mfa/totp/enroll",headers:authHeaders,payload:{}
+    });
+    expect(pending.statusCode).toBe(409);
+    expect(pending.json()).toEqual({status:"mfa_incomplete_setup"});
+    controller.enrollTotp.mockRejectedValueOnce(new BrowserMfaEnrollmentRateLimited());
+    const limited=await server.inject({
+      method:"POST",url:"/app/auth/mfa/totp/enroll",headers:authHeaders,payload:{}
+    });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.headers["retry-after"]).toBe("900");
+    expect(limited.json()).toEqual({status:"mfa_enrollment_rate_limited"});
+    expect(limited.body).not.toContain(token);
     await server.close();
   });
 

@@ -28,11 +28,28 @@ interface ChallengeRow extends pg.QueryResultRow {
 }
 interface RateRow extends pg.QueryResultRow { hits:number }
 interface PendingChallengeRow extends pg.QueryResultRow { present:boolean }
-interface TotpFactorRow extends pg.QueryResultRow { id:string; status:string; factor_type:string }
+interface TotpFactorRow extends pg.QueryResultRow {
+  id:string; status:string; factor_type:string;
+  created_at?:Date; enabled?:boolean
+}
+interface MfaPolicyRow extends pg.QueryResultRow { sign_in_2fa_enabled:boolean }
+export interface BrowserMfaDevice {
+  factorId:string;label:string;enrolledAt:string;enabled:boolean;
+}
 export interface BrowserMfaFactorStatus {
   factors:readonly string[];
-  pendingCount:number;
-  canEnroll:boolean;
+  devices:readonly BrowserMfaDevice[];
+  pendingCount:number;canEnroll:boolean;signIn2faEnabled:boolean;
+}
+export interface BrowserMfaSettingsChange {
+  cookieValue:string;csrfToken:string;factors:BrowserMfaFactorStatus;
+}
+export type BrowserMfaSettingsMutation =
+  | {kind:"sign_in";enabled:boolean;proofFactorId:string;code:string}
+  | {kind:"factor";factorId:string;enabled:boolean;proofFactorId:string;code:string};
+export class BrowserMfaLastAuthenticatorError extends Error {
+  constructor(){super("At least one verified authenticator must remain enabled");
+    this.name="BrowserMfaLastAuthenticatorError";}
 }
 /** Public error classes avoid converting enrollment throttles into generic 403. */
 export class BrowserMfaEnrollmentRateLimited extends Error {
@@ -425,16 +442,26 @@ export class PrivateBrowserAuthService {
   }
 
   /**
-   * Step-up is NOT optional for workspace data. An email OTP establishes only
-   * AAL1; even a valid BFF cookie must not expose workspace membership,
-   * connected accounts, invitation capabilities or any privileged action
-   * until the exact live Supabase session and verified factor prove AAL2.
+   * Ordinary workspace read access follows the user's explicit sign-in 2FA
+   * preference. Sensitive mutations independently require enabled-factor
+   * AAL2 regardless of this preference.
    */
   async #describeSession(
     access:string,verified:VerifiedIshikeitSession,cookie:string
   ):Promise<BrowserSessionView>{
     const eligible=await this.deps.portfolio.list(access,{pageSize:1});
     if(eligible.items.length===0)throw new Error("Browser workspace membership unavailable");
+    const policy=await this.deps.db.query<MfaPolicyRow>(
+      `SELECT sign_in_2fa_enabled FROM public.ishikeit_browser_mfa_policies
+       WHERE user_id=$1::uuid`,[verified.principal.subject]
+    );
+    if(policy.rows[0]?.sign_in_2fa_enabled===false){
+      const workspaces=await this.deps.portfolio.list(access,{pageSize:50});
+      if(workspaces.items.length===0)throw new Error("Browser workspace membership unavailable");
+      return {status:"authenticated",sessionId:verified.sessionId,
+        expiresAt:verified.expiresAt,csrfToken:this.csrfForCookie(cookie),workspaces,
+        memberInvitationsEnabled:this.deps.memberInvites!==undefined};
+    }
     try{
       const mfa=await this.deps.auth.verifyPrivilegedAccessToken(access);
       if(mfa.principal.subject!==verified.principal.subject
@@ -467,8 +494,8 @@ export class PrivateBrowserAuthService {
   }
 
   async listWorkspaces(cookie:string,after?:string):Promise<WorkspacePage>{
+    await this.get(cookie);
     const {access}=await this.#bearer(cookie);
-    await this.deps.auth.verifyPrivilegedAccessToken(access);
     return this.deps.portfolio.list(access,{
       pageSize:20,...(after===undefined?{}:{after})
     });
@@ -514,23 +541,43 @@ export class PrivateBrowserAuthService {
    */
   async listTotpFactors(cookie:string):Promise<BrowserMfaFactorStatus> {
     const {access,verified}=await this.#bearer(cookie);
-    const rows=await this.deps.db.query<TotpFactorRow>(
-      `SELECT id,status::text AS status,factor_type::text AS factor_type
-       FROM auth.mfa_factors WHERE user_id=$1::uuid
-       ORDER BY created_at ASC,id ASC LIMIT 25`,
-      [verified.principal.subject]
-    );
-    const factors=rows.rows.filter(x=>x.status==="verified" && x.factor_type==="totp")
-      .map(x=>z.string().uuid().parse(x.id));
+    const eligible=await this.deps.portfolio.list(access,{pageSize:1});
+    if(eligible.items.length===0)throw new Error("Workspace authorization required");
+    const [rows,policy]=await Promise.all([
+      this.deps.db.query<TotpFactorRow>(
+        `SELECT f.id,f.status::text AS status,f.factor_type::text AS factor_type,
+           f.created_at,
+           NOT EXISTS(SELECT 1 FROM public.ishikeit_browser_disabled_totp_factors d
+             WHERE d.user_id=f.user_id AND d.factor_id=f.id) AS enabled
+         FROM auth.mfa_factors AS f WHERE f.user_id=$1::uuid
+         ORDER BY f.created_at ASC,f.id ASC LIMIT 25`,
+        [verified.principal.subject]
+      ),
+      this.deps.db.query<MfaPolicyRow>(
+        `SELECT sign_in_2fa_enabled FROM public.ishikeit_browser_mfa_policies
+         WHERE user_id=$1::uuid`,[verified.principal.subject]
+      )
+    ]);
+    const verifiedTotp=rows.rows.filter(x=>
+      x.status==="verified" && x.factor_type==="totp");
+    const devices=verifiedTotp.map((f,i)=>({
+      factorId:z.string().uuid().parse(f.id),
+      label:i===0?"Primary authenticator":
+        i===1?"Backup authenticator":"Authenticator "+String(i+1),
+      enrolledAt:f.created_at instanceof Date && Number.isFinite(f.created_at.getTime())
+        ? f.created_at.toISOString():"",
+      enabled:f.enabled!==false
+    }));
+    const factors=devices.filter(d=>d.enabled).map(d=>d.factorId);
     const pendingCount=rows.rows.filter(x=>
       x.status==="unverified" && x.factor_type==="totp").length;
-    const hasVerified=rows.rows.some(x=>x.status==="verified");
-    let canEnroll=!hasVerified;
-    if(hasVerified){
+    let canEnroll=verifiedTotp.length===0;
+    if(verifiedTotp.length>0){
       try{await this.deps.auth.verifyPrivilegedAccessToken(access);canEnroll=true;}
-      catch{/* AAL1 users must step up before adding backup factors. */}
+      catch{/* No backup enrollment without active AAL2. */}
     }
-    return {factors,pendingCount,canEnroll};
+    return {factors,devices,pendingCount,canEnroll,
+      signIn2faEnabled:policy.rows[0]?.sign_in_2fa_enabled!==false};
   }
 
   /** An explicit, CSRF-protected user action can reset only incomplete,
@@ -649,6 +696,9 @@ export class PrivateBrowserAuthService {
         `SELECT id,status::text AS status FROM auth.mfa_factors
          WHERE user_id=$1::uuid AND id=$2::uuid AND factor_type='totp'
            AND status IN ('verified','unverified')
+           AND (status='unverified' OR NOT EXISTS(
+             SELECT 1 FROM public.ishikeit_browser_disabled_totp_factors d
+             WHERE d.user_id=$1::uuid AND d.factor_id=$2::uuid))
          LIMIT 1`,[row.user_id,id]
       );
       if(allowed.rows[0]===undefined)throw new Error("MFA factor not available");

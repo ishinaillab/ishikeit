@@ -121,7 +121,7 @@ export class PostgresWorkspaceInvitations {
            FROM public.ishikeit_workspace_invitations i
            JOIN auth.users u ON u.id=i.auth_user_id
              AND lower(u.email)=i.invitee_email
-             AND u.email_confirmed_at IS NOT NULL
+             AND u.email_confirmed_at IS NOT NULL AND u.invited_at IS NOT NULL
              AND u.is_anonymous=false AND u.deleted_at IS NULL
              AND (u.banned_until IS NULL OR u.banned_until<=now())
            JOIN public.ishikeit_workspaces w
@@ -149,7 +149,7 @@ export class PostgresWorkspaceInvitations {
             JOIN public.ishikeit_workspaces w
               ON w.workspace_id=m.workspace_id AND w.state='active'
             WHERE u.id=$1::uuid AND lower(u.email)=$5
-              AND u.email_confirmed_at IS NOT NULL
+              AND u.email_confirmed_at IS NOT NULL AND u.invited_at IS NOT NULL
               AND u.is_anonymous=false AND u.deleted_at IS NULL
               AND (u.banned_until IS NULL OR u.banned_until<=now())
               AND NOT EXISTS(SELECT 1 FROM public.ishikeit_workspace_memberships current

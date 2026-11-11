@@ -587,6 +587,12 @@ const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
   db,
   cipher: CredentialCipher.fromBase64(env.BROWSER_AUTH_ENCRYPTION_KEY_B64!),
   csrfKeyBase64: env.BROWSER_AUTH_CSRF_KEY_B64!,
+  // Fixed enums only: never log the email, OTP, bearer, provider body,
+  // browser cookie, IP address, or a raw exception.
+  onOtpFailure: diagnostic => logger.warn(
+    "Private browser OTP verification rejected stage="
+    +diagnostic.stage+" reason="+diagnostic.reason
+  ),
   ...(workspaceInvites===undefined?{}:{memberInvites:workspaceInvites}),
   auth: new SupabaseAuthPrincipalVerifier({
     projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,

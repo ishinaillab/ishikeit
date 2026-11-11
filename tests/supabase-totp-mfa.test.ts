@@ -36,9 +36,12 @@ describe("Supabase Auth MFA server transport",()=>{
       headers:{apikey:key,authorization:"Bearer "+bearer}
     });
     const body=calls[0]?.options.body;
-    expect(typeof body==="string"?JSON.parse(body):null).toMatchObject({
-      factor_type:"totp",friendly_name:expect.stringMatching(/^Ishikeit Authenticator [0-9a-f]{16}$/u)
-    });
+        if(typeof body!=="string")throw new Error("Expected JSON body");
+    const parsed:unknown=JSON.parse(body) as unknown;
+    expect(parsed).toMatchObject({factor_type:"totp"});
+    if(!parsed||typeof parsed!=="object"||!("friendly_name" in parsed))
+      throw new Error("Missing friendly name");
+    expect(parsed.friendly_name).toMatch(/^Ishikeit Authenticator [0-9a-f]{16}$/u);
   });
   it("uses a distinct friendly name on each enrollment to avoid GoTrue conflicts",async()=>{
     const {client,calls}=mockClient(()=>json({
@@ -46,7 +49,13 @@ describe("Supabase Auth MFA server transport",()=>{
     }));
     await client.enroll(bearer);
     await client.enroll(bearer);
-    const names=calls.map(x=>JSON.parse(String(x.options.body)).friendly_name as string);
+    const names=calls.map(x=>{
+      if(typeof x.options.body!=="string")throw new Error("Expected JSON body");
+      const parsed:unknown=JSON.parse(x.options.body) as unknown;
+      if(!parsed||typeof parsed!=="object"||!("friendly_name" in parsed)
+        || typeof parsed.friendly_name!=="string")throw new Error("Missing friendly name");
+      return parsed.friendly_name;
+    });
     expect(names).toHaveLength(2);
     expect(names[0]).not.toBe(names[1]);
   });

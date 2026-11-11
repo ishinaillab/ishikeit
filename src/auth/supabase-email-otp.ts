@@ -2,7 +2,10 @@ import { z } from "zod";
 
 const tokenResponse = z.object({
   access_token: z.string().min(40).max(8192),
-  refresh_token: z.string().min(20).max(4096),
+  // Supabase Auth refresh tokens are opaque. Do not impose a guessed minimum
+  // length: production GoTrue issued 12-character values, which are valid.
+  // We require a nonempty bounded string and rely on Auth to validate it.
+  refresh_token: z.string().min(1).max(4096),
   token_type: z.literal("bearer"),
   expires_in: z.number().int().min(60).max(86400)
 }).passthrough();

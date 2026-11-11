@@ -18,6 +18,6 @@ describe("email OTP sign-in link is code-entry-only",()=>{
     expect(html).not.toContain("https://apps.ishinaillab.com/app/login?email=");
     expect(html).not.toContain("{{ .Email | urlquery }}");
     expect(html).not.toMatch(/href="[^"]*(?:token_hash|access_token|refresh_token)=/iu);
-    expect((html.match(/{{\s*\.Token\s*}}/gu)||[]).length).toBe(1);
+    expect((html.match(/\{\{\s*\.Token\s*\}\}/gu)||[]).length).toBe(1);
   });
 });

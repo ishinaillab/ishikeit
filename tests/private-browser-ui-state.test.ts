@@ -139,7 +139,7 @@ function setup(options:UiFixtureOptions={}){
     }
     if(path==="/app/auth/refresh" && mutation){
       refreshRequests++;
-      return Promise.resolve(response(makeSession(originalState,true)));
+      return Promise.resolve(response(makeSession(originalState==="unauthenticated"?"authenticated":originalState,true)));
     }
     if(path==="/app/auth/mfa/factors"){
       factorReads++;

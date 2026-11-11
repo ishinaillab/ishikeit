@@ -137,7 +137,7 @@ test("initial administrator workflow remains manual-only without a cron path",as
   const triggerEnd=workflow.indexOf("\npermissions:");
   assert.ok(triggerEnd>0,"The workflow must retain its scoped permissions");
   const header=workflow.slice(0,triggerEnd);
-  const events=Array.from(header.matchAll(/^  ([a-z_]+):\s*$/gmu),m=>m[1]);
+  const events=Array.from(header.matchAll(/^ {2}([a-z_]+):\s*$/gmu),m=>m[1]);
   assert.deepEqual(events,["workflow_dispatch"]);
   assert.doesNotMatch(workflow,/^\s*schedule:\s*$|^\s*-\s*cron:|ISHIKEIT_AUTO_ADMIN_RECONCILIATION|GITHUB_EVENT_NAME[^\n]*schedule/imu);
   assert.match(workflow,/&& github\.event_name == 'workflow_dispatch'/u);

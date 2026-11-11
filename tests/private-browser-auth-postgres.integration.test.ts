@@ -478,6 +478,113 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     expect(factors).toMatchObject({factors:[factorId],pendingCount:0,canEnroll:true});
   });
 
+
+  it("fails closed for signed-out provider sessions before CSRF or token refresh",async()=>{
+    const login=await service!.begin("invited@example.com","revoked-provider-ip");
+    const session=await service!.verify(login,"123456","revoked-provider-ip");
+    expect((await service!.sessionStatus(session.cookieValue)).status).toBe("mfa_required");
+    await db!.query("DELETE FROM auth.sessions WHERE id=$1",[authSessionId]);
+    await expect(service!.csrf(session.cookieValue)).rejects.toThrow(/session/i);
+    await expect(service!.sessionStatus(session.cookieValue)).rejects.toThrow(/session/i);
+    await expect(service!.get(session.cookieValue)).rejects.toThrow(/session/i);
+    await expect(service!.refresh(session.cookieValue)).rejects.toThrow(/session/i);
+    await expect(service!.listTotpFactors(session.cookieValue)).rejects.toThrow(/session/i);
+    expect(otpClient.refresh).not.toHaveBeenCalled();
+    const erased=await new PostgresBrowserAuthMaintenance(db!).runOnce();
+    expect(erased.expiredSessions).toBe(1);
+    expect((await db!.query("SELECT 1 FROM public.ishikeit_browser_sessions")).rowCount).toBe(0);
+  });
+
+  it("reclaims only orphaned BFF sessions while preserving the verified live provider-bound row",async()=>{
+    const first=await service!.verify(
+      await service!.begin("invited@example.com","orphan-ip-1"),"123456","orphan-ip-1"
+    );
+    const good=await service!.verify(
+      await service!.begin("invited@example.com","orphan-ip-2"),"123456","orphan-ip-2"
+    );
+    // Simulate a remote provider logout of one session without reading
+    // encrypted refresh/access tokens or touching the current user's other session.
+    const orphanSessionId=randomUUID();
+    await db!.query(
+      "UPDATE public.ishikeit_browser_sessions SET auth_session_id=$2 WHERE session_hash=$1",
+      [createHash("sha256").update(first.cookieValue).digest("hex"),orphanSessionId]
+    );
+    await expect(service!.csrf(first.cookieValue)).rejects.toThrow(/session/i);
+    await expect(service!.sessionStatus(first.cookieValue)).rejects.toThrow(/session/i);
+    expect((await service!.sessionStatus(good.cookieValue)).status).toBe("mfa_required");
+    const result=await new PostgresBrowserAuthMaintenance(db!).runOnce();
+    expect(result.expiredSessions).toBe(1);
+    expect((await db!.query("SELECT 1 FROM public.ishikeit_browser_sessions")).rowCount).toBe(1);
+    expect((await service!.sessionStatus(good.cookieValue)).status).toBe("mfa_required");
+  });
+
+  it("rotates the BFF cookie and CSRF on AAL2 step-up; logout destroys active local session",async()=>{
+    const first=await service!.verify(
+      await service!.begin("invited@example.com","logout-verified-ip"),
+      "123456","logout-verified-ip"
+    );
+    expect((await service!.sessionStatus(first.cookieValue)).status).toBe("mfa_required");
+    await service!.enrollTotp(first.cookieValue);
+    const second=await service!.verifyTotp(first.cookieValue,factorId,"123456");
+    expect(second.cookieValue).not.toBe(first.cookieValue);
+    expect(second.csrfToken).not.toBe(first.csrfToken);
+    expect((await service!.sessionStatus(second.cookieValue)).status).toBe("authenticated");
+    await expect(service!.get(first.cookieValue)).rejects.toThrow(/session/i);
+    await expect(service!.csrf(first.cookieValue)).rejects.toThrow(/session/i);
+    await service!.logout(second.cookieValue);
+    await expect(service!.sessionStatus(second.cookieValue)).rejects.toThrow(/session/i);
+    await expect(service!.csrf(second.cookieValue)).rejects.toThrow(/session/i);
+    await expect(service!.refresh(second.cookieValue)).rejects.toThrow(/session/i);
+    expect((await db!.query("SELECT 1 FROM public.ishikeit_browser_sessions")).rowCount).toBe(0);
+    expect(otpClient.revoke).toHaveBeenCalledWith("mfa_access_"+"x".repeat(60));
+  });
+
+  it("recovers with backup factor after a new AAL1 login without exposing workspaces",async()=>{
+    const initial=await service!.verify(
+      await service!.begin("invited@example.com","backup-setup-ip"),
+      "123456","backup-setup-ip"
+    );
+    await service!.enrollTotp(initial.cookieValue);
+    const primary=await service!.verifyTotp(initial.cookieValue,factorId,"123456");
+    const backup=await service!.enrollTotp(primary.cookieValue);
+    const protectedSession=await service!.verifyTotp(primary.cookieValue,backup.factorId,"234567");
+    expect((await service!.sessionStatus(protectedSession.cookieValue)).status)
+      .toBe("authenticated");
+    const factors=await db!.query<{id:string;status:string}>(
+      "SELECT id,status FROM auth.mfa_factors ORDER BY id"
+    );
+    expect(factors.rows.filter(f=>f.status==="verified")).toHaveLength(2);
+    const fresh=await service!.verify(
+      await service!.begin("invited@example.com","recover-backup-ip"),
+      "123456","recover-backup-ip"
+    );
+    const emailOnly=await service!.sessionStatus(fresh.cookieValue);
+    expect(emailOnly.status).toBe("mfa_required");
+    expect(emailOnly).not.toHaveProperty("workspaces");
+    await expect(service!.listWorkspaces(fresh.cookieValue)).rejects.toThrow(/multi-factor/i);
+    const recovered=await service!.verifyTotp(fresh.cookieValue,backup.factorId,"345678");
+    expect((await service!.sessionStatus(recovered.cookieValue)).status)
+      .toBe("authenticated");
+    expect((await service!.get(recovered.cookieValue)).workspaces.items).toHaveLength(1);
+    const binding=await db!.query<{matches:boolean}>(
+      "SELECT factor_id=$1::uuid AS matches FROM auth.sessions WHERE id=$2",
+      [backup.factorId,authSessionId]
+    );
+    expect(binding.rows[0]?.matches).toBe(true);
+  });
+
+  it("makes logout locally final even when remote provider revocation is unavailable",async()=>{
+    const fresh=await service!.verify(
+      await service!.begin("invited@example.com","logout-fail-ip"),
+      "123456","logout-fail-ip"
+    );
+    otpClient.revoke.mockRejectedValueOnce(new Error("Remote service unavailable"));
+    await service!.logout(fresh.cookieValue);
+    expect((await db!.query("SELECT 1 FROM public.ishikeit_browser_sessions")).rowCount).toBe(0);
+    await expect(service!.csrf(fresh.cookieValue)).rejects.toThrow(/session/i);
+    await expect(service!.sessionStatus(fresh.cookieValue)).rejects.toThrow(/session/i);
+  });
+
   it("enforces private RLS and prevents Data API access to all sensitive tables",async()=>{
     const rows=await db!.query<{relname:string;relrowsecurity:boolean;public_access:boolean}>(
       `SELECT c.relname,c.relrowsecurity,

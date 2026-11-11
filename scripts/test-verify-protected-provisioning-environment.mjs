@@ -46,9 +46,16 @@ test("requires confirmed real reviewers and exact custom branch main policy",asy
   assert.deepEqual(await x.verify(),{
     ready:true,protectedEnvironment:"ishikeit-provisioning",branch:"main"
   });
-  assert.equal(x.calls.length,2);
+  assert.equal(x.calls.length,3);
+  assert.ok(x.calls.some(y=>y.url===api+"/branches/main"));
   assert.ok(x.calls.every(x=>x.init.method==="GET"&&x.init.redirect==="error"));
   assert.ok(x.calls.every(x=>x.init.headers.authorization==="Bearer "+jobToken));
+});
+test("requires GitHub source protection independently of a restrictive environment branch rule",async()=>{
+  const x=client({mainProtected:false});
+  await assert.rejects(x.verify(),/main branch is not protected/);
+  assert.ok(x.calls.some(y=>y.url===api+"/branches/main"));
+  assert.equal(x.calls.some(y=>y.url.includes("deployment-branch-policies")),false);
 });
 test("accepts protected main only when GitHub verifies main branch is protected",async()=>{
   const x=client({env:{

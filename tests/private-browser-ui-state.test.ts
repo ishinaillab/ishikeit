@@ -57,7 +57,7 @@ function setup(options:UiFixtureOptions={}){
   const elements=new Map<string,FakeElement>();
   const pattern=/<([a-z][\w-]*)\b[^>]*\sid="([^"]+)"[^>]*>/giu;
   for(const match of privateLoginHtml.matchAll(pattern)){
-    const node=new FakeElement(match[1]!,match[2]!);
+    const node=new FakeElement(match[1],match[2]);
     node.hidden=/\shidden(?:\s|>)/u.test(match[0]);
     elements.set(match[2]!,node);
   }

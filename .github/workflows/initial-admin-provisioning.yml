@@ -1,4 +1,4 @@
-name: Initial Ishikeit Admin — protected automated provisioning
+name: Initial Ishikeit Admin — protected manual provisioning
 
 on:
   workflow_dispatch:
@@ -14,11 +14,6 @@ on:
         description: 'For the initial invite, enter APPROVE_FIRST_ISHIKEIT_INVITE (reconcile may use the same value)'
         required: true
         type: string
-  schedule:
-    # Optional automation; the job runs only when explicitly enabled in
-    # the protected environment or repository variable below.
-    - cron: '17 * * * *'
-
 permissions:
   contents: read
   actions: read
@@ -32,8 +27,7 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main'
       && vars.ISHIKEIT_ADMIN_PROVISIONING_ENABLED == 'true'
-      && (github.event_name == 'workflow_dispatch'
-        || vars.ISHIKEIT_AUTO_ADMIN_RECONCILIATION == 'true')
+      && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: ishikeit-provisioning
     timeout-minutes: 10
@@ -89,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           npm run build
-          if [[ "${GITHUB_EVENT_NAME}" == "schedule" || "${OPERATION}" == "reconcile" ]]; then
+          if [[ "${OPERATION}" == "reconcile" ]]; then
             node dist/operations/provision-platform-admin.js --reconcile
           else
             node dist/operations/provision-platform-admin.js --invite

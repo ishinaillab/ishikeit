@@ -109,6 +109,14 @@ export interface BrowserIdentitySummary {
   workspaces:WorkspacePage;
   memberInvitationsEnabled?:boolean;
 }
+/** MFA step-up never returns workspace names, roles, or invitations to AAL1. */
+export type BrowserSessionView =
+  | (BrowserIdentitySummary & {status:"authenticated"})
+  | {status:"mfa_required";csrfToken:string;expiresAt:string};
+/** Rotated BFF cookie is only for the HttpOnly Set-Cookie response header. */
+export interface BrowserMfaStepupSuccess extends BrowserIdentitySummary {
+  cookieValue:string;
+}
 
 /** Server-held Supabase tokens. The browser receives ONLY a random opaque cookie
  * and CSRF token, never a Supabase access/refresh token or user role assertion.
@@ -307,12 +315,16 @@ export class PrivateBrowserAuthService {
 
   async #load(tx:SqlExecutor,cookie:string,locked:boolean):Promise<BrowserSessionRow> {
     bearer.parse(cookie);
+    // A BFF row is never valid unless its exact provider session still exists.
+    // Orphaned records must be rejected even before decrypting/refreshing tokens.
     const result=await tx.query<BrowserSessionRow>(
-      `SELECT user_id,auth_session_id,access_ciphertext,access_iv,access_tag,
-         refresh_ciphertext,refresh_iv,refresh_tag,access_expires_at,session_expires_at
-       FROM public.ishikeit_browser_sessions
-       WHERE session_hash=$1 AND revoked_at IS NULL AND session_expires_at>now()
-       ${locked?"FOR UPDATE":""}`,[sha256(cookie)]
+      `SELECT b.user_id,b.auth_session_id,b.access_ciphertext,b.access_iv,b.access_tag,
+         b.refresh_ciphertext,b.refresh_iv,b.refresh_tag,b.access_expires_at,b.session_expires_at
+       FROM public.ishikeit_browser_sessions AS b
+       JOIN auth.sessions AS s
+         ON s.id=b.auth_session_id AND s.user_id=b.user_id
+       WHERE b.session_hash=$1 AND b.revoked_at IS NULL AND b.session_expires_at>now()
+       ${locked?"FOR UPDATE OF b":""}`,[sha256(cookie)]
     );
     if(result.rows[0]===undefined)throw new Error("Browser session unavailable");
     return result.rows[0];
@@ -338,25 +350,60 @@ export class PrivateBrowserAuthService {
   async csrf(cookie:string):Promise<string> {
     bearer.parse(cookie);
     const result=await this.deps.db.query(
-      `SELECT 1 FROM public.ishikeit_browser_sessions
-       WHERE session_hash=$1 AND revoked_at IS NULL AND session_expires_at>now()`,
+      `SELECT 1 FROM public.ishikeit_browser_sessions AS b
+       JOIN auth.sessions AS s ON s.id=b.auth_session_id AND s.user_id=b.user_id
+       WHERE b.session_hash=$1 AND b.revoked_at IS NULL AND b.session_expires_at>now()`,
       [sha256(cookie)]
     );
     if(result.rowCount!==1)throw new Error("Browser session unavailable");
     return this.csrfForCookie(cookie);
   }
 
-  async get(cookie:string):Promise<BrowserIdentitySummary> {
-    const {access,verified}=await this.#bearer(cookie);
+  /**
+   * Step-up is NOT optional for workspace data. An email OTP establishes only
+   * AAL1; even a valid BFF cookie must not expose workspace membership,
+   * connected accounts, invitation capabilities or any privileged action
+   * until the exact live Supabase session and verified factor prove AAL2.
+   */
+  async #describeSession(
+    access:string,verified:VerifiedIshikeitSession,cookie:string
+  ):Promise<BrowserSessionView>{
+    const eligible=await this.deps.portfolio.list(access,{pageSize:1});
+    if(eligible.items.length===0)throw new Error("Browser workspace membership unavailable");
+    try{
+      const mfa=await this.deps.auth.verifyPrivilegedAccessToken(access);
+      if(mfa.principal.subject!==verified.principal.subject
+        || mfa.principal.issuer!==verified.principal.issuer
+        || mfa.sessionId!==verified.sessionId)
+        throw new Error("Browser privilege session mismatch");
+    }catch(error){
+      // Provider outage and unexpected security errors MUST fail closed.
+      if(error instanceof Error && error.message==="Multi-factor authentication required")
+        return {status:"mfa_required",csrfToken:this.csrfForCookie(cookie),
+          expiresAt:verified.expiresAt};
+      throw error;
+    }
     const workspaces=await this.deps.portfolio.list(access,{pageSize:50});
     if(workspaces.items.length===0)throw new Error("Browser workspace membership unavailable");
-    return {sessionId:verified.sessionId,expiresAt:verified.expiresAt,
-      csrfToken:this.csrfForCookie(cookie),workspaces,
+    return {status:"authenticated",sessionId:verified.sessionId,
+      expiresAt:verified.expiresAt,csrfToken:this.csrfForCookie(cookie),workspaces,
       memberInvitationsEnabled:this.deps.memberInvites!==undefined};
   }
 
-  async listWorkspaces(cookie:string,after?:string):Promise<WorkspacePage> {
+  async sessionStatus(cookie:string):Promise<BrowserSessionView>{
+    const {access,verified}=await this.#bearer(cookie);
+    return this.#describeSession(access,verified,cookie);
+  }
+
+  async get(cookie:string):Promise<BrowserIdentitySummary>{
+    const session=await this.sessionStatus(cookie);
+    if(session.status!=="authenticated")throw new Error("Multi-factor authentication required");
+    return session;
+  }
+
+  async listWorkspaces(cookie:string,after?:string):Promise<WorkspacePage>{
     const {access}=await this.#bearer(cookie);
+    await this.deps.auth.verifyPrivilegedAccessToken(access);
     return this.deps.portfolio.list(access,{
       pageSize:20,...(after===undefined?{}:{after})
     });
@@ -366,7 +413,7 @@ export class PrivateBrowserAuthService {
    * and all Hostinger replicas. Never retry an ambiguous refresh response:
    * the IdP may have already rotated the one-time-use refresh token.
    */
-  async refresh(cookie:string):Promise<BrowserIdentitySummary> {
+  async refresh(cookie:string):Promise<BrowserSessionView> {
     bearer.parse(cookie);
     const value=await this.deps.db.transaction(async tx=>{
       const row=await this.#load(tx,cookie,true);
@@ -392,11 +439,7 @@ export class PrivateBrowserAuthService {
       );
       return {access:tokens.access_token,verified};
     });
-    const workspaces=await this.deps.portfolio.list(value.access,{pageSize:50});
-    if(workspaces.items.length===0)throw new Error("Browser workspace membership unavailable");
-    return {sessionId:value.verified.sessionId,expiresAt:value.verified.expiresAt,
-      csrfToken:this.csrfForCookie(cookie),workspaces,
-      memberInvitationsEnabled:this.deps.memberInvites!==undefined};
+    return this.#describeSession(value.access,value.verified,cookie);
   }
 
   /**

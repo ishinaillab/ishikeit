@@ -38,7 +38,6 @@ export class PostgresBrowserAuthMaintenance {
     );
     const sessions=await this.db.query<DeletedRow>(
       `WITH expired AS (
-        SELECT ctid FROM public.ishikeit_browser_sessions
         SELECT b.ctid FROM public.ishikeit_browser_sessions AS b
         WHERE b.session_expires_at < now() OR b.revoked_at IS NOT NULL
           OR NOT EXISTS (

@@ -27,7 +27,12 @@ interface ChallengeRow extends pg.QueryResultRow {
   email_ciphertext:Buffer; email_iv:Buffer; email_tag:Buffer
 }
 interface RateRow extends pg.QueryResultRow { hits:number }
-interface TotpFactorRow extends pg.QueryResultRow { id:string; status?:string }
+interface TotpFactorRow extends pg.QueryResultRow { id:string; status:string; factor_type:string }
+export interface BrowserMfaFactorStatus {
+  factors:readonly string[];
+  pendingCount:number;
+  canEnroll:boolean;
+}
 interface CountRow extends pg.QueryResultRow { n:number }
 interface MemberRow extends pg.QueryResultRow { eligible:boolean }
 interface BrowserSessionRow extends pg.QueryResultRow {
@@ -93,7 +98,7 @@ export class PrivateBrowserAuthService {
     db:Pick<PostgresDatabase,"query"|"transaction">;
     cipher:CredentialCipher;
     auth:Pick<SupabaseAuthPrincipalVerifier,"verifyAccessToken"|"verifyPrivilegedAccessToken">;
-    mfa:Pick<SupabaseTotpMfaClient,"enroll"|"challengeAndVerify">;
+    mfa:Pick<SupabaseTotpMfaClient,"enroll"|"challengeAndVerify"|"unenroll">;
     otp:Pick<SupabaseEmailOtpClient,"sendOtp"|"verifyOtp"|"refresh"|"revoke">;
     portfolio:Pick<AuthenticatedWorkspacePortfolio,"list">;
     memberInvites?:Pick<PostgresWorkspaceInvitations,"invite">;
@@ -373,15 +378,66 @@ export class PrivateBrowserAuthService {
    * bearer-verified user. Factor secrets and provider Auth tokens are never
    * included in this read-only response.
    */
-  async listTotpFactors(cookie:string):Promise<readonly string[]> {
-    const {verified}=await this.#bearer(cookie);
+  async listTotpFactors(cookie:string):Promise<BrowserMfaFactorStatus> {
+    const {access,verified}=await this.#bearer(cookie);
     const rows=await this.deps.db.query<TotpFactorRow>(
-      `SELECT id FROM auth.mfa_factors
-       WHERE user_id=$1::uuid AND status='verified' AND factor_type='totp'
-       ORDER BY created_at ASC,id ASC LIMIT 10`,
+      `SELECT id,status::text AS status,factor_type::text AS factor_type
+       FROM auth.mfa_factors WHERE user_id=$1::uuid
+       ORDER BY created_at ASC,id ASC LIMIT 25`,
       [verified.principal.subject]
     );
-    return rows.rows.map(x=>z.string().uuid().parse(x.id));
+    const factors=rows.rows.filter(x=>x.status==="verified" && x.factor_type==="totp")
+      .map(x=>z.string().uuid().parse(x.id));
+    const pendingCount=rows.rows.filter(x=>
+      x.status==="unverified" && x.factor_type==="totp").length;
+    const hasVerified=rows.rows.some(x=>x.status==="verified");
+    let canEnroll=!hasVerified;
+    if(hasVerified){
+      try{await this.deps.auth.verifyPrivilegedAccessToken(access);canEnroll=true;}
+      catch{/* AAL1 users must step up before adding backup factors. */}
+    }
+    return {factors,pendingCount,canEnroll};
+  }
+
+  /** An explicit, CSRF-protected user action can reset only incomplete,
+   * unverified TOTP enrollments. A verified factor is NEVER removed here.
+   * This uses GoTrue's official owner-bound DELETE /factors/:id endpoint.
+   */
+  async clearIncompleteTotp(cookie:string):Promise<{cleared:number}>{
+    const {verified}=await this.#bearer(cookie);
+    if(!await this.#limit("mfa:reset:"+verified.principal.subject,5,900))
+      throw new Error("MFA reset rate limited");
+    return this.deps.db.transaction(async tx=>{
+      const row=await this.#load(tx,cookie,true);
+      const hash=sha256(cookie);
+      const token=this.deps.cipher.decrypt(
+        encrypted(row.access_ciphertext,row.access_iv,row.access_tag),
+        "ishikeit-browser-v1\0"+hash+"\\0access"
+      );
+      const fresh=await this.deps.auth.verifyAccessToken(token);
+      if(fresh.principal.subject!==row.user_id || fresh.sessionId!==row.auth_session_id)
+        throw new Error("Browser session unavailable");
+      const existing=await tx.query<CountRow>(
+        `SELECT count(*)::integer AS n FROM auth.mfa_factors
+         WHERE user_id=$1::uuid AND status='verified'`,[row.user_id]
+      );
+      if((existing.rows[0]?.n??0)>0)
+        await this.deps.auth.verifyPrivilegedAccessToken(token);
+      const pages=await this.deps.portfolio.list(token,{pageSize:1});
+      if(pages.items.length===0)throw new Error("Workspace authorization required");
+      const pending=await tx.query<TotpFactorRow>(
+        `SELECT id,status::text AS status,factor_type::text AS factor_type
+         FROM auth.mfa_factors
+         WHERE user_id=$1::uuid AND status='unverified' AND factor_type='totp'
+         ORDER BY created_at ASC,id ASC LIMIT 10`,[row.user_id]
+      );
+      let cleared=0;
+      for(const factor of pending.rows){
+        await this.deps.mfa.unenroll(token,z.string().uuid().parse(factor.id));
+        cleared++;
+      }
+      return {cleared};
+    });
   }
 
   /**

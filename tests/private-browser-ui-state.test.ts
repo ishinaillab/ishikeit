@@ -96,6 +96,11 @@ function setup(options:UiFixtureOptions={}){
   let pendingChecks=0;
   let restored=false;
   let restoredEmail="";
+  let securityChanges=0;
+  let resetRequests=0;
+  let signIn2faEnabled=true;
+  const disabled=new Set<string>();
+  const factorIds=[workspace1.workspaceId,workspace2.workspaceId];
   const workspaces={
     items:options.multiWorkspace?[workspace1,workspace2]:[workspace1]
   };
@@ -143,11 +148,31 @@ function setup(options:UiFixtureOptions={}){
     }
     if(path==="/app/auth/mfa/factors"){
       factorReads++;
+      const ids=Array.from({length:factors},(_,i)=>factorIds[i]??workspace2.workspaceId);
       return Promise.resolve(response({
-        factors:Array.from({length:factors},(_,i)=>
-          i===0?workspace1.workspaceId:workspace2.workspaceId),
-        pendingCount:pending,canEnroll:true
+        factors:ids.filter(id=>!disabled.has(id)),
+        devices:ids.map((id,i)=>({
+          factorId:id,
+          label:i===0?"Primary authenticator":"Backup authenticator",
+          enrolledAt:"2026-11-11T17:53:00.000Z",enabled:!disabled.has(id)
+        })),
+        pendingCount:pending,canEnroll:true,signIn2faEnabled
       }));
+    }
+    if(path==="/app/auth/mfa/preferences" && mutation){
+      securityChanges++;
+      const body=JSON.parse(request?.body??"{}") as {
+        kind:"factor"|"sign_in";factorId?:string;enabled:boolean
+      };
+      if(body.kind==="factor" && body.factorId){
+        if(!body.enabled && factors-disabled.size<=1)
+          return Promise.resolve(response({status:"last_authenticator_required"},409));
+        if(body.enabled)disabled.delete(body.factorId);
+        else disabled.add(body.factorId);
+      }else{
+        signIn2faEnabled=body.enabled;
+      }
+      return Promise.resolve(response({status:"changed",csrfToken:"test_csrf_settings_rotated"}));
     }
     if(path==="/app/auth/mfa/totp/enroll" && mutation){
       enrollRequests++;
@@ -161,6 +186,7 @@ function setup(options:UiFixtureOptions={}){
       }));
     }
     if(path==="/app/auth/mfa/totp/reset" && mutation){
+      resetRequests++;
       pending=0;
       return Promise.resolve(response({status:"incomplete_setup_cleared",cleared:1}));
     }
@@ -185,10 +211,16 @@ function setup(options:UiFixtureOptions={}){
   const clearTimeout=(id:number)=>{timers.delete(id);};
   runInNewContext(privateLoginJs,{window,document:dom,fetch,setTimeout,clearTimeout},{timeout:4000});
   const flush=async()=>{for(let i=0;i<40;i++)await Promise.resolve();};
-  const click=async(id:string)=>{
-    const handler=dom.getElementById(id).listeners.get("click");
-    if(!handler)throw new Error("Missing click handler "+id);
+  const clickElement=async(element:FakeElement)=>{
+    const handler=element.listeners.get("click");
+    if(!handler)throw new Error("Missing dynamic click handler");
     await handler();await flush();
+  };
+  const click=async(id:string)=>clickElement(dom.getElementById(id));
+  const clickDevice=async(index:number)=>{
+    const row=dom.getElementById("mfa-devices").children[index];
+    if(!row?.children[1])throw Error("Missing device switch");
+    await clickElement(row.children[1]);
   };
   const submit=async(id:string)=>{
     const handler=dom.getElementById(id).listeners.get("submit");
@@ -207,9 +239,10 @@ function setup(options:UiFixtureOptions={}){
     first[1].callback();
     await flush();
   };
-  return {dom,window,click,submit,flush,event,runTimer,timers,
+  return {dom,window,click,clickDevice,submit,flush,event,runTimer,timers,
     stats:()=>({enrollRequests,refreshRequests,logoutRequests,
-      factorReads,restoreCalls,pendingChecks,restoredEmail})};
+      factorReads,restoreCalls,pendingChecks,restoredEmail,securityChanges,resetRequests,
+      signIn2faEnabled,disabledCount:disabled.size})};
 }
 
 describe("secure workspace UX and real static frontend lifecycle",()=>{

@@ -68,11 +68,24 @@ export async function verifyAuthProductionConfiguration({
     /\{\{\s*\.ConfirmationURL\s*\}\}/u.test(body.mailer_templates_invite_content);
   const emailOtpTemplate=typeof body.mailer_templates_magic_link_content==="string" &&
     /\{\{\s*\.Token\s*\}\}/u.test(body.mailer_templates_magic_link_content);
+  // Supabase supports configurable email OTP lengths of 6–10 digits;
+  // the BFF accepts that exact range. Restrict expiry to the provider's
+  // documented one-hour default or shorter, and require verified identities.
+  const compatibleEmailOtp=Number.isInteger(body.mailer_otp_length) &&
+    body.mailer_otp_length>=6 && body.mailer_otp_length<=10 &&
+    Number.isInteger(body.mailer_otp_exp) &&
+    body.mailer_otp_exp>=60 && body.mailer_otp_exp<=3600 &&
+    body.mailer_allow_unverified_email_sign_ins===false;
+  // Supabase supports multiple verified TOTP factors. A backup factor on
+  // a separate device is necessary for safe owner-access recovery.
+  const backupTotpAvailable=Number.isInteger(body.mfa_max_enrolled_factors) &&
+    body.mfa_max_enrolled_factors>=2 && body.mfa_max_enrolled_factors<=10;
   const allowed=body.external_email_enabled===true &&
     body.disable_signup===true && body.mailer_autoconfirm===false &&
     body.mfa_totp_enroll_enabled===true &&
     body.mfa_totp_verify_enabled===true &&
     body.refresh_token_rotation_enabled===true &&
+    compatibleEmailOtp && backupTotpAvailable &&
     configuredSmtp && redirectAllowed && inviteTemplate && emailOtpTemplate;
   if(!allowed)throw new Error("Auth configuration is not safe for verified owner invitations");
   return {ready:true,redirect:ISHIKEIT_AUTH_REDIRECT};

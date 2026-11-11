@@ -44,10 +44,7 @@ export const privateLoginHtml = `<!doctype html>
       <div id="mfa-gate-slot">
         <section class="mfa-content" id="mfa-panel" aria-label="Authenticator verification" hidden>
           <p id="mfa-summary" class="muted"></p>
-          <div id="mfa-recovery" class="notice" hidden>
-            <p>An earlier authenticator setup was not finished. You can discard it without removing a verified device.</p>
-            <button type="button" class="secondary" id="mfa-reset">Discard unfinished setup</button>
-          </div>
+          <p id="mfa-pending-help" class="muted" hidden>Cancel this setup to start again.</p>
           <div id="mfa-setup" hidden>
             <button type="button" id="mfa-enroll">Set up an authenticator</button>
           </div>
@@ -69,6 +66,7 @@ export const privateLoginHtml = `<!doctype html>
             <input id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="6" pattern="[0-9]{6}" required>
             <button id="mfa-submit" type="submit">Verify and continue</button>
           </form>
+          <button type="button" id="mfa-cancel" class="secondary" hidden>Cancel</button>
         </section>
       </div>
       <button type="button" class="text-button auth-switch-account" id="gate-sign-out">Use another account</button>
@@ -129,12 +127,47 @@ export const privateLoginHtml = `<!doctype html>
         <p class="eyebrow">ACCOUNT SETTINGS</p>
         <h1 id="security-heading">Account security</h1>
         <p class="page-description">Manage how you verify your identity and protect your account.</p>
-        <article class="settings-card">
-          <div class="settings-card-head"><span class="security-icon" aria-hidden="true">✓</span>
-            <div><h2>Two-step verification</h2><p class="muted">Your account is protected with an authenticator.</p></div>
-            <span class="state-label">On</span>
+        <article class="settings-card" aria-labelledby="mfa-settings-heading">
+          <div class="settings-card-head">
+            <span class="security-icon" aria-hidden="true">✓</span>
+            <div>
+              <h2 id="mfa-settings-heading">Two-step verification (2FA)</h2>
+              <p class="muted" id="mfa-account-description">Checking account protection…</p>
+            </div>
+            <button type="button" role="switch" id="mfa-account-toggle"
+              class="security-switch" aria-label="Two-step verification for sign-in"
+              aria-checked="true" aria-describedby="mfa-account-description" disabled>
+              <span class="switch-track" aria-hidden="true"><span></span></span>
+              <span class="switch-label">On</span>
+            </button>
           </div>
-          <button type="button" class="secondary" id="manage-authenticators" aria-controls="mfa-settings-slot" aria-expanded="false">Manage authenticators</button>
+          <p class="muted security-footnote">Security-sensitive changes always require an authenticator code, even when 2FA for sign-in is off.</p>
+          <div class="devices-section" aria-labelledby="mfa-devices-heading">
+            <div class="devices-title-row">
+              <div><h3 id="mfa-devices-heading">Your authenticators</h3>
+                <p class="muted">Manage the authenticators you use to verify your identity.</p></div>
+              <button type="button" class="secondary" id="mfa-add">Set up an authenticator</button>
+            </div>
+            <div id="mfa-devices" class="device-list" aria-live="polite"></div>
+            <p id="mfa-devices-empty" class="muted">Loading authenticators…</p>
+          </div>
+          <section id="mfa-change-panel" class="security-detail security-proof"
+            aria-labelledby="mfa-change-title" hidden>
+            <h3 id="mfa-change-title">Confirm security change</h3>
+            <p id="mfa-change-description" class="muted"></p>
+            <form id="mfa-change-form">
+              <label for="mfa-proof-factor">Verify using</label>
+              <select id="mfa-proof-factor" required></select>
+              <label for="mfa-change-code">Six-digit authenticator code</label>
+              <input id="mfa-change-code" type="text" inputmode="numeric"
+                autocomplete="one-time-code" minlength="6" maxlength="6"
+                pattern="[0-9]{6}" required>
+              <div class="security-actions">
+                <button id="mfa-change-confirm" type="submit">Confirm change</button>
+                <button type="button" class="secondary" id="mfa-change-cancel">Cancel</button>
+              </div>
+            </form>
+          </section>
           <div id="mfa-settings-slot" class="security-detail" hidden></div>
         </article>
       </section>

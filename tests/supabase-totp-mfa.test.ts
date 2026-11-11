@@ -36,8 +36,52 @@ describe("Supabase Auth MFA server transport",()=>{
       headers:{apikey:key,authorization:"Bearer "+bearer}
     });
     const body=calls[0]?.options.body;
-    expect(typeof body==="string"?JSON.parse(body):null).toEqual({factor_type:"totp"});
+    expect(typeof body==="string"?JSON.parse(body):null).toMatchObject({
+      factor_type:"totp",friendly_name:expect.stringMatching(/^Ishikeit Authenticator [0-9a-f]{16}$/u)
+    });
   });
+  it("uses a distinct friendly name on each enrollment to avoid GoTrue conflicts",async()=>{
+    const {client,calls}=mockClient(()=>json({
+      id:factorId,type:"totp",totp:{secret:"JBSWY3DPEHPK3PXP",uri:"otpauth://totp/test"}
+    }));
+    await client.enroll(bearer);
+    await client.enroll(bearer);
+    const names=calls.map(x=>JSON.parse(String(x.options.body)).friendly_name as string);
+    expect(names).toHaveLength(2);
+    expect(names[0]).not.toBe(names[1]);
+  });
+  it("un-enrolls only by verified factor UUID using official DELETE and returns no secret",async()=>{
+    const {client,calls}=mockClient(()=>json({id:factorId}));
+    await client.unenroll(bearer,factorId);
+    expect(calls[0]?.url).toBe(project+"/auth/v1/factors/"+factorId);
+    expect(calls[0]?.options.method).toBe("DELETE");
+    expect(calls[0]?.options.headers).toMatchObject({
+      authorization:"Bearer "+bearer,apikey:key
+    });
+    await expect(client.unenroll(bearer,"not-uuid")).rejects.toThrow();
+    expect(calls).toHaveLength(1);
+  });
+  it("cleans up only a provider-created unverified factor after malformed enrollment response",async()=>{
+    const {client,calls}=mockClient((url,options)=>{
+      if(options.method==="DELETE")return json({id:factorId});
+      return json({id:factorId,type:"totp",totp:{secret:"invalid secret"}});
+    });
+    await expect(client.enroll(bearer)).rejects.toThrow("Invalid MFA provider response");
+    expect(calls.map(x=>x.options.method)).toEqual(["POST","DELETE"]);
+    expect(calls[1]?.url).toBe(project+"/auth/v1/factors/"+factorId);
+  });
+  it("accepts official MFA AAL2 token exchange with opaque short refresh token",async()=>{
+    const {client}=mockClient(url=>url.endsWith("/challenge")
+      ? json({id:challengeId})
+      : json({
+        access_token:access,refresh_token:"abcd1234wxyz",expires_in:3600,
+        token_type:"bearer",user:{id:factorId}
+      })
+    );
+    const tokens=await client.challengeAndVerify(bearer,factorId,"123456");
+    expect(tokens.refresh_token).toBe("abcd1234wxyz");
+  });
+
   it("creates challenge and exchanges six-digit OTP for rotated provider tokens only internally",async()=>{
     const {client,calls}=mockClient((url)=>{
       if(url.endsWith("/challenge"))return json({id:challengeId});

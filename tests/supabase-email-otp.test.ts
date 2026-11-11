@@ -71,6 +71,12 @@ describe("official Supabase Auth REST BFF transport",()=>{
     expect(calls[0]?.init.headers).toMatchObject({authorization:"Bearer "+access});
   });
 
+  it("treats unsuccessful local provider revocation as a failure for audit and cleanup",async()=>{
+    const {client}=setup(()=>new Response("{}",{status:403}));
+    await expect(client.revoke(access))
+      .rejects.toThrow("Supabase session revocation unavailable");
+  });
+
   it("rejects wrong project host, HTTP URLs and secret/service-role keys",()=>{
     const fetchImpl:typeof fetch=()=>Promise.resolve(issued());
     for(const base of [

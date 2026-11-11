@@ -73,6 +73,12 @@ export async function verifyProtectedProvisioningEnvironment({
       !reviewers.reviewers.some(x=>x?.type==="User" && x.reviewer?.login===REQUIRED_REVIEWER))
     throw new Error("Human approval protection missing for super-admin provisioning");
 
+  // Branch-limited deployment environments do not protect source history:
+  // GitHub main must independently enforce branch protection/rulesets so
+  // unreviewed direct pushes cannot reach Hostinger auto-deployment.
+  const main=await get(base+"/branches/"+BRANCH);
+  if(main.name!==BRANCH || main.protected!==true)
+    throw new Error("GitHub main branch is not protected");
   const policy=env.deployment_branch_policy;
   if(!policy||typeof policy!=="object")
     throw new Error("GitHub environment main branch restriction missing");
@@ -87,9 +93,7 @@ export async function verifyProtectedProvisioningEnvironment({
       branches.branch_policies[0]?.name!==BRANCH)
       throw new Error("GitHub environment main-only deployment policy missing");
   }else if(policy.protected_branches===true && policy.custom_branch_policies===false){
-    const branch=await get(base+"/branches/"+BRANCH);
-    if(branch.name!==BRANCH||branch.protected!==true)
-      throw new Error("GitHub main branch is not protected");
+    // Already checked GitHub's effective main protection above.
   }else{
     throw new Error("GitHub environment deployment branch protection ambiguous");
   }

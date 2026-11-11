@@ -16,6 +16,10 @@ const csrf="C".repeat(43);
 function testServer(enabled=true,invitesEnabled=false){
   const controller={
     begin:vi.fn((_email:string,_ip:string)=>{void _email;void _ip;return Promise.resolve(login);}),
+    hasPendingEmailOtp:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve(true);}),
+    resumeEmailOtp:vi.fn((_email:string,_ip:string)=>{
+      void _email;void _ip;return Promise.resolve(login);
+    }),
     verify:vi.fn((_nonce:string,_code:string,_ip:string)=>{void _nonce;void _code;void _ip;return Promise.resolve({
       cookieValue:token,csrfToken:csrf
     });}),
@@ -361,6 +365,59 @@ describe("private cookie-only browser auth routes",()=>{
     expect(controller.begin).toHaveBeenCalledTimes(1);
     await server.close();
   });
+
+  it("resumes an already requested OTP with the original cookie but never discloses the email",async()=>{
+    const {server,controller}=testServer();
+    const ok=await server.inject({method:"GET",url:"/app/auth/pending-otp",
+      headers:{host,cookie:loginCookie()}});
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toEqual({status:"awaiting_code"});
+    expect(ok.body).not.toContain("example.com");
+    expect(ok.headers["cache-control"]).toContain("no-store");
+    expect(controller.hasPendingEmailOtp).toHaveBeenCalledWith(login);
+    const missing=await server.inject({method:"GET",url:"/app/auth/pending-otp",
+      headers:{host}});
+    expect(missing.statusCode).toBe(401);
+    controller.hasPendingEmailOtp.mockResolvedValueOnce(false);
+    const expired=await server.inject({method:"GET",url:"/app/auth/pending-otp",
+      headers:{host,cookie:loginCookie()}});
+    expect(expired.statusCode).toBe(401);
+    const badHost=await server.inject({method:"GET",url:"/app/auth/pending-otp",
+      headers:{host:"evil.test",cookie:loginCookie()}});
+    expect(badHost.statusCode).toBe(403);
+    await server.close();
+  });
+  it("rebinds a code-email link in another browser without sending a new code or accepting origin/JSON bypass",async()=>{
+    const {server,controller}=testServer();
+    const request={email:"invited+test@example.com"};
+    const resume=await server.inject({
+      method:"POST",url:"/app/auth/resume-otp",headers,payload:request
+    });
+    expect(resume.statusCode).toBe(202);
+    expect(resume.json()).toEqual({status:"if_recent_code_sent"});
+    expect(resume.headers["set-cookie"]).toContain("__Host-ishikeit-login="+login);
+    expect(resume.headers["set-cookie"]).toContain("HttpOnly; Secure; SameSite=Strict");
+    expect(resume.body).not.toContain(request.email);
+    expect(controller.resumeEmailOtp).toHaveBeenCalledWith(request.email,expect.any(String));
+    expect(controller.begin).not.toHaveBeenCalled();
+    for(const h of [
+      {...headers,origin:"https://evil.test"},
+      {...headers,"content-type":"text/plain"},
+      {...headers,"sec-fetch-site":"cross-site"}
+    ]){
+      const bad=await server.inject({
+        method:"POST",url:"/app/auth/resume-otp",headers:h,payload:JSON.stringify(request)
+      });
+      expect(bad.statusCode).toBe(403);
+    }
+    const invalid=await server.inject({
+      method:"POST",url:"/app/auth/resume-otp",headers,payload:{email:"notanemail"}
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(controller.resumeEmailOtp).toHaveBeenCalledTimes(1);
+    await server.close();
+  });
+
   it("verifies code only with bound pending cookie and rotates into fresh opaque session",async()=>{
     const {server,controller}=testServer();
     const missing=await server.inject({

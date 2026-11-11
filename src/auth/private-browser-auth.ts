@@ -412,7 +412,7 @@ export class PrivateBrowserAuthService {
       const hash=sha256(cookie);
       const token=this.deps.cipher.decrypt(
         encrypted(row.access_ciphertext,row.access_iv,row.access_tag),
-        "ishikeit-browser-v1\0"+hash+"\\0access"
+        "ishikeit-browser-v1\0"+hash+"\0access"
       );
       const fresh=await this.deps.auth.verifyAccessToken(token);
       if(fresh.principal.subject!==row.user_id || fresh.sessionId!==row.auth_session_id)

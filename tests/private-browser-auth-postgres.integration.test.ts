@@ -513,6 +513,117 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       .rejects.toThrow(/not available/i);
   });
 
+  it("lists both verified authenticators independently and securely changes their enabled states",async()=>{
+    const backupId=randomUUID();
+    await db!.query(
+      "INSERT INTO auth.mfa_factors(id,user_id,status,factor_type,created_at) VALUES($1,$2,'verified','totp',now()-interval '1 day'),($3,$2,'verified','totp',now())",
+      [factorId,userId,backupId]
+    );
+    const initial=await service!.verify(
+      await service!.begin("invited@example.com","mfa-manage-first"),"123456","mfa-manage-first"
+    );
+    const stepped=await service!.verifyTotp(initial.cookieValue,factorId,"123456");
+    const original=await service!.listTotpFactors(stepped.cookieValue);
+    expect(original.factors).toEqual([factorId,backupId]);
+    expect(original.devices.map(x=>({label:x.label,enabled:x.enabled}))).toEqual([
+      {label:"Primary authenticator",enabled:true},
+      {label:"Backup authenticator",enabled:true}
+    ]);
+    expect(original.signIn2faEnabled).toBe(true);
+
+    const updated=await service!.changeMfaSettings(stepped.cookieValue,{
+      kind:"factor",factorId:backupId,enabled:false,
+      proofFactorId:factorId,code:"654321"
+    });
+    expect(updated.cookieValue).not.toBe(stepped.cookieValue);
+    expect(updated.csrfToken).not.toBe(stepped.csrfToken);
+    await expect(service!.sessionStatus(stepped.cookieValue)).rejects.toThrow();
+    const after=await service!.listTotpFactors(updated.cookieValue);
+    expect(after.factors).toEqual([factorId]);
+    expect(after.devices.map(x=>x.enabled)).toEqual([true,false]);
+    expect((await db!.query("SELECT 1 FROM auth.mfa_factors WHERE status='verified'")).rowCount).toBe(2);
+
+    const other=await service!.verify(
+      await service!.begin("invited@example.com","mfa-manage-second"),"123456","mfa-manage-second"
+    );
+    await expect(service!.verifyTotp(other.cookieValue,backupId,"123456"))
+      .rejects.toThrow(/not available/);
+    await expect(service!.changeMfaSettings(updated.cookieValue,{
+      kind:"factor",factorId,enabled:false,
+      proofFactorId:factorId,code:"123456"
+    })).rejects.toBeInstanceOf(BrowserMfaLastAuthenticatorError);
+
+    const restored=await service!.changeMfaSettings(updated.cookieValue,{
+      kind:"factor",factorId:backupId,enabled:true,
+      proofFactorId:factorId,code:"123456"
+    });
+    expect((await service!.listTotpFactors(restored.cookieValue)).factors)
+      .toEqual([factorId,backupId]);
+    // The newly enrolled verified backup is never deleted or re-created by a toggle.
+    expect((await db!.query("SELECT 1 FROM auth.mfa_factors WHERE id=$1",[backupId])).rowCount).toBe(1);
+    const audit=await db!.query<{event_kind:string}>(
+      "SELECT event_kind FROM public.ishikeit_browser_mfa_security_events ORDER BY occurred_at"
+    );
+    expect(audit.rows.map(x=>x.event_kind).sort())
+      .toEqual(["authenticator_disabled","authenticator_enabled"]);
+  });
+
+  it("turns sign-in 2FA off and on only after fresh authenticator proof while keeping sensitive actions AAL2",async()=>{
+    await db!.query("INSERT INTO auth.mfa_factors(id,user_id,status,factor_type) VALUES($1,$2,'verified','totp')",
+      [factorId,userId]);
+    const first=await service!.verify(
+      await service!.begin("invited@example.com","mfa-policy-first"),"123456","mfa-policy-first"
+    );
+    const stepped=await service!.verifyTotp(first.cookieValue,factorId,"123456");
+    const switchedOff=await service!.changeMfaSettings(stepped.cookieValue,{
+      kind:"sign_in",enabled:false,proofFactorId:factorId,code:"123456"
+    });
+    expect((await service!.listTotpFactors(switchedOff.cookieValue)).signIn2faEnabled)
+      .toBe(false);
+    // New logins after opting out of sign-in MFA can view their own active
+    // workspace but cannot use privileged actions without a fresh AAL2.
+    const emailOnly=await service!.verify(
+      await service!.begin("invited@example.com","mfa-policy-second"),"123456","mfa-policy-second"
+    );
+    expect((await service!.sessionStatus(emailOnly.cookieValue)).status).toBe("authenticated");
+    await expect(service!.inviteWorkspaceMember(emailOnly.cookieValue,{
+      workspaceId,email:"colleague@example.com",role:"viewer"
+    })).rejects.toThrow(/multi-factor/i);
+    expect(memberInvites.invite).not.toHaveBeenCalled();
+    const turnedOn=await service!.changeMfaSettings(emailOnly.cookieValue,{
+      kind:"sign_in",enabled:true,proofFactorId:factorId,code:"654321"
+    });
+    expect((await service!.listTotpFactors(turnedOn.cookieValue)).signIn2faEnabled).toBe(true);
+    await expect(service!.sessionStatus(emailOnly.cookieValue)).rejects.toThrow();
+    const future=await service!.verify(
+      await service!.begin("invited@example.com","mfa-policy-third"),"123456","mfa-policy-third"
+    );
+    expect((await service!.sessionStatus(future.cookieValue)).status).toBe("mfa_required");
+    expect((await db!.query(
+      "SELECT 1 FROM public.ishikeit_browser_mfa_security_events WHERE event_kind IN ('sign_in_2fa_disabled','sign_in_2fa_enabled')"
+    )).rowCount).toBe(2);
+  });
+
+  it("denies changes with a missing or foreign authenticator without altering policy or issuing new provider tokens",async()=>{
+    await db!.query("INSERT INTO auth.mfa_factors(id,user_id,status,factor_type) VALUES($1,$2,'verified','totp')",
+      [factorId,userId]);
+    const first=await service!.verify(
+      await service!.begin("invited@example.com","mfa-deny-first"),"123456","mfa-deny-first"
+    );
+    const stepped=await service!.verifyTotp(first.cookieValue,factorId,"123456");
+    const count=mfa.challengeAndVerify.mock.calls.length;
+    await expect(service!.changeMfaSettings(stepped.cookieValue,{
+      kind:"factor",factorId:randomUUID(),enabled:false,
+      proofFactorId:factorId,code:"123456"
+    })).rejects.toThrow(/not available/i);
+    await expect(service!.changeMfaSettings(stepped.cookieValue,{
+      kind:"sign_in",enabled:false,proofFactorId:randomUUID(),code:"123456"
+    })).rejects.toThrow(/proof/i);
+    expect(mfa.challengeAndVerify).toHaveBeenCalledTimes(count);
+    expect((await service!.listTotpFactors(stepped.cookieValue)).signIn2faEnabled).toBe(true);
+    expect((await db!.query("SELECT 1 FROM public.ishikeit_browser_mfa_security_events")).rowCount).toBe(0);
+  });
+
   it("blocks duplicate pending enrollments without consuming rate budget",async()=>{
     const nonce=await service!.begin("invited@example.com","pending-guard-ip");
     const session=await service!.verify(nonce,"123456","pending-guard-ip");

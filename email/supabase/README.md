@@ -13,6 +13,42 @@
 
 The invitation retains `{{ .ConfirmationURL }}` as both the button URL and visible fallback. The OTP email retains `{{ .Token }}`; do not change it to a magic-link flow without changing the Ishikeit BFF authentication behavior and its tests.
 
+### Email-code entry deep links (November 12, 2026)
+
+The Magic Link/OTP template's **Ishikeit sign-in** hyperlink deliberately points to
+`https://apps.ishinaillab.com/app/login#verify-email={{ .Email }}`.
+Supabase's Go `html/template` automatically percent-encodes `.Email` in
+an HTML `href` URL-fragment context. Do **not** insert `{{ .Token }}`,
+`{{ .TokenHash }}`, `{{ .ConfirmationURL }}`, a Supabase bearer, or a
+session cookie into the link: link previews and automatic security scanners
+must never log in or consume the emailed OTP.
+
+The fragment is removed from browser history as soon as the first-party,
+strict-CSP Ishikeit script executes. It is never sent as part of an HTTP
+request URL, logged on the server, reflected into HTML or stored locally.
+When the original request cookie exists, the server resumes code entry
+without exposing even the email address. In a different browser, the
+client submits only the email hint as same-origin JSON to
+`POST /app/auth/resume-otp`, which creates a **new unprivileged challenge**
+ONLY if that account has a recent, successfully dispatched, unconsumed
+OTP (HMAC lookup and per-email/IP rate limits). The user must still type
+the original email code, and afterward complete normal TOTP step-up.
+No second email is sent on link navigation. Expired/missing/blocked
+attempts cannot authenticate and present a fresh-code fallback.
+
+IMPORTANT: this repository is **not** the hosted Supabase template itself.
+The editor/API must be updated for `mailer_templates_magic_link_content`
+and read back through an authorized Supabase Auth management capability.
+Deploy additive migration `0019_browser_otp_email_link_resume.sql` to
+the correct Supabase project **before** the Node app code expecting the
+new columns. Do not claim cross-browser live support until both the
+hosted template and deployed application have been verified in a real
+recipient email. The pre-existing static link continues to work when
+opened in the original browser's still-valid pending cookie.
+
+Authoritative sources: [Supabase Email Templates](https://supabase.com/docs/guides/auth/auth-email-templates)
+and [Go html/template contextual autoescaping](https://pkg.go.dev/html/template).
+
 ### Responsive behavior
 
 - **Mobile first:** single-column 100%-width presentation tables, 12px outside gutters, 24px content gutters, readable 16px body text and an accessible 56px+ invitation action. The layout is fluid even if the client strips media queries.

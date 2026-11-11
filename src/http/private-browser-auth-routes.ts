@@ -8,6 +8,7 @@ export interface BrowserAuthController {
   verify(cookie:string,code:string,networkId:string):
     Promise<{cookieValue:string;csrfToken:string}>;
   get(cookie:string):ReturnType<PrivateBrowserAuthService["get"]>;
+  clearIncompleteTotp(cookie:string):ReturnType<PrivateBrowserAuthService["clearIncompleteTotp"]>;
   listWorkspaces(cookie:string,after?:string):
     ReturnType<PrivateBrowserAuthService["listWorkspaces"]>;
   refresh(cookie:string):ReturnType<PrivateBrowserAuthService["refresh"]>;
@@ -132,6 +133,21 @@ export function registerPrivateBrowserAuthRoutes(
   }
   server.get("/app", (req,reply)=>privateUi(req,reply,"html"));
   server.get("/app/login", (req,reply)=>privateUi(req,reply,"html"));
+  // Distinct authenticated URL: merely loading this HTML is not authorization.
+  // Verify the current Supabase bearer, live session and membership on EVERY
+  // navigation; never serve a private screen solely because a cookie exists.
+  server.get("/app/workspaces",async(req,reply)=>{
+    privateResponse(reply);
+    if(!sameOrigin(req,false))return deny(reply,403).send({status:"forbidden"});
+    const value=parseCookie(req,sessionName);
+    if(value!==undefined){
+      try{
+        await deps.controller.get(value);
+        return privateUi(req,reply,"html");
+      }catch{/* Redirect without exposing private workspace content. */}
+    }
+    return reply.code(303).header("location","/app/login").send();
+  });
   server.get("/app/auth/ui.css", (req,reply)=>privateUi(req,reply,"css"));
   server.get("/app/auth/ui.js", (req,reply)=>privateUi(req,reply,"js"));
 
@@ -220,7 +236,7 @@ export function registerPrivateBrowserAuthRoutes(
     if(value===undefined)return deny(reply).send({status:"unauthenticated"});
     try{
       return reply.code(200).send({
-        factors:await deps.controller.listTotpFactors(value)
+        ...await deps.controller.listTotpFactors(value)
       });
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
@@ -236,6 +252,23 @@ export function registerPrivateBrowserAuthRoutes(
       const enrollment=await deps.controller.enrollTotp(value);
       return reply.code(200).send(enrollment);
     }catch{return deny(reply,403).send({status:"mfa_enrollment_unavailable"});}
+  });
+  // Reset only owner-controlled incomplete factors, never verified factors.
+  // Strict host/origin, session and CSRF protections match MFA enrollment.
+  server.post("/app/auth/mfa/totp/reset",{bodyLimit:256},async(req,reply)=>{
+    privateResponse(reply);
+    if(!mutation(req,reply))return reply;
+    const value=session(req,reply);
+    if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+    if(!csrf(req,reply,value))return reply;
+    if(!z.object({}).strict().safeParse(req.body).success)
+      return deny(reply,400).send({status:"invalid_request"});
+    try{
+      const result=await deps.controller.clearIncompleteTotp(value);
+      return reply.code(200).send({status:"incomplete_setup_cleared",cleared:result.cleared});
+    }catch{
+      return deny(reply,403).send({status:"mfa_reset_unavailable"});
+    }
   });
   server.post("/app/auth/mfa/totp/verify",{bodyLimit:512},async(req,reply)=>{
     privateResponse(reply);

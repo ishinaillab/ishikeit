@@ -175,6 +175,9 @@ let enrollmentFactorId="";
 const mfaSetup=document.getElementById("mfa-setup");
 const mfaEnrollment=document.getElementById("mfa-enrollment");
 const mfaSecret=document.getElementById("mfa-secret");
+const mfaQr=document.getElementById("mfa-qr");
+const mfaQrFallback=document.getElementById("mfa-qr-fallback");
+const mfaFactorPicker=document.getElementById("mfa-factor-picker");
 const mfaRecovery=document.getElementById("mfa-recovery");
 const pageTitle=document.getElementById("page-title");
 let mfaLoadGeneration=0;
@@ -185,47 +188,72 @@ function clearMfa(){
   mfaRecovery.hidden=true;
   enrollmentFactorId="";
   mfaSecret.textContent="";
+  mfaQr.removeAttribute("src");
+  mfaQr.hidden=true;
+  mfaQrFallback.hidden=true;
   mfaEnrollment.hidden=true;
   mfaForm.hidden=true;
   mfaSetup.hidden=true;
   mfaFactor.replaceChildren();
+  mfaFactorPicker.hidden=true;
   document.getElementById("mfa-code").value="";
 }
 async function loadMfaFactors(){
   const generation=++mfaLoadGeneration;
   try{
     const response=await fetch("/app/auth/mfa/factors",{credentials:"same-origin",cache:"no-store"});
-    if(!response.ok)throw Error("No MFA data");
+    if(!response.ok)throw Error("MFA factors unavailable");
     const data=await response.json();
     if(generation!==mfaLoadGeneration || accountPanel.hidden)return;
-    // A successful enrollment response returns the secret only once. Preserve
-    // it and its factor ID during session renewal / asynchronous UI refresh.
+    const verifiedIds=Array.isArray(data.factors) ? data.factors : [];
+    const pendingCount=Number.isInteger(data.pendingCount) && data.pendingCount>=0
+      ? data.pendingCount : 0;
+    const canEnroll=data.canEnroll===true;
+    // Supabase shares an unverified TOTP seed ONLY in the original enroll response.
+    // Never discard that one-use key merely because factor listing fails or
+    // an authenticated session is renewed in the background.
     const keepPending=!!enrollmentFactorId && !!mfaSecret.textContent;
     mfaFactor.replaceChildren();
     if(keepPending){
       const pending=document.createElement("option");
       pending.value=enrollmentFactorId;
-      pending.textContent="New authenticator (not verified)";
+      pending.textContent="New authenticator (verify setup)";
       mfaFactor.append(pending);
     }
-    for(const id of data.factors){
+    for(const id of verifiedIds){
       const option=document.createElement("option");
       option.value=id;
       option.textContent="Verified authenticator "+String(mfaFactor.options.length+1);
       mfaFactor.append(option);
     }
     if(keepPending)mfaFactor.value=enrollmentFactorId;
-    mfaSetup.hidden=data.canEnroll!==true || keepPending;
-    mfaRecovery.hidden=!(data.pendingCount>0 && data.canEnroll===true);
+    mfaEnrollment.hidden=!keepPending;
+    mfaFactorPicker.hidden=mfaFactor.options.length<=1;
     mfaForm.hidden=mfaFactor.options.length===0;
-    if(mfaFactor.options.length===0 && data.canEnroll===true)
-      message(data.pendingCount>0
-        ? "An incomplete authenticator setup needs to be discarded before starting again."
-        : "Set up an authenticator to protect account connections.");
-    else if(data.canEnroll===false && data.factors.length>0)
+    // An in-progress setup must be verified or explicitly discarded BEFORE
+    // starting a new one. Otherwise the seed is lost and the provider
+    // accumulates unusable unverified factors.
+    mfaSetup.hidden=!canEnroll || keepPending || pendingCount>0;
+    mfaRecovery.hidden=!(canEnroll && pendingCount>0);
+    if(keepPending){
+      message("Finish connecting your authenticator with the QR code or setup key.");
+    }else if(pendingCount>0 && canEnroll){
+      message("An incomplete authenticator setup exists. Discard it before starting again.");
+    }else if(!canEnroll && verifiedIds.length>0){
       message("Verify an existing authenticator before enrolling a backup device.");
+    }else if(canEnroll && verifiedIds.length===0){
+      message("Set up an authenticator to protect your account.");
+    }
   }catch{
-    if(generation===mfaLoadGeneration)clearMfa();
+    if(generation!==mfaLoadGeneration || accountPanel.hidden)return;
+    // Do not erase a received setup secret on transient network/factor-list
+    // errors. A simple Refresh authenticator status can retry the readback.
+    if(!enrollmentFactorId){
+      mfaSetup.hidden=true;
+      mfaRecovery.hidden=true;
+      mfaForm.hidden=true;
+    }
+    message("Could not refresh authenticator status. Keep this page open and try again.");
   }
 }
 
@@ -350,25 +378,66 @@ inviteForm.addEventListener("submit",async event=>{
 });
 document.getElementById("mfa-enroll").addEventListener("click",async()=>{
   if(!csrfToken){message("Session expired. Renew your session first.");return;}
+  if(enrollmentFactorId){message("Finish or discard the current authenticator setup.");return;}
   const button=document.getElementById("mfa-enroll");
   button.disabled=true;
+  message("Starting authenticator setup...");
   try{
     const response=await request("/app/auth/mfa/totp/enroll",{},csrfToken);
-    if(!response.ok)throw Error("MFA enrollment unavailable");
+    if(response.status===409){
+      await loadMfaFactors();
+      message("An incomplete setup already exists. Discard it before starting another.");
+      return;
+    }
+    if(response.status===429){
+      message("Too many setup attempts. Wait for the security cooldown (up to 15 minutes) before trying again. Do not repeatedly click the button.");
+      return;
+    }
+    if(!response.ok){
+      message("Unable to start authenticator setup. Refresh authenticator status or renew your session.");
+      return;
+    }
     const data=await response.json();
+    if(typeof data.factorId!=="string" || typeof data.secret!=="string"
+      || !/^[A-Z2-7]{16,128}$/.test(data.secret)){
+      message("Authenticator setup response unavailable. Refresh status to discard incomplete setup.");
+      await loadMfaFactors();
+      return;
+    }
     enrollmentFactorId=data.factorId;
     mfaSecret.textContent=data.secret;
+    const qr=typeof data.qrCodeDataUrl==="string" && data.qrCodeDataUrl.length<1500000
+      && data.qrCodeDataUrl.startsWith("data:image/svg+xml;base64,")
+      ? data.qrCodeDataUrl : "";
+    if(qr){
+      mfaQr.src=qr;
+      mfaQr.hidden=false;
+      mfaQrFallback.hidden=true;
+    }else{
+      mfaQr.removeAttribute("src");
+      mfaQr.hidden=true;
+      mfaQrFallback.hidden=false;
+    }
     mfaEnrollment.hidden=false;
     mfaForm.hidden=false;
     mfaSetup.hidden=true;
     mfaRecovery.hidden=false;
     const option=document.createElement("option");
     option.value=data.factorId;
-    option.textContent="New authenticator";
+    option.textContent="New authenticator (verify setup)";
     mfaFactor.prepend(option);
     mfaFactor.value=data.factorId;
-    message("Enter the setup key in your authenticator app, then verify a code.");
-  }catch{message("Unable to enroll an authenticator. Renew your session or contact support.");}
+    mfaFactorPicker.hidden=mfaFactor.options.length<=1;
+    message("Scan the QR code or enter the setup key in your authenticator, then verify a six-digit code below.");
+  }catch{
+    message("Connection unavailable. Refresh authenticator status before retrying; a new factor may have been created.");
+  }finally{button.disabled=false;}
+});
+
+document.getElementById("mfa-reload").addEventListener("click",async()=>{
+  const button=document.getElementById("mfa-reload");
+  button.disabled=true;
+  try{await loadMfaFactors();}
   finally{button.disabled=false;}
 });
 document.getElementById("mfa-reset").addEventListener("click",async()=>{
@@ -398,9 +467,13 @@ mfaForm.addEventListener("submit",async event=>{
     const response=await request("/app/auth/mfa/totp/verify",{factorId,code},csrfToken);
     if(!response.ok)throw Error("MFA verification failed");
     document.getElementById("mfa-code").value="";
-    mfaSecret.textContent="";
-    mfaEnrollment.hidden=true;
+    // Clear both the manual key and its QR from DOM, including image data URL.
     enrollmentFactorId="";
+    mfaSecret.textContent="";
+    mfaQr.removeAttribute("src");
+    mfaQr.hidden=true;
+    mfaQrFallback.hidden=true;
+    mfaEnrollment.hidden=true;
     const result=await response.json();
     showAccount(result);
     message("Authenticator verified. Your session is protected for privileged actions.");

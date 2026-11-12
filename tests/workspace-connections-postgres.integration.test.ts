@@ -47,10 +47,12 @@ async function link(
 }
 async function activate(
   connectionId: string, workspaceId: string, actor: WorkspacePrincipal,
-  provider: string, accountId: string
+  provider: string, accountId: string,
+  binding: {providerApplicationKey: string; providerConnectionId?: string;
+    credentialAccountId?: string} = {providerApplicationKey:"ishikeit-test-app"}
 ) {
   return registry!.activateVerified({
-    connectionId,workspaceId,actor,proof:proof(provider,accountId)
+    connectionId,workspaceId,actor,proof:proof(provider,accountId),...binding
   });
 }
 
@@ -127,8 +129,12 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
       proof:proof("telegram",other.ownerId)
     });
     expect(await shadow.inspectVerifiedTelegramBusiness(proofIdentity)).toBe("inactive");
-    await activate(linkedA.connectionId,workspaceA,ownerA,"telegram",proofIdentity.ownerId);
-    await activate(linkedB.connectionId,workspaceB,ownerB,"telegram",other.ownerId);
+    await activate(linkedA.connectionId,workspaceA,ownerA,"telegram",proofIdentity.ownerId,{
+      providerApplicationKey:proofIdentity.botId,providerConnectionId:proofIdentity.connectionId
+    });
+    await activate(linkedB.connectionId,workspaceB,ownerB,"telegram",other.ownerId,{
+      providerApplicationKey:other.botId,providerConnectionId:other.connectionId
+    });
     expect(await shadow.inspectVerifiedTelegramBusiness(proofIdentity))
       .toBe("candidate_active");
     expect(await shadow.inspectVerifiedTelegramBusiness(other))
@@ -143,6 +149,62 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     });
     expect(await shadow.inspectVerifiedTelegramBusiness(proofIdentity)).toBe("inactive");
     expect(await shadow.inspectVerifiedTelegramBusiness(other)).toBe("candidate_active");
+  });
+
+  it("refuses app/connection/credential substitution despite a matching provider account", async () => {
+    const connected = await registry!.linkVerified({
+      connectionId:randomUUID(),workspaceId:workspaceA,actor:ownerA,
+      providerApplicationKey:"app-A",providerConnectionId:"business-A",
+      credentialAccountId:"credential-A",proof:proof("telegram","owner-id-1")
+    });
+    const exact = {
+      workspaceId:workspaceA,connectionId:connected.connectionId,actor:ownerA,
+      proof:proof("telegram","owner-id-1"),
+      providerApplicationKey:"app-A",providerConnectionId:"business-A",
+      credentialAccountId:"credential-A"
+    };
+    for (const altered of [
+      {...exact,providerApplicationKey:"app-B"},
+      {...exact,providerConnectionId:"business-B"},
+      {...exact,credentialAccountId:"credential-B"},
+      {...exact,providerConnectionId:undefined},
+      {...exact,credentialAccountId:undefined},
+      {...exact,proof:proof("telegram","foreign-owner")}
+    ]) {
+      await expect(registry!.activateVerified(altered)).rejects.toThrow(
+        /exact fresh provider (binding|identity) proof/i
+      );
+    }
+    const before=await registry!.readForMember({
+      workspaceId:workspaceA,connectionId:connected.connectionId,actor:ownerA
+    });
+    expect(before?.status).toBe("verifying");
+    expect(before?.generation).toBe(1);
+    const auditBefore=await db!.query<{event_type:string}>(
+      "SELECT event_type FROM public.ishikeit_connection_audit WHERE connection_id=$1",
+      [connected.connectionId]
+    );
+    expect(auditBefore.rows.map(x=>x.event_type)).toEqual(["link_verified"]);
+    const activated=await registry!.activateVerified(exact);
+    expect(activated.status).toBe("connected");
+    expect(activated.generation).toBe(2);
+    expect((await registry!.activeProviderAccount("telegram","owner-id-1"))?.connectionId)
+      .toBe(connected.connectionId);
+    await expect(registry!.activateVerified(exact)).rejects.toThrow(/exact fresh provider identity/i);
+  });
+
+  it("refuses an omitted application binding, even for records without a provider connection", async () => {
+    const pending=await link(workspaceB,ownerB,"instagram","ig-account-B");
+    await expect(registry!.activateVerified({
+      connectionId:pending.connectionId,workspaceId:workspaceB,actor:ownerB,
+      proof:proof("instagram","ig-account-B"),
+      providerApplicationKey:"other-app"
+    })).rejects.toThrow(/exact fresh provider binding proof/i);
+    expect((await registry!.readForMember({
+      workspaceId:workspaceB,connectionId:pending.connectionId,actor:ownerB
+    }))?.status).toBe("verifying");
+    expect((await activate(pending.connectionId,workspaceB,ownerB,"instagram","ig-account-B"))
+      .status).toBe("connected");
   });
 
   it("does not route an account while verifying; activates only verified exact account", async () => {

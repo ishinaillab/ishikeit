@@ -39,6 +39,7 @@ class FakeElement {
 }
 interface UiFixtureOptions {
   state?:"authenticated"|"mfa_required"|"unauthenticated";
+  deferInitialSession?:boolean;
   pendingEmailCookie?:boolean;
   emailLinkHint?:string;
   restoreSuccess?:boolean;
@@ -110,6 +111,7 @@ function setup(options:UiFixtureOptions={}){
     items:options.multiWorkspace?[workspace1,workspace2]:[workspace1]
   };
   const originalState=options.state??"authenticated";
+  let completeInitialSession:(()=>void)|undefined;
   const makeSession=(state:"authenticated"|"mfa_required",renewed=false)=>({
     status:state,
     csrfToken:renewed?"test_csrf_rotated":"test_csrf_initial",
@@ -125,11 +127,17 @@ function setup(options:UiFixtureOptions={}){
   });
   const fetch=(path:string,request?:{method?:string;body?:string})=>{
     const mutation=request?.method==="POST";
-    if(path==="/app/auth/session")return Promise.resolve(
-      originalState==="unauthenticated"
+    if(path==="/app/auth/session"){
+      const result=originalState==="unauthenticated"
         ? response({status:"unauthenticated"},401)
-        : response(makeSession(originalState))
-    );
+        : response(makeSession(originalState));
+      if(options.deferInitialSession && completeInitialSession===undefined){
+        return new Promise<ReturnType<typeof response>>(resolve=>{
+          completeInitialSession=()=>resolve(result);
+        });
+      }
+      return Promise.resolve(result);
+    }
     if(path==="/app/auth/csrf")
       return Promise.resolve(response({status:"unauthenticated"},401));
     if(path==="/app/auth/pending-otp"){
@@ -263,12 +271,63 @@ function setup(options:UiFixtureOptions={}){
     await flush();
   };
   return {dom,window,click,clickElement,input,clickDevice,submit,flush,event,runTimer,timers,
+    completeInitialSession:()=>{
+      if(!completeInitialSession)throw Error("No pending initial session request");
+      const done=completeInitialSession;completeInitialSession=undefined;done();
+    },
     stats:()=>({enrollRequests,refreshRequests,logoutRequests,
       factorReads,restoreCalls,pendingChecks,restoredEmail,securityChanges,resetRequests,
       signIn2faEnabled,disabledCount:disabled.size,deletedByProvider,copiedKey,factors})};
 }
 
 describe("secure workspace UX and real static frontend lifecycle",()=>{
+
+  it("shows only the branded shell during short session checks and never exposes an internal status",async()=>{
+    expect(privateLoginHtml).not.toContain("Checking your session");
+    expect(privateLoginHtml).toContain('id="boot-progress" class="boot-progress" aria-hidden="true" hidden');
+    expect(privateLoginHtml).toContain('id="boot-slow-copy" class="muted" hidden');
+    expect(privateLoginHtml).toContain('class="sr-only">Loading Ishikeit</span>');
+    expect(privateLoginCss).toContain("@keyframes boot-progress-sweep");
+    expect(privateLoginCss).toContain(".boot-progress{position:absolute");
+    expect(privateLoginCss).toContain(".boot-panel .muted{position:absolute");
+    expect(privateLoginCss).toContain(".boot-progress::before{width:100%;transform:none}");
+    const ui=setup({state:"unauthenticated"});
+    await ui.flush();
+    expect(ui.dom.getElementById("boot-panel").hidden).toBe(true);
+    expect(ui.dom.getElementById("boot-progress").hidden).toBe(true);
+    expect(ui.dom.getElementById("boot-slow-copy").hidden).toBe(true);
+    expect(ui.timers.size).toBe(0);
+  });
+
+  it("delays visual progress on a slow check and clears it on authenticated navigation",async()=>{
+    const ui=setup({deferInitialSession:true,state:"authenticated"});
+    expect(ui.dom.getElementById("boot-panel").hidden).toBe(false);
+    expect(ui.dom.getElementById("boot-progress").hidden).toBe(true);
+    expect(ui.dom.getElementById("boot-slow-copy").hidden).toBe(true);
+    expect(ui.dom.getElementById("auth-shell").hidden).toBe(true);
+    expect(ui.dom.getElementById("dashboard-shell").hidden).toBe(true);
+    await ui.runTimer();
+    expect(ui.dom.getElementById("boot-progress").hidden).toBe(false);
+    expect(ui.dom.getElementById("boot-slow-copy").hidden).toBe(true);
+    await ui.runTimer();
+    expect(ui.dom.getElementById("boot-slow-copy").hidden).toBe(false);
+    ui.completeInitialSession();
+    await ui.flush();
+    expect(ui.dom.getElementById("boot-panel").hidden).toBe(true);
+    expect(ui.dom.getElementById("dashboard-shell").hidden).toBe(false);
+    expect(ui.dom.getElementById("auth-shell").hidden).toBe(true);
+  });
+
+  it("clears deferred splash timers when an existing session requires MFA",async()=>{
+    const ui=setup({state:"mfa_required"});
+    await ui.flush();
+    expect(ui.dom.getElementById("boot-panel").hidden).toBe(true);
+    expect(ui.dom.getElementById("auth-shell").hidden).toBe(false);
+    expect(ui.dom.getElementById("mfa-gate").hidden).toBe(false);
+    expect(ui.dom.getElementById("boot-progress").hidden).toBe(true);
+    expect(ui.dom.getElementById("boot-slow-copy").hidden).toBe(true);
+  });
+
 
   it("uses one discoverable authenticator method and no confusing sign-in protection switch",async()=>{
     const ui=setup({factorCount:2});

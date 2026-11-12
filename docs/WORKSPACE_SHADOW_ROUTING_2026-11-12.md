@@ -24,6 +24,10 @@ The shadow comparison maps canonical `meta` provider + `instagram`/`messenger`/`
 
 Only the bounded fields `provider`, `channel`, `decision` are passed to the log callback. The inspector receives only the three account identity fields, not messages, recipients, event payload, signed request body, token, signature, hashes or workspace ID. Duplicates are not observed. Lookup/logging errors cannot reject live ingestion. Existing `WORKSPACE_SHADOW_ROUTING_ENABLED` unset means **zero shadow calls** and no live routing behavior change. **Do not enable in production without reviewing log volume, PG load and operations monitoring**, and do not claim enabling this flag enables tenant-safe routing.
 
+## Observational resource bounds (PR #280 hardening)
+
+[OWASP API4:2023](https://owasp.org/API-Security/editions/2023/en/0xa4-unrestricted-resource-consumption/) warns that unbounded concurrency and database work can starve the production service. [node-postgres pooling](https://node-postgres.com/features/pooling) advises a bounded shared connection pool. The observation decorator now limits concurrent read-only inspector work to **four** per running process, with **no wait queue**. When full, it records a privacy-limited `capacity_skipped` decision and allows the original durable inbound response to complete normally. Work slots are released on success and failure, and tests exercise both. This is a safety limit for optional diagnostics, **not** an account-specific entitlement, global traffic cap or guarantee of completeness; saturation explicitly makes the observational sample incomplete. The flag remains OFF. Final production activation needs log/DB load monitoring and a safe single-key environment change; Hostinger's API currently offers only dangerous full-set replacement of masked environment settings.
+
 ## Verification and later gates
 
 - New isolated Vitest suite: namespace mapping, Telegram bot/owner separation, unclaimed/suspended/paused/revoked cases, duplicate rows, non-blocking DB/observer errors, no PII to the observer, duplicates, and live failure semantics.

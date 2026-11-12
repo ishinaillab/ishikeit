@@ -6,7 +6,7 @@ import { CredentialCipher } from "../src/auth/credential-cipher.js";
 import {
   PrivateBrowserAuthService, BrowserLoginSessionSetupError,
   BrowserMfaEnrollmentRateLimited, BrowserMfaPendingEnrollment,
-  BrowserMfaLastAuthenticatorError,
+  BrowserMfaPartialDeletionError,
   type BrowserOtpFailureDiagnostic
 } from "../src/auth/private-browser-auth.js";
 import { PostgresBrowserAuthMaintenance } from "../src/auth/private-browser-auth-maintenance.js";
@@ -63,20 +63,23 @@ const portfolio={
 const cipher=new CredentialCipher(Buffer.alloc(32,37));
 const secret=Buffer.alloc(32,39).toString("base64");
 const otpDiagnostics=vi.fn((entry:BrowserOtpFailureDiagnostic)=>{void entry;});
+const removedFactorIds=new Set<string>();
 const mfa={
-  enroll:vi.fn((_token:string)=>{
+  enroll:vi.fn((_token:string,name:string)=>{
     void _token;
-    const id=mfa.enroll.mock.calls.length===1?factorId:randomUUID();
+    const id=mfa.enroll.mock.calls.length===1 && !removedFactorIds.has(factorId)
+      ? factorId : randomUUID();
     return db!.query(
-      "INSERT INTO auth.mfa_factors(id,user_id,status,factor_type) VALUES($1,$2,'unverified','totp')",
-      [id,userId]
+      "INSERT INTO auth.mfa_factors(id,user_id,status,factor_type,friendly_name) VALUES($1,$2,'unverified','totp',$3)",
+      [id,userId,name]
     ).then(()=>({factorId:id,secret:"JBSWY3DPEHPK3PXP"}));
   }),
   unenroll:vi.fn((_token:string,ref:string)=>{
     void _token;
-    return db!.query("DELETE FROM auth.mfa_factors WHERE id=$1 AND status='unverified'",[ref])
+    return db!.query("DELETE FROM auth.mfa_factors WHERE id=$1 AND user_id=$2",[ref,userId])
       .then(result=>{
         if(result.rowCount!==1)throw new Error("MFA factor not available");
+        removedFactorIds.add(ref);
       });
   }),
   challengeAndVerify:vi.fn((_token:string,factor:string,_code:string)=>{
@@ -120,11 +123,12 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     await db!.query(await readFile("migrations/0019_browser_otp_email_link_resume.sql","utf8"));
     await db!.query(`CREATE TABLE IF NOT EXISTS auth.mfa_factors(
       id uuid PRIMARY KEY,user_id uuid NOT NULL,status text NOT NULL,
-      factor_type text NOT NULL,created_at timestamptz DEFAULT now() NOT NULL)`);
+      factor_type text NOT NULL,friendly_name text,created_at timestamptz DEFAULT now() NOT NULL)`);
     await db!.query(`CREATE TABLE IF NOT EXISTS auth.sessions(
       id uuid PRIMARY KEY,user_id uuid NOT NULL,aal text NOT NULL DEFAULT 'aal1',
       factor_id uuid)`);
     await db!.query(await readFile("migrations/0020_browser_mfa_preferences.sql","utf8"));
+    await db!.query(await readFile("migrations/0021_provider_totp_factor_lifecycle.sql","utf8"));
     await db!.query("INSERT INTO public.ishikeit_workspaces(workspace_id,display_name) VALUES($1,'A')",[workspaceId]);
     await db!.query(
       "INSERT INTO public.ishikeit_workspace_memberships(workspace_id,auth_issuer,auth_subject,role) VALUES($1,$2,$3,'owner')",
@@ -136,12 +140,14 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
   beforeEach(async()=>{
     await db!.query(`TRUNCATE TABLE public.ishikeit_browser_mfa_security_events,
        public.ishikeit_browser_disabled_totp_factors,
+       public.ishikeit_browser_totp_labels,
        public.ishikeit_browser_mfa_policies,auth.mfa_factors,auth.sessions`);
     await db!.query("INSERT INTO auth.sessions(id,user_id,aal) VALUES($1,$2,'aal1')",
       [authSessionId,userId]);
     await db!.query(`TRUNCATE TABLE public.ishikeit_browser_sessions,
        public.ishikeit_browser_login_attempts,public.ishikeit_browser_auth_limits`);
     vi.clearAllMocks();
+    removedFactorIds.clear();
     refreshUses=0;
     await db!.query(
       "UPDATE auth.users SET email_confirmed_at=now(),deleted_at=NULL,banned_until=NULL WHERE id=$1",
@@ -155,6 +161,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       await db!.query(`DROP TABLE IF EXISTS
         public.ishikeit_browser_mfa_security_events,
         public.ishikeit_browser_disabled_totp_factors,
+        public.ishikeit_browser_totp_labels,
         public.ishikeit_browser_mfa_policies`);
       await db!.query(`DROP TABLE IF EXISTS public.ishikeit_connection_audit,
        public.ishikeit_account_connections,public.ishikeit_provider_accounts,
@@ -472,7 +479,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     await expect(service!.inviteWorkspaceMember(logged.cookieValue,input))
       .rejects.toThrow(/multi-factor/i);
     expect(memberInvites.invite).not.toHaveBeenCalled();
-    await service!.enrollTotp(logged.cookieValue);
+    await service!.enrollTotp(logged.cookieValue,"Test phone");
     const stepped=await service!.verifyTotp(logged.cookieValue,factorId,"123456");
     await expect(service!.inviteWorkspaceMember(logged.cookieValue,input))
       .rejects.toThrow(/session/i);
@@ -487,7 +494,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     expect(await service!.listTotpFactors(session.cookieValue)).toMatchObject({
       factors:[],pendingCount:0,canEnroll:true
     });
-    const enrollment=await service!.enrollTotp(session.cookieValue);
+    const enrollment=await service!.enrollTotp(session.cookieValue,"Test phone");
     expect(enrollment).toEqual({factorId,secret:"JBSWY3DPEHPK3PXP"});
     expect(await service!.listTotpFactors(session.cookieValue)).toMatchObject({
       factors:[],pendingCount:1,canEnroll:true
@@ -506,66 +513,113 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       "SELECT access_ciphertext FROM public.ishikeit_browser_sessions"
     );
     expect(previous.rows[0]?.access_ciphertext.includes(Buffer.from("mfa_access_"))).toBe(false);
-    const backup=await service!.enrollTotp(verified.cookieValue);
+    const backup=await service!.enrollTotp(verified.cookieValue,"Test phone");
     expect(backup.factorId).not.toBe(factorId);
     expect(auth.verifyPrivilegedAccessToken).toHaveBeenCalled();
     await expect(service!.verifyTotp(verified.cookieValue,randomUUID(),"123456"))
       .rejects.toThrow(/not available/i);
   });
 
-  it("lists both verified authenticators independently and securely changes their enabled states",async()=>{
+  it("renames without secret replacement and deletes only one provider enrollment",async()=>{
     const backupId=randomUUID();
-    await db!.query(
-      "INSERT INTO auth.mfa_factors(id,user_id,status,factor_type,created_at) VALUES($1,$2,'verified','totp',now()-interval '1 day'),($3,$2,'verified','totp',now())",
-      [factorId,userId,backupId]
-    );
+    await db!.query("INSERT INTO auth.mfa_factors(id,user_id,status,factor_type) VALUES($1,$2,'verified','totp'),($3,$2,'verified','totp')",
+      [factorId,userId,backupId]);
     const initial=await service!.verify(
-      await service!.begin("invited@example.com","mfa-manage-first"),"123456","mfa-manage-first"
-    );
+      await service!.begin("invited@example.com","rename-test"),"123456","rename-test");
     const stepped=await service!.verifyTotp(initial.cookieValue,factorId,"123456");
-    const original=await service!.listTotpFactors(stepped.cookieValue);
-    expect(original.factors).toEqual([factorId,backupId]);
-    expect(original.devices.map(x=>({label:x.label,enabled:x.enabled}))).toEqual([
-      {label:"Primary authenticator",enabled:true},
-      {label:"Backup authenticator",enabled:true}
-    ]);
-    expect(original.signIn2faEnabled).toBe(true);
-
-    const updated=await service!.changeMfaSettings(stepped.cookieValue,{
-      kind:"factor",factorId:backupId,enabled:false,
-      proofFactorId:factorId,code:"654321"
-    });
-    expect(updated.cookieValue).not.toBe(stepped.cookieValue);
-    expect(updated.csrfToken).not.toBe(stepped.csrfToken);
-    await expect(service!.sessionStatus(stepped.cookieValue)).rejects.toThrow();
-    const after=await service!.listTotpFactors(updated.cookieValue);
-    expect(after.factors).toEqual([factorId]);
-    expect(after.devices.map(x=>x.enabled)).toEqual([true,false]);
-    expect((await db!.query("SELECT 1 FROM auth.mfa_factors WHERE status='verified'")).rowCount).toBe(2);
-
-    const other=await service!.verify(
-      await service!.begin("invited@example.com","mfa-manage-second"),"123456","mfa-manage-second"
-    );
-    await expect(service!.verifyTotp(other.cookieValue,backupId,"123456"))
-      .rejects.toThrow(/not available/);
-    await expect(service!.changeMfaSettings(updated.cookieValue,{
-      kind:"factor",factorId,enabled:false,
-      proofFactorId:factorId,code:"123456"
-    })).rejects.toBeInstanceOf(BrowserMfaLastAuthenticatorError);
-
-    const restored=await service!.changeMfaSettings(updated.cookieValue,{
-      kind:"factor",factorId:backupId,enabled:true,
-      proofFactorId:factorId,code:"123456"
-    });
-    expect((await service!.listTotpFactors(restored.cookieValue)).factors)
-      .toEqual([factorId,backupId]);
-    // The newly enrolled verified backup is never deleted or re-created by a toggle.
+    expect((await service!.listTotpFactors(stepped.cookieValue)).factors.slice().sort())
+      .toEqual([factorId,backupId].sort());
+    const renamed=await service!.changeMfaSettings(stepped.cookieValue,{
+      kind:"rename",factorId:backupId,name:"My Samsung",proofFactorId:factorId,code:"123456"});
+    if(renamed.signedOut)throw Error("Renaming revoked session");
+    expect((await service!.listTotpFactors(renamed.cookieValue)).devices.find(x=>x.factorId===backupId)?.label)
+      .toBe("My Samsung");
     expect((await db!.query("SELECT 1 FROM auth.mfa_factors WHERE id=$1",[backupId])).rowCount).toBe(1);
-    const audit=await db!.query<{event_kind:string}>(
-      "SELECT event_kind FROM public.ishikeit_browser_mfa_security_events ORDER BY occurred_at"
+    expect(mfa.unenroll).not.toHaveBeenCalled();
+    const removed=await service!.changeMfaSettings(renamed.cookieValue,{
+      kind:"remove",factorId:backupId,proofFactorId:factorId,code:"654321"});
+    if(removed.signedOut)throw Error("Removing backup revoked primary session");
+    expect((await service!.listTotpFactors(removed.cookieValue)).factors).toEqual([factorId]);
+    expect((await db!.query("SELECT 1 FROM auth.mfa_factors WHERE id=$1",[backupId])).rowCount).toBe(0);
+    expect(mfa.unenroll).toHaveBeenCalledWith("mfa_access_"+"x".repeat(60),backupId);
+    expect((await db!.query<{event_kind:string}>("SELECT event_kind FROM public.ishikeit_browser_mfa_security_events")).rows
+      .map(x=>x.event_kind).sort()).toEqual(["authenticator_removed","authenticator_renamed"]);
+  });
+  it("method-wide disable deletes every factor even when enrollment count exceeds 25",async()=>{
+    const otherIds=Array.from({length:26},()=>randomUUID());
+    await db!.query(
+      "INSERT INTO auth.mfa_factors(id,user_id,status,factor_type) VALUES($1,$2,'verified','totp')",
+      [factorId,userId]);
+    for(const id of otherIds){
+      await db!.query("INSERT INTO auth.mfa_factors(id,user_id,status,factor_type) VALUES($1,$2,'verified','totp')",
+        [id,userId]);
+    }
+    const login=await service!.verify(
+      await service!.begin("invited@example.com","disable-27-test"),"123456","disable-27-test");
+    const stepped=await service!.verifyTotp(login.cookieValue,factorId,"123456");
+    expect((await service!.listTotpFactors(stepped.cookieValue)).factors).toHaveLength(27);
+    const result=await service!.changeMfaSettings(stepped.cookieValue,{
+      kind:"disable_app",proofFactorId:factorId,code:"654321"
+    });
+    expect(result).toEqual({signedOut:true,removed:27});
+    expect(mfa.unenroll).toHaveBeenCalledTimes(27);
+    expect(mfa.unenroll.mock.calls.at(-1)?.[1]).toBe(factorId);
+    expect((await db!.query("SELECT 1 FROM auth.mfa_factors")).rowCount).toBe(0);
+  });
+
+  it("turning off authentication app deletes all Supabase TOTP factors and revokes the BFF session",async()=>{
+    const backupId=randomUUID();
+    await db!.query("INSERT INTO auth.mfa_factors(id,user_id,status,factor_type) VALUES($1,$2,'verified','totp'),($3,$2,'verified','totp')",
+      [factorId,userId,backupId]);
+    const initial=await service!.verify(
+      await service!.begin("invited@example.com","disable-test"),"123456","disable-test");
+    const stepped=await service!.verifyTotp(initial.cookieValue,factorId,"123456");
+    const result=await service!.changeMfaSettings(stepped.cookieValue,{
+      kind:"disable_app",proofFactorId:factorId,code:"123456"});
+    expect(result).toEqual({signedOut:true,removed:2});
+    expect(mfa.unenroll.mock.calls.map(x=>x[1])).toEqual([backupId,factorId]);
+    expect((await db!.query("SELECT 1 FROM auth.mfa_factors")).rowCount).toBe(0);
+    await expect(service!.sessionStatus(stepped.cookieValue)).rejects.toThrow(/session/i);
+    const next=await service!.verify(
+      await service!.begin("invited@example.com","re-enroll"),"123456","re-enroll");
+    expect((await service!.listTotpFactors(next.cookieValue)).factors).toEqual([]);
+    const fresh=await service!.enrollTotp(next.cookieValue,"New phone");
+    expect(fresh.factorId).not.toBe(factorId);
+    expect((await service!.listTotpFactors(next.cookieValue)).pendingCount).toBe(1);
+  });
+  it("audits partial provider deletion and revokes browser sessions rather than claiming rollback",async()=>{
+    const backupId=randomUUID();
+    await db!.query("INSERT INTO auth.mfa_factors(id,user_id,status,factor_type) VALUES($1,$2,'verified','totp'),($3,$2,'verified','totp')",
+      [factorId,userId,backupId]);
+    const first=await service!.verify(
+      await service!.begin("invited@example.com","partial-delete"),"123456","partial-delete");
+    const stepped=await service!.verifyTotp(first.cookieValue,factorId,"123456");
+    mfa.unenroll.mockImplementationOnce((_token:string,id:string)=>
+      db!.query("DELETE FROM auth.mfa_factors WHERE id=$1 AND user_id=$2",[id,userId])
+        .then(()=>{removedFactorIds.add(id);})
+    ).mockRejectedValueOnce(new Error("Provider unavailable after first delete"));
+    await expect(service!.changeMfaSettings(stepped.cookieValue,{
+      kind:"disable_app",proofFactorId:factorId,code:"123456"
+    })).rejects.toBeInstanceOf(BrowserMfaPartialDeletionError);
+    expect((await db!.query<{id:string}>("SELECT id FROM auth.mfa_factors")).rows.map(x=>x.id))
+      .toEqual([factorId]);
+    await expect(service!.sessionStatus(stepped.cookieValue)).rejects.toThrow(/session/i);
+    const events=await db!.query<{event_kind:string}>(
+      "SELECT event_kind FROM public.ishikeit_browser_mfa_security_events"
     );
-    expect(audit.rows.map(x=>x.event_kind).sort())
-      .toEqual(["authenticator_disabled","authenticator_enabled"]);
+    expect(events.rows.map(x=>x.event_kind)).toEqual(["authenticator_removal_partial"]);
+  });
+
+  it("removing the only authenticator deletes it and requires login again",async()=>{
+    await db!.query("INSERT INTO auth.mfa_factors(id,user_id,status,factor_type) VALUES($1,$2,'verified','totp')",
+      [factorId,userId]);
+    const initial=await service!.verify(
+      await service!.begin("invited@example.com","last-test"),"123456","last-test");
+    const stepped=await service!.verifyTotp(initial.cookieValue,factorId,"123456");
+    const result=await service!.changeMfaSettings(stepped.cookieValue,{
+      kind:"remove",factorId,proofFactorId:factorId,code:"654321"});
+    expect(result).toEqual({signedOut:true,removed:1});
+    expect((await db!.query("SELECT 1 FROM auth.mfa_factors")).rowCount).toBe(0);
   });
 
   it("turns sign-in 2FA off and on only after fresh authenticator proof while keeping sensitive actions AAL2",async()=>{
@@ -578,6 +632,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     const switchedOff=await service!.changeMfaSettings(stepped.cookieValue,{
       kind:"sign_in",enabled:false,proofFactorId:factorId,code:"123456"
     });
+    if(switchedOff.signedOut)throw new Error("Sign-in preference must preserve existing factors");
     expect((await service!.listTotpFactors(switchedOff.cookieValue)).signIn2faEnabled)
       .toBe(false);
     // New logins after opting out of sign-in MFA can view their own active
@@ -593,6 +648,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     const turnedOn=await service!.changeMfaSettings(emailOnly.cookieValue,{
       kind:"sign_in",enabled:true,proofFactorId:factorId,code:"654321"
     });
+    if(turnedOn.signedOut)throw new Error("Sign-in preference must preserve existing factors");
     expect((await service!.listTotpFactors(turnedOn.cookieValue)).signIn2faEnabled).toBe(true);
     await expect(service!.sessionStatus(emailOnly.cookieValue)).rejects.toThrow();
     const future=await service!.verify(
@@ -604,37 +660,31 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     )).rowCount).toBe(2);
   });
 
-  it("denies changes with a missing or foreign authenticator without altering policy or issuing new provider tokens",async()=>{
+  it("denies removal of foreign factors before provider proof",async()=>{
     await db!.query("INSERT INTO auth.mfa_factors(id,user_id,status,factor_type) VALUES($1,$2,'verified','totp')",
       [factorId,userId]);
-    const first=await service!.verify(
-      await service!.begin("invited@example.com","mfa-deny-first"),"123456","mfa-deny-first"
-    );
-    const stepped=await service!.verifyTotp(first.cookieValue,factorId,"123456");
-    const count=mfa.challengeAndVerify.mock.calls.length;
+    const initial=await service!.verify(
+      await service!.begin("invited@example.com","deny-test"),"123456","deny-test");
+    const stepped=await service!.verifyTotp(initial.cookieValue,factorId,"123456");
+    const before=mfa.challengeAndVerify.mock.calls.length;
     await expect(service!.changeMfaSettings(stepped.cookieValue,{
-      kind:"factor",factorId:randomUUID(),enabled:false,
-      proofFactorId:factorId,code:"123456"
+      kind:"remove",factorId:randomUUID(),proofFactorId:factorId,code:"123456"
     })).rejects.toThrow(/not available/i);
-    await expect(service!.changeMfaSettings(stepped.cookieValue,{
-      kind:"sign_in",enabled:false,proofFactorId:randomUUID(),code:"123456"
-    })).rejects.toThrow(/proof/i);
-    expect(mfa.challengeAndVerify).toHaveBeenCalledTimes(count);
-    expect((await service!.listTotpFactors(stepped.cookieValue)).signIn2faEnabled).toBe(true);
-    expect((await db!.query("SELECT 1 FROM public.ishikeit_browser_mfa_security_events")).rowCount).toBe(0);
+    expect(mfa.challengeAndVerify).toHaveBeenCalledTimes(before);
+    expect(mfa.unenroll).not.toHaveBeenCalled();
   });
 
   it("blocks duplicate pending enrollments without consuming rate budget",async()=>{
     const nonce=await service!.begin("invited@example.com","pending-guard-ip");
     const session=await service!.verify(nonce,"123456","pending-guard-ip");
-    const first=await service!.enrollTotp(session.cookieValue);
+    const first=await service!.enrollTotp(session.cookieValue,"Test phone");
     expect(first.secret).toBe("JBSWY3DPEHPK3PXP");
-    await expect(service!.enrollTotp(session.cookieValue))
+    await expect(service!.enrollTotp(session.cookieValue,"Test phone"))
       .rejects.toBeInstanceOf(BrowserMfaPendingEnrollment);
     expect(mfa.enroll).toHaveBeenCalledTimes(1);
     expect((await service!.listTotpFactors(session.cookieValue)).pendingCount).toBe(1);
     await service!.clearIncompleteTotp(session.cookieValue);
-    const next=await service!.enrollTotp(session.cookieValue);
+    const next=await service!.enrollTotp(session.cookieValue,"Test phone");
     expect(next.factorId).not.toBe(first.factorId);
     expect(mfa.enroll).toHaveBeenCalledTimes(2);
   });
@@ -643,10 +693,10 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     const nonce=await service!.begin("invited@example.com","rate-guard-ip");
     const session=await service!.verify(nonce,"123456","rate-guard-ip");
     for(let i=0;i<3;i++){
-      await service!.enrollTotp(session.cookieValue);
+      await service!.enrollTotp(session.cookieValue,"Test phone");
       await service!.clearIncompleteTotp(session.cookieValue);
     }
-    await expect(service!.enrollTotp(session.cookieValue))
+    await expect(service!.enrollTotp(session.cookieValue,"Test phone"))
       .rejects.toBeInstanceOf(BrowserMfaEnrollmentRateLimited);
     expect(mfa.enroll).toHaveBeenCalledTimes(3);
   });
@@ -654,7 +704,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
   it("resets only incomplete TOTP enrollment through owner-bound provider API",async()=>{
     const nonce=await service!.begin("invited@example.com","recovery-network");
     const session=await service!.verify(nonce,"123456","recovery-network");
-    const pending=await service!.enrollTotp(session.cookieValue);
+    const pending=await service!.enrollTotp(session.cookieValue,"Test phone");
     expect((await service!.listTotpFactors(session.cookieValue)).pendingCount).toBe(1);
     const result=await service!.clearIncompleteTotp(session.cookieValue);
     expect(result).toEqual({cleared:1});
@@ -666,9 +716,9 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
   it("does not permit AAL1 to reset incomplete backup alongside a verified device",async()=>{
     const nonce=await service!.begin("invited@example.com","backup-network");
     const session=await service!.verify(nonce,"123456","backup-network");
-    await service!.enrollTotp(session.cookieValue);
+    await service!.enrollTotp(session.cookieValue,"Test phone");
     const stepped=await service!.verifyTotp(session.cookieValue,factorId,"123456");
-    const backup=await service!.enrollTotp(stepped.cookieValue);
+    const backup=await service!.enrollTotp(stepped.cookieValue,"Test phone");
     expect((await service!.listTotpFactors(stepped.cookieValue)).pendingCount).toBe(1);
     const normal=await db!.query<{count:string}>(
       "SELECT count(*)::text AS count FROM auth.mfa_factors WHERE status='verified'");
@@ -732,7 +782,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       "123456","logout-verified-ip"
     );
     expect((await service!.sessionStatus(first.cookieValue)).status).toBe("mfa_required");
-    await service!.enrollTotp(first.cookieValue);
+    await service!.enrollTotp(first.cookieValue,"Test phone");
     const second=await service!.verifyTotp(first.cookieValue,factorId,"123456");
     expect(second.cookieValue).not.toBe(first.cookieValue);
     expect(second.csrfToken).not.toBe(first.csrfToken);
@@ -752,9 +802,9 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       await service!.begin("invited@example.com","backup-setup-ip"),
       "123456","backup-setup-ip"
     );
-    await service!.enrollTotp(initial.cookieValue);
+    await service!.enrollTotp(initial.cookieValue,"Test phone");
     const primary=await service!.verifyTotp(initial.cookieValue,factorId,"123456");
-    const backup=await service!.enrollTotp(primary.cookieValue);
+    const backup=await service!.enrollTotp(primary.cookieValue,"Test phone");
     const protectedSession=await service!.verifyTotp(primary.cookieValue,backup.factorId,"234567");
     expect((await service!.sessionStatus(protectedSession.cookieValue)).status)
       .toBe("authenticated");

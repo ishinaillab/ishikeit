@@ -4,6 +4,7 @@ import {privateLoginHtml,privateLoginCss,privateLoginJs} from "./private-browser
 import {
   BrowserLoginSessionSetupError, BrowserMfaEnrollmentRateLimited,
   BrowserMfaPendingEnrollment, BrowserMfaLastAuthenticatorError,
+  BrowserMfaPartialDeletionError,
   type PrivateBrowserAuthService
 } from "../auth/private-browser-auth.js";
 
@@ -24,7 +25,7 @@ export interface BrowserAuthController {
   changeMfaSettings(cookie:string,mutation:
     Parameters<PrivateBrowserAuthService["changeMfaSettings"]>[1]):
     ReturnType<PrivateBrowserAuthService["changeMfaSettings"]>;
-  enrollTotp(cookie:string):ReturnType<PrivateBrowserAuthService["enrollTotp"]>;
+  enrollTotp(cookie:string,name:string):ReturnType<PrivateBrowserAuthService["enrollTotp"]>;
   verifyTotp(cookie:string,factorId:string,code:string):ReturnType<PrivateBrowserAuthService["verifyTotp"]>;
   inviteWorkspaceMember(cookie:string,input:{workspaceId:string;email:string;role:"admin"|"agent"|"viewer"}):
     ReturnType<PrivateBrowserAuthService["inviteWorkspaceMember"]>;
@@ -287,9 +288,13 @@ export function registerPrivateBrowserAuthRoutes(
   const mfaSettingsSchema=z.discriminatedUnion("kind",[
     z.object({kind:z.literal("sign_in"),enabled:z.boolean(),
       proofFactorId:z.string().uuid(),code:z.string().regex(/^[0-9]{6}$/u)}).strict(),
-    z.object({kind:z.literal("factor"),factorId:z.string().uuid(),
-      enabled:z.boolean(),proofFactorId:z.string().uuid(),
-      code:z.string().regex(/^[0-9]{6}$/u)}).strict()
+    z.object({kind:z.literal("remove"),factorId:z.string().uuid(),
+      proofFactorId:z.string().uuid(),code:z.string().regex(/^[0-9]{6}$/u)}).strict(),
+    z.object({kind:z.literal("disable_app"),
+      proofFactorId:z.string().uuid(),code:z.string().regex(/^[0-9]{6}$/u)}).strict(),
+    z.object({kind:z.literal("rename"),factorId:z.string().uuid(),
+      name:z.string().trim().min(1).max(64),
+      proofFactorId:z.string().uuid(),code:z.string().regex(/^[0-9]{6}$/u)}).strict()
   ]);
   // A switch is a sensitive security mutation, not a cosmetic UI setting.
   // Confirm current TOTP through the official provider, then atomically
@@ -304,9 +309,17 @@ export function registerPrivateBrowserAuthRoutes(
     if(!parsed.success)return deny(reply,400).send({status:"invalid_request"});
     try{
       const result=await deps.controller.changeMfaSettings(value,parsed.data);
+      if(result.signedOut){
+        return reply.header("set-cookie",[clearCookie(sessionName),clearCookie(pendingName)])
+          .code(200).send({status:"authenticator_removed_signin_required",removed:result.removed});
+      }
       return reply.header("set-cookie",cookie(sessionName,result.cookieValue,43200))
         .code(200).send({status:"changed",csrfToken:result.csrfToken});
     }catch(error){
+      if(error instanceof BrowserMfaPartialDeletionError)
+        return deny(reply,409)
+          .header("set-cookie",[clearCookie(sessionName),clearCookie(pendingName)])
+          .send({status:"authenticator_state_requires_signin"});
       if(error instanceof BrowserMfaLastAuthenticatorError)
         return deny(reply,409).send({status:"last_authenticator_required"});
       if(error instanceof BrowserMfaEnrollmentRateLimited)
@@ -315,16 +328,17 @@ export function registerPrivateBrowserAuthRoutes(
       return deny(reply,403).send({status:"security_change_rejected"});
     }
   });
+  const enrollNameSchema=z.object({name:z.string().trim().min(1).max(64)}).strict();
   server.post("/app/auth/mfa/totp/enroll",{bodyLimit:256},async(req,reply)=>{
     privateResponse(reply);
     if(!mutation(req,reply))return reply;
     const value=session(req,reply);
     if(value===undefined)return deny(reply).send({status:"unauthenticated"});
     if(!csrf(req,reply,value))return reply;
-    const body=z.object({}).strict().safeParse(req.body);
-    if(!body.success)return deny(reply,400).send({status:"invalid_request"});
     try{
-      const enrollment=await deps.controller.enrollTotp(value);
+      const parsed=enrollNameSchema.safeParse(req.body);
+      if(!parsed.success)return deny(reply,400).send({status:"invalid_device_name"});
+      const enrollment=await deps.controller.enrollTotp(value,parsed.data.name);
       return reply.code(200).send(enrollment);
     }catch(error){
       if(error instanceof BrowserMfaPendingEnrollment)

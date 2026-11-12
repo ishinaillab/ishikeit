@@ -100,6 +100,10 @@ function setup(options:UiFixtureOptions={}){
   let resetRequests=0;
   let signIn2faEnabled=true;
   const disabled=new Set<string>();
+  const factorLabels=new Map<string,string>();
+  let deletedByProvider=0;
+  let copiedKey="";
+  const navigator={clipboard:{writeText:(value:string)=>{copiedKey=value;return Promise.resolve();}}};
   const factorIds=[workspace1.workspaceId,workspace2.workspaceId];
   const workspaces={
     items:options.multiWorkspace?[workspace1,workspace2]:[workspace1]
@@ -153,7 +157,7 @@ function setup(options:UiFixtureOptions={}){
         factors:ids.filter(id=>!disabled.has(id)),
         devices:ids.map((id,i)=>({
           factorId:id,
-          label:i===0?"Primary authenticator":"Backup authenticator",
+          label:factorLabels.get(id)??(i===0?"Primary authenticator":"Backup authenticator"),
           enrolledAt:"2026-11-11T17:53:00.000Z",enabled:!disabled.has(id)
         })),
         pendingCount:pending,canEnroll:true,signIn2faEnabled
@@ -162,15 +166,26 @@ function setup(options:UiFixtureOptions={}){
     if(path==="/app/auth/mfa/preferences" && mutation){
       securityChanges++;
       const body=JSON.parse(request?.body??"{}") as {
-        kind:"factor"|"sign_in";factorId?:string;enabled:boolean
+        kind:"factor"|"sign_in"|"rename"|"remove"|"disable_app";factorId?:string;name?:string;enabled?:boolean
       };
       if(body.kind==="factor" && body.factorId){
         if(!body.enabled && factors-disabled.size<=1)
           return Promise.resolve(response({status:"last_authenticator_required"},409));
         if(body.enabled)disabled.delete(body.factorId);
         else disabled.add(body.factorId);
-      }else{
-        signIn2faEnabled=body.enabled;
+      }else if(body.kind==="rename" && body.factorId && body.name){
+        factorLabels.set(body.factorId,body.name);
+      }else if(body.kind==="remove" && body.factorId){
+        deletedByProvider++;
+        if(factors===1){factors=0;
+          return Promise.resolve(response({status:"authenticator_removed_signin_required",removed:1}));}
+        factors--;
+      }else if(body.kind==="disable_app"){
+        deletedByProvider+=factors;
+        const count=factors;factors=0;
+        return Promise.resolve(response({status:"authenticator_removed_signin_required",removed:count}));
+      }else if(body.kind==="sign_in"){
+        signIn2faEnabled=body.enabled===true;
       }
       return Promise.resolve(response({status:"changed",csrfToken:"test_csrf_settings_rotated"}));
     }
@@ -209,7 +224,7 @@ function setup(options:UiFixtureOptions={}){
     return id;
   };
   const clearTimeout=(id:number)=>{timers.delete(id);};
-  runInNewContext(privateLoginJs,{window,document:dom,fetch,setTimeout,clearTimeout},{timeout:4000});
+  runInNewContext(privateLoginJs,{window,document:dom,navigator,fetch,setTimeout,clearTimeout},{timeout:4000});
   const flush=async()=>{for(let i=0;i<40;i++)await Promise.resolve();};
   const clickElement=async(element:FakeElement)=>{
     const handler=element.listeners.get("click");
@@ -217,6 +232,12 @@ function setup(options:UiFixtureOptions={}){
     await handler();await flush();
   };
   const click=async(id:string)=>clickElement(dom.getElementById(id));
+  const input=async(id:string,value:string)=>{
+    const node=dom.getElementById(id);node.value=value;
+    const listener=node.listeners.get("input");
+    if(!listener)throw new Error("No input handler for "+id);
+    await listener();await flush();
+  };
   const clickDevice=async(index:number)=>{
     const row=dom.getElementById("mfa-devices").children[index];
     if(!row?.children[1])throw Error("Missing device switch");
@@ -239,13 +260,122 @@ function setup(options:UiFixtureOptions={}){
     first[1].callback();
     await flush();
   };
-  return {dom,window,click,clickDevice,submit,flush,event,runTimer,timers,
+  return {dom,window,click,clickElement,input,clickDevice,submit,flush,event,runTimer,timers,
     stats:()=>({enrollRequests,refreshRequests,logoutRequests,
       factorReads,restoreCalls,pendingChecks,restoredEmail,securityChanges,resetRequests,
-      signIn2faEnabled,disabledCount:disabled.size})};
+      signIn2faEnabled,disabledCount:disabled.size,deletedByProvider,copiedKey,factors})};
 }
 
 describe("secure workspace UX and real static frontend lifecycle",()=>{
+
+  it("keeps overall sign-in protection separate from authenticator-method enrollment",async()=>{
+    const ui=setup({factorCount:2});
+    await ui.flush();await ui.click("nav-security");await ui.click("mfa-open-dialog");
+    const toggle=ui.dom.getElementById("mfa-signin-toggle");
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    await ui.click("mfa-signin-toggle");
+    expect(ui.dom.getElementById("mfa-modal-proof").hidden).toBe(false);
+    expect(ui.stats().signIn2faEnabled).toBe(true);
+    await ui.input("mfa-modal-proof-code","123456");
+    await ui.submit("mfa-modal-proof-form");
+    expect(ui.stats().signIn2faEnabled).toBe(false);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(ui.dom.getElementById("mfa-configured-methods").children).toHaveLength(1);
+    expect(ui.stats().deletedByProvider).toBe(0);
+  });
+
+  it("opens a Meta-inspired overview and lists verified authentication app under active login codes",async()=>{
+    const ui=setup({factorCount:2});
+    await ui.flush();await ui.click("nav-security");
+    await ui.click("mfa-open-dialog");
+    expect(ui.dom.getElementById("mfa-modal-overview").hidden).toBe(false);
+    expect(ui.dom.getElementById("mfa-configured-methods").children).toHaveLength(1);
+    expect(ui.dom.getElementById("mfa-available-methods").children).toHaveLength(0);
+    await ui.clickElement(ui.dom.getElementById("mfa-configured-methods").children[0]!);
+    expect(ui.dom.getElementById("mfa-modal-manage").hidden).toBe(false);
+    expect(ui.dom.getElementById("mfa-method-toggle").getAttribute("aria-checked")).toBe("true");
+    expect(ui.dom.getElementById("mfa-modal-devices").children).toHaveLength(2);
+  });
+
+  it("adds a named authenticator only after verifying a six-digit code, with QR and copy key",async()=>{
+    const ui=setup({factorCount:0});
+    await ui.flush();await ui.click("nav-security");await ui.click("mfa-open-dialog");
+    expect(ui.dom.getElementById("mfa-configured-methods").children).toHaveLength(0);
+    expect(ui.dom.getElementById("mfa-available-methods").children).toHaveLength(1);
+    await ui.clickElement(ui.dom.getElementById("mfa-available-methods").children[0]!);
+    expect(ui.dom.getElementById("mfa-modal-connect-next").disabled).toBe(true);
+    await ui.input("mfa-modal-name","   ");
+    expect(ui.dom.getElementById("mfa-modal-connect-next").disabled).toBe(true);
+    await ui.input("mfa-modal-name","My Samsung");
+    expect(ui.dom.getElementById("mfa-modal-connect-next").disabled).toBe(false);
+    await ui.click("mfa-modal-connect-next");
+    expect(ui.stats().enrollRequests).toBe(1);
+    expect(ui.dom.getElementById("mfa-modal-instructions").hidden).toBe(false);
+    expect(ui.dom.getElementById("mfa-modal-qr").hidden).toBe(false);
+    expect(ui.dom.getElementById("mfa-modal-key").textContent).toBe("JBSWY3DPEHPK3PXP");
+    await ui.click("mfa-modal-copy");
+    expect(ui.stats().copiedKey).toBe("JBSWY3DPEHPK3PXP");
+    await ui.click("mfa-modal-enter-code");
+    await ui.input("mfa-modal-verify-code","12a34");
+    expect(ui.dom.getElementById("mfa-modal-verify-next").disabled).toBe(true);
+    await ui.input("mfa-modal-verify-code","123456");
+    expect(ui.dom.getElementById("mfa-modal-verify-next").disabled).toBe(false);
+    await ui.submit("mfa-modal-verify-form");
+    expect(ui.dom.getElementById("mfa-modal-success").hidden).toBe(false);
+    expect(ui.dom.getElementById("mfa-modal-key").textContent).toBe("");
+    expect(ui.dom.getElementById("mfa-modal-qr").src).toBe("");
+    await ui.click("mfa-modal-done");
+    expect(ui.dom.getElementById("mfa-configured-methods").children).toHaveLength(1);
+  });
+
+  it("renames an authenticator with fresh proof, then removes the selected factor permanently",async()=>{
+    const ui=setup({factorCount:2});
+    await ui.flush();await ui.click("nav-security");await ui.click("mfa-open-dialog");
+    await ui.clickElement(ui.dom.getElementById("mfa-configured-methods").children[0]!);
+    await ui.clickElement(ui.dom.getElementById("mfa-modal-devices").children[1]!);
+    await ui.click("mfa-modal-edit-rename");
+    expect(ui.dom.getElementById("mfa-modal-rename-name").value).toBe("Backup authenticator");
+    await ui.input("mfa-modal-rename-name","  My Samsung  ");
+    expect(ui.dom.getElementById("mfa-modal-rename-save").disabled).toBe(false);
+    await ui.click("mfa-modal-rename-save");
+    await ui.input("mfa-modal-proof-code","123456");
+    await ui.submit("mfa-modal-proof-form");
+    expect(ui.dom.getElementById("mfa-modal-manage").hidden).toBe(false);
+    expect(ui.dom.getElementById("mfa-modal-devices").children[1]?.children[0]?.children[0]?.textContent)
+      .toBe("My Samsung");
+    await ui.clickElement(ui.dom.getElementById("mfa-modal-devices").children[1]!);
+    await ui.click("mfa-modal-edit-remove");
+    await ui.click("mfa-modal-remove-cancel");
+    expect(ui.stats().deletedByProvider).toBe(0);
+    await ui.click("mfa-modal-edit-remove");
+    await ui.click("mfa-modal-remove-confirm-button");
+    await ui.input("mfa-modal-proof-code","123456");
+    await ui.submit("mfa-modal-proof-form");
+    expect(ui.stats().deletedByProvider).toBe(1);
+    expect(ui.dom.getElementById("mfa-modal-devices").children).toHaveLength(1);
+    expect(ui.dom.getElementById("mfa-method-toggle").getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("Cancel keeps all factors, but Turn off permanently deletes all and requires sign-in",async()=>{
+    const ui=setup({factorCount:2});
+    await ui.flush();await ui.click("nav-security");await ui.click("mfa-open-dialog");
+    await ui.clickElement(ui.dom.getElementById("mfa-configured-methods").children[0]!);
+    await ui.click("mfa-method-toggle");
+    expect(ui.dom.getElementById("mfa-modal-method-confirm").hidden).toBe(false);
+    await ui.click("mfa-modal-method-cancel");
+    expect(ui.stats().securityChanges).toBe(0);
+    expect(ui.stats().factors).toBe(2);
+    await ui.click("mfa-method-toggle");
+    await ui.click("mfa-modal-turn-off");
+    await ui.input("mfa-modal-proof-code","123456");
+    await ui.submit("mfa-modal-proof-form");
+    expect(ui.stats().deletedByProvider).toBe(2);
+    expect(ui.stats().factors).toBe(0);
+    expect(ui.dom.getElementById("mfa-dialog").hidden).toBe(true);
+    expect(ui.dom.getElementById("auth-shell").hidden).toBe(false);
+  });
+
+
   it("renders a separate polished public login and a hidden authenticated shell at boot",()=>{
     expect(privateLoginHtml).toContain('id="boot-panel"');
     expect(privateLoginHtml).toContain('id="auth-shell" class="auth-shell" hidden');

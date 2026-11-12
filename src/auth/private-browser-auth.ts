@@ -30,7 +30,7 @@ interface RateRow extends pg.QueryResultRow { hits:number }
 interface PendingChallengeRow extends pg.QueryResultRow { present:boolean }
 interface TotpFactorRow extends pg.QueryResultRow {
   id:string; status:string; factor_type:string;
-  created_at?:Date; enabled?:boolean
+  created_at?:Date;label?:string
 }
 interface MfaPolicyRow extends pg.QueryResultRow { sign_in_2fa_enabled:boolean }
 export interface BrowserMfaDevice {
@@ -41,14 +41,22 @@ export interface BrowserMfaFactorStatus {
   devices:readonly BrowserMfaDevice[];
   pendingCount:number;canEnroll:boolean;signIn2faEnabled:boolean;
 }
-export interface BrowserMfaSettingsChange {
-  cookieValue:string;csrfToken:string;
-}
+export type BrowserMfaSettingsChange =
+  | {signedOut:false;cookieValue:string;csrfToken:string}
+  | {signedOut:true;removed:number};
 export type BrowserMfaSettingsMutation =
   | {kind:"sign_in";enabled:boolean;proofFactorId:string;code:string}
-  | {kind:"factor";factorId:string;enabled:boolean;proofFactorId:string;code:string};
+  | {kind:"remove";factorId:string;proofFactorId:string;code:string}
+  | {kind:"disable_app";proofFactorId:string;code:string}
+  | {kind:"rename";factorId:string;name:string;proofFactorId:string;code:string};
+export class BrowserMfaPartialDeletionError extends Error {
+  constructor(){
+    super("Provider factor removal requires a fresh authoritative check");
+    this.name="BrowserMfaPartialDeletionError";
+  }
+}
 export class BrowserMfaLastAuthenticatorError extends Error {
-  constructor(){super("At least one verified authenticator must remain enabled");
+  constructor(){super("An existing verified authenticator is required to approve changes");
     this.name="BrowserMfaLastAuthenticatorError";}
 }
 /** Public error classes avoid converting enrollment throttles into generic 403. */
@@ -547,10 +555,14 @@ export class PrivateBrowserAuthService {
       this.deps.db.query<TotpFactorRow>(
         `SELECT f.id,f.status::text AS status,f.factor_type::text AS factor_type,
            f.created_at,
-           NOT EXISTS(SELECT 1 FROM public.ishikeit_browser_disabled_totp_factors d
-             WHERE d.user_id=f.user_id AND d.factor_id=f.id) AS enabled
-         FROM auth.mfa_factors AS f WHERE f.user_id=$1::uuid
-         ORDER BY f.created_at ASC,f.id ASC LIMIT 25`,
+           COALESCE(l.display_name,NULLIF(
+             CASE WHEN f.friendly_name LIKE 'Ishikeit Authenticator %'
+               THEN '' ELSE f.friendly_name END,'')) AS label
+         FROM auth.mfa_factors AS f
+         LEFT JOIN public.ishikeit_browser_totp_labels AS l
+           ON l.user_id=f.user_id AND l.factor_id=f.id
+         WHERE f.user_id=$1::uuid
+         ORDER BY f.created_at ASC,f.id ASC`,
         [verified.principal.subject]
       ),
       this.deps.db.query<MfaPolicyRow>(
@@ -562,13 +574,13 @@ export class PrivateBrowserAuthService {
       x.status==="verified" && x.factor_type==="totp");
     const devices=verifiedTotp.map((f,i)=>({
       factorId:z.string().uuid().parse(f.id),
-      label:i===0?"Primary authenticator":
-        i===1?"Backup authenticator":"Authenticator "+String(i+1),
+      label:f.label?.trim() || (i===0?"Primary authenticator":
+        i===1?"Backup authenticator":"Authenticator "+String(i+1)),
       enrolledAt:f.created_at instanceof Date && Number.isFinite(f.created_at.getTime())
         ? f.created_at.toISOString():"",
-      enabled:f.enabled!==false
+      enabled:true
     }));
-    const factors=devices.filter(d=>d.enabled).map(d=>d.factorId);
+    const factors=devices.map(d=>d.factorId);
     const pendingCount=rows.rows.filter(x=>
       x.status==="unverified" && x.factor_type==="totp").length;
     let canEnroll=verifiedTotp.length===0;
@@ -626,7 +638,9 @@ export class PrivateBrowserAuthService {
    * account MUST first prove existing aal2 and current second factor.
    * The returned one-time TOTP secret must never be cached or persisted by UI.
    */
-  async enrollTotp(cookie:string):Promise<TotpEnrollment> {
+  async enrollTotp(cookie:string,deviceName:string):Promise<TotpEnrollment> {
+    const friendlyName=z.string().trim().min(1).max(64)
+      .refine(name=>[...name].every(ch=>ch.charCodeAt(0)>31 && ch.charCodeAt(0)!==127)).parse(deviceName);
     let stage:"session"|"policy"|"provider"="session";
     try{
       const {verified}=await this.#bearer(cookie);
@@ -662,7 +676,7 @@ export class PrivateBrowserAuthService {
         if(!await this.#limit("mfa:enroll:"+verified.principal.subject,3,900))
           throw new BrowserMfaEnrollmentRateLimited();
         stage="provider";
-        return this.deps.mfa.enroll(token);
+        return this.deps.mfa.enroll(token,friendlyName);
       });
     }catch(error){
       try{this.deps.onMfaEnrollmentFailure?.({stage,reason:mfaReason(error)});}
@@ -745,165 +759,167 @@ export class PrivateBrowserAuthService {
   }
 
   /**
-   * Change account sign-in MFA or reversible authenticator availability.
-   * This is a protected, explicit security operation:
-   * - prove an EXISTING, ACTIVE verified factor with a fresh provider TOTP
-   * - validate the live provider user/session, membership and AAL2 proof
-   * - hold the account policy row lock across policy, factor and BFF rotation
-   * - keep >=1 usable authenticator, never delete native GoTrue factor
-   * - revoke other BFF browser sessions; the current cookie rotates too.
-   * AAL2 is still required for privileged operations when sign-in MFA is off.
+   * Native GoTrue factor lifecycle, with a fresh challenge, AAL2 and live
+   * session/factor binding. A user-selected "Turn off authentication app"
+   * calls provider unenroll for EVERY TOTP factor, never a disabled flag.
+   * Provider deletes cannot be rolled back by a local PostgreSQL transaction:
+   * on partial failures revoke BFF sessions and demand a fresh provider read.
    */
-  async changeMfaSettings(
-    cookie:string,mutation:BrowserMfaSettingsMutation
-  ):Promise<BrowserMfaSettingsChange>{
+  async changeMfaSettings(cookie:string,
+    mutation:BrowserMfaSettingsMutation):Promise<BrowserMfaSettingsChange>{
     const proofId=z.string().uuid().parse(mutation.proofFactorId);
     const passcode=z.string().regex(/^[0-9]{6}$/u).parse(mutation.code);
-    const targetId=mutation.kind==="factor"
+    const targetId=mutation.kind==="remove" || mutation.kind==="rename"
       ? z.string().uuid().parse(mutation.factorId):undefined;
+    const newName=mutation.kind==="rename"
+      ? z.string().trim().min(1).max(64)
+        .refine(name=>[...name].every(ch=>ch.charCodeAt(0)>31 && ch.charCodeAt(0)!==127)).parse(mutation.name)
+      :undefined;
     const first=await this.#bearer(cookie);
     if(!await this.#limit("mfa:manage:"+first.verified.principal.subject,8,900))
       throw new BrowserMfaEnrollmentRateLimited();
     let issued:SupabaseIssuedTokens|undefined;
+    let removedByProvider=0;
     try{
-      const freshCookie=await this.deps.db.transaction(async tx=>{
+      const result=await this.deps.db.transaction(async tx=>{
         const row=await this.#load(tx,cookie,true);
         const oldHash=sha256(cookie);
-        const token=this.deps.cipher.decrypt(
+        const access=this.deps.cipher.decrypt(
           encrypted(row.access_ciphertext,row.access_iv,row.access_tag),
-          "ishikeit-browser-v1\0"+oldHash+"\0access"
-        );
-        const current=await this.deps.auth.verifyAccessToken(token);
-        if(current.principal.subject!==row.user_id
-          || current.sessionId!==row.auth_session_id)
+          "ishikeit-browser-v1\0"+oldHash+"\0access");
+        const current=await this.deps.auth.verifyAccessToken(access);
+        if(current.principal.subject!==row.user_id ||
+          current.sessionId!==row.auth_session_id)
           throw new Error("Browser session unavailable");
-        const eligible=await this.deps.portfolio.list(token,{pageSize:1});
-        if(eligible.items.length===0)throw new Error("Workspace authorization required");
-
-        // Serialize every policy/factor change for a single account.
+        const membership=await this.deps.portfolio.list(access,{pageSize:1});
+        if(membership.items.length===0)
+          throw new Error("Workspace authorization required");
         await tx.query(
-          `INSERT INTO public.ishikeit_browser_mfa_policies(user_id)
-           VALUES($1::uuid) ON CONFLICT(user_id) DO NOTHING`,
-          [row.user_id]
-        );
+          "INSERT INTO public.ishikeit_browser_mfa_policies(user_id) VALUES($1::uuid) ON CONFLICT(user_id) DO NOTHING",
+          [row.user_id]);
         const policy=await tx.query<MfaPolicyRow>(
-          `SELECT sign_in_2fa_enabled FROM public.ishikeit_browser_mfa_policies
-           WHERE user_id=$1::uuid FOR UPDATE`,[row.user_id]
-        );
-        const devices=await tx.query<TotpFactorRow>(
-          `SELECT f.id,f.status::text AS status,f.factor_type::text AS factor_type,
-              NOT EXISTS(SELECT 1
-                FROM public.ishikeit_browser_disabled_totp_factors d
-                WHERE d.user_id=f.user_id AND d.factor_id=f.id) AS enabled
-            FROM auth.mfa_factors AS f
-            WHERE f.user_id=$1::uuid AND f.status='verified'
-              AND f.factor_type='totp'
-            ORDER BY f.created_at ASC,f.id ASC LIMIT 25`,
-          [row.user_id]
-        );
-        const active=devices.rows.filter(x=>x.enabled!==false);
-        if(active.length===0)throw new BrowserMfaLastAuthenticatorError();
-        if(!active.some(x=>x.id===proofId))
-          throw new Error("Active authenticator proof required");
-
-        let eventKind:
-          "sign_in_2fa_enabled"|"sign_in_2fa_disabled"
-          |"authenticator_enabled"|"authenticator_disabled";
-        if(mutation.kind==="factor"){
-          const target=devices.rows.find(x=>x.id===targetId);
-          if(target===undefined)throw new Error("Authenticator not available");
-          if((target.enabled!==false)===mutation.enabled)
-            throw new Error("Authenticator status already current");
-          if(!mutation.enabled
-            && (active.length<=1 || proofId===targetId))
-            throw new BrowserMfaLastAuthenticatorError();
-          eventKind=mutation.enabled?"authenticator_enabled":"authenticator_disabled";
-        }else{
-          if((policy.rows[0]?.sign_in_2fa_enabled!==false)===mutation.enabled)
-            throw new Error("Two-step verification already in requested state");
-          eventKind=mutation.enabled?"sign_in_2fa_enabled":"sign_in_2fa_disabled";
-        }
-
-        // AAL2 must be FRESH: not merely a long-lived old session claim.
-        // The provider verifies the current TOTP for an active device.
-        issued=await this.deps.mfa.challengeAndVerify(token,proofId,passcode);
+          "SELECT sign_in_2fa_enabled FROM public.ishikeit_browser_mfa_policies WHERE user_id=$1::uuid FOR UPDATE",
+          [row.user_id]);
+        const all=await tx.query<TotpFactorRow>(
+          "SELECT id,status::text AS status,factor_type::text AS factor_type FROM auth.mfa_factors WHERE user_id=$1::uuid AND factor_type='totp' ORDER BY created_at ASC,id ASC",
+          [row.user_id]);
+        const verified=all.rows.filter(x=>x.status==="verified");
+        const oldFlags=await tx.query<CountRow>(
+          "SELECT count(*)::int AS n FROM public.ishikeit_browser_disabled_totp_factors WHERE user_id=$1::uuid",
+          [row.user_id]);
+        // Old flags must be migrated by a secure provider unenroll, never
+        // silently reactivated with old secrets by a new release.
+        if((oldFlags.rows[0]?.n??0)!==0)
+          throw new Error("Legacy authenticator migration required");
+        if(!verified.some(x=>x.id===proofId))
+          throw new BrowserMfaLastAuthenticatorError();
+        if(targetId!==undefined && !verified.some(x=>x.id===targetId))
+          throw new Error("Authenticator not available");
+        if(mutation.kind==="remove" && verified.length>1 && targetId===proofId)
+          throw new Error("Choose another authenticator to approve removal");
+        if(mutation.kind==="sign_in"
+          && (policy.rows[0]?.sign_in_2fa_enabled!==false)===mutation.enabled)
+          throw new Error("Sign-in 2FA already in requested state");
+        issued=await this.deps.mfa.challengeAndVerify(access,proofId,passcode);
         const next=await this.deps.auth.verifyAccessToken(issued.access_token);
-        if(next.principal.subject!==row.user_id
-          || next.sessionId!==row.auth_session_id)
+        if(next.principal.subject!==row.user_id ||
+          next.sessionId!==row.auth_session_id)
           throw new Error("MFA session identity mismatch");
         await this.deps.auth.verifyPrivilegedAccessToken(issued.access_token);
         const proof=await tx.query<CountRow>(
-          `SELECT count(*)::integer AS n FROM auth.sessions s
-           WHERE s.id=$1::uuid AND s.user_id=$2::uuid
-             AND s.aal='aal2' AND s.factor_id=$3::uuid`,
-          [row.auth_session_id,row.user_id,proofId]
-        );
-        if(proof.rows[0]?.n!==1)throw new Error("Active authenticator proof required");
-
-        if(mutation.kind==="factor"){
-          if(mutation.enabled){
-            await tx.query(
-              `DELETE FROM public.ishikeit_browser_disabled_totp_factors
-               WHERE user_id=$1::uuid AND factor_id=$2::uuid`,
-              [row.user_id,mutation.factorId]
-            );
-          }else{
-            await tx.query(
-              `INSERT INTO public.ishikeit_browser_disabled_totp_factors
-               (user_id,factor_id) VALUES($1::uuid,$2::uuid)
-               ON CONFLICT (user_id,factor_id) DO NOTHING`,
-              [row.user_id,mutation.factorId]
-            );
-          }
-        }else{
+          "SELECT count(*)::integer AS n FROM auth.sessions WHERE id=$1::uuid AND user_id=$2::uuid AND aal='aal2' AND factor_id=$3::uuid",
+          [row.auth_session_id,row.user_id,proofId]);
+        if(proof.rows[0]?.n!==1)
+          throw new Error("Fresh authenticator proof required");
+        let signOut=false;
+        if(mutation.kind==="sign_in"){
           await tx.query(
-            `UPDATE public.ishikeit_browser_mfa_policies
-               SET sign_in_2fa_enabled=$2,updated_at=now()
-             WHERE user_id=$1::uuid`,[row.user_id,mutation.enabled]
-          );
+            "UPDATE public.ishikeit_browser_mfa_policies SET sign_in_2fa_enabled=$2,updated_at=now() WHERE user_id=$1::uuid",
+            [row.user_id,mutation.enabled]);
+          await tx.query(
+            "INSERT INTO public.ishikeit_browser_mfa_security_events(user_id,event_kind) VALUES($1::uuid,$2)",
+            [row.user_id,mutation.enabled?"sign_in_2fa_enabled":"sign_in_2fa_disabled"]);
+        }else if(mutation.kind==="rename"){
+          if(targetId===undefined || newName===undefined)
+            throw new Error("Invalid authenticator rename");
+          await tx.query(
+            "INSERT INTO public.ishikeit_browser_totp_labels(user_id,factor_id,display_name) VALUES($1::uuid,$2::uuid,$3) ON CONFLICT(user_id,factor_id) DO UPDATE SET display_name=excluded.display_name,changed_at=now()",
+            [row.user_id,targetId,newName]);
+          await tx.query(
+            "INSERT INTO public.ishikeit_browser_mfa_security_events(user_id,event_kind,factor_id) VALUES($1::uuid,'authenticator_renamed',$2::uuid)",
+            [row.user_id,targetId]);
+        }else{
+          const targets=mutation.kind==="disable_app"
+            ? [...all.rows.filter(x=>x.id!==proofId),...all.rows.filter(x=>x.id===proofId)]
+            : verified.filter(x=>x.id===targetId);
+          signOut=targets.some(x=>x.id===proofId);
+          for(const factor of targets){
+            // Supabase manages the secret; never DELETE auth.mfa_factors in SQL.
+            await this.deps.mfa.unenroll(issued.access_token,factor.id);
+            removedByProvider++;
+            await tx.query(
+              "INSERT INTO public.ishikeit_browser_mfa_security_events(user_id,event_kind,factor_id) VALUES($1::uuid,'authenticator_removed',$2::uuid)",
+              [row.user_id,factor.id]);
+          }
+          if(mutation.kind==="disable_app"){
+            await tx.query(
+              "INSERT INTO public.ishikeit_browser_mfa_security_events(user_id,event_kind) VALUES($1::uuid,'totp_method_disabled')",
+              [row.user_id]);
+          }
         }
-        await tx.query(
-          `INSERT INTO public.ishikeit_browser_mfa_security_events
-           (user_id,event_kind,factor_id) VALUES($1::uuid,$2,$3::uuid)`,
-          [row.user_id,eventKind,targetId??null]
-        );
-
-        // Rotate the BFF HttpOnly cookie and both encrypted provider tokens
-        // while the original session row is locked. Old cookies fail closed.
-        const replacement=newSecret();
-        const nextHash=sha256(replacement);
-        const accessNew=this.deps.cipher.encrypt(
-          issued.access_token,"ishikeit-browser-v1\0"+nextHash+"\0access");
-        const refreshNew=this.deps.cipher.encrypt(
-          issued.refresh_token,"ishikeit-browser-v1\0"+nextHash+"\0refresh");
+        if(signOut){
+          // Removing the factor that authenticated this AAL2 session invalidates
+          // it immediately; the owner signs in again with email OTP and
+          // reenrolls a fresh factor as needed. No stale AAL2 cookie survives.
+          await tx.query(
+            "UPDATE public.ishikeit_browser_sessions SET revoked_at=now(),updated_at=now() WHERE user_id=$1::uuid AND revoked_at IS NULL",
+            [row.user_id]);
+          return {signedOut:true as const,removed:removedByProvider};
+        }
+        const cookieValue=newSecret();
+        const hash=sha256(cookieValue);
+        const nextAccess=this.deps.cipher.encrypt(
+          issued.access_token,"ishikeit-browser-v1\0"+hash+"\0access");
+        const nextRefresh=this.deps.cipher.encrypt(
+          issued.refresh_token,"ishikeit-browser-v1\0"+hash+"\0refresh");
         const updated=await tx.query(
-          `UPDATE public.ishikeit_browser_sessions SET
-             session_hash=$2,
-             access_ciphertext=$3,access_iv=$4,access_tag=$5,
-             refresh_ciphertext=$6,refresh_iv=$7,refresh_tag=$8,
-             access_expires_at=$9,updated_at=now()
-           WHERE session_hash=$1 AND revoked_at IS NULL`,
-          [oldHash,nextHash,
-            accessNew.ciphertext,accessNew.iv,accessNew.tag,
-            refreshNew.ciphertext,refreshNew.iv,refreshNew.tag,
-            new Date(next.expiresAt)]
-        );
+          "UPDATE public.ishikeit_browser_sessions SET session_hash=$2,access_ciphertext=$3,access_iv=$4,access_tag=$5,refresh_ciphertext=$6,refresh_iv=$7,refresh_tag=$8,access_expires_at=$9,updated_at=now() WHERE session_hash=$1 AND revoked_at IS NULL",
+          [oldHash,hash,nextAccess.ciphertext,nextAccess.iv,nextAccess.tag,
+            nextRefresh.ciphertext,nextRefresh.iv,nextRefresh.tag,
+            new Date(next.expiresAt)]);
         if(updated.rowCount!==1)throw new Error("Browser session unavailable");
         await tx.query(
-          `UPDATE public.ishikeit_browser_sessions
-             SET revoked_at=now(),updated_at=now()
-           WHERE user_id=$1::uuid AND session_hash<>$2 AND revoked_at IS NULL`,
-          [row.user_id,nextHash]
-        );
-        return replacement;
+          "UPDATE public.ishikeit_browser_sessions SET revoked_at=now(),updated_at=now() WHERE user_id=$1::uuid AND session_hash<>$2 AND revoked_at IS NULL",
+          [row.user_id,hash]);
+        return {signedOut:false as const,cookieValue,
+          csrfToken:this.csrfForCookie(cookieValue)};
       });
-      return {cookieValue:freshCookie,csrfToken:this.csrfForCookie(freshCookie)};
+      if(result.signedOut && issued!==undefined){
+        try{await this.deps.otp.revoke(issued.access_token);}
+        catch{/* all browser sessions were already invalidated */}
+      }
+      return result;
     }catch(error){
-      // The provider might have already consumed the proof and rotated its
-      // refresh token. Never retry it automatically or leak the token.
       if(issued!==undefined){
         try{await this.deps.otp.revoke(issued.access_token);}
-        catch{/* local session checks remain fail-closed */ }
+        catch{/* do not restore consumed proof */}
+      }
+      if(removedByProvider>0){
+        // Provider changes may have partially succeeded. Local transaction
+        // rollback cannot restore deleted TOTP secrets. Retain a durable
+        // security event outside the aborted transaction and invalidate
+        // browser sessions so the next login re-reads GoTrue factor state.
+        try{
+          await this.deps.db.transaction(async tx=>{
+            await tx.query(
+              "UPDATE public.ishikeit_browser_sessions SET revoked_at=now(),updated_at=now() WHERE user_id=$1::uuid AND revoked_at IS NULL",
+              [first.verified.principal.subject]);
+            await tx.query(
+              "INSERT INTO public.ishikeit_browser_mfa_security_events(user_id,event_kind) VALUES($1::uuid,'authenticator_removal_partial')",
+              [first.verified.principal.subject]);
+          });
+        }catch{/* provider-bound validation remains fail-closed */}
+        throw new BrowserMfaPartialDeletionError();
       }
       throw error;
     }

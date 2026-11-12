@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { SupabaseIssuedTokens } from "./supabase-email-otp.js";
 
@@ -144,12 +143,13 @@ export class SupabaseTotpMfaClient {
     if(!result.success || result.data.id!==id)
       throw new Error("Invalid MFA provider response");
   }
-  async enroll(token:string):Promise<TotpEnrollment>{
-    // GoTrue checks friendly_name uniqueness INCLUDING unverified factors.
-    // Never reuse the empty default, or a failed one-time setup blocks retries.
-    const name="Ishikeit Authenticator "+randomBytes(8).toString("hex");
+  async enroll(token:string,deviceName:string):Promise<TotpEnrollment>{
+    const friendlyName=z.string().trim().min(1).max(64)
+      .refine(name=>[...name].every(ch=>ch.charCodeAt(0)>31 && ch.charCodeAt(0)!==127)).parse(deviceName);
+    // Human-readable factor name is provided at enrollment by the owner.
+    // Rename later changes only our per-user alias, never this secret.
     const raw=await this.#request("/factors",token,{
-      factor_type:"totp",friendly_name:name
+      factor_type:"totp",friendly_name:friendlyName
     });
     const parsed=totpEnrollment.safeParse(raw);
     const uri=parsed.success ? parsed.data.totp.uri : undefined;

@@ -29,7 +29,7 @@ describe("Supabase Auth MFA server transport",()=>{
     const {client,calls}=mockClient(()=>json({
       id:factorId,type:"totp",totp:{secret:"JBSWY3DPEHPK3PXP",uri:"otpauth://totp/test"}
     }));
-    expect(await client.enroll(bearer)).toEqual({factorId,secret:"JBSWY3DPEHPK3PXP"});
+    expect(await client.enroll(bearer,"Primary authenticator")).toEqual({factorId,secret:"JBSWY3DPEHPK3PXP"});
     expect(calls[0]?.url).toBe(project+"/auth/v1/factors");
     expect(calls[0]?.options).toMatchObject({
       method:"POST",cache:"no-store",redirect:"error",
@@ -41,14 +41,14 @@ describe("Supabase Auth MFA server transport",()=>{
     expect(parsed).toMatchObject({factor_type:"totp"});
     if(!parsed||typeof parsed!=="object"||!("friendly_name" in parsed))
       throw new Error("Missing friendly name");
-    expect(parsed.friendly_name).toMatch(/^Ishikeit Authenticator [0-9a-f]{16}$/u);
+    expect(parsed.friendly_name).toBe("Primary authenticator");
   });
-  it("uses a distinct friendly name on each enrollment to avoid GoTrue conflicts",async()=>{
+  it("uses the exact user-supplied name on each enrollment",async()=>{
     const {client,calls}=mockClient(()=>json({
       id:factorId,type:"totp",totp:{secret:"JBSWY3DPEHPK3PXP",uri:"otpauth://totp/test"}
     }));
-    await client.enroll(bearer);
-    await client.enroll(bearer);
+    await client.enroll(bearer,"Primary authenticator");
+    await client.enroll(bearer,"Backup phone");
     const names=calls.map(x=>{
       if(typeof x.options.body!=="string")throw new Error("Expected JSON body");
       const parsed:unknown=JSON.parse(x.options.body) as unknown;
@@ -75,7 +75,7 @@ describe("Supabase Auth MFA server transport",()=>{
       if(options.method==="DELETE")return json({id:factorId});
       return json({id:factorId,type:"totp",totp:{secret:"invalid secret"}});
     });
-    await expect(client.enroll(bearer)).rejects.toThrow("Invalid MFA provider response");
+    await expect(client.enroll(bearer,"Primary authenticator")).rejects.toThrow("Invalid MFA provider response");
     expect(calls.map(x=>x.options.method)).toEqual(["POST","DELETE"]);
     expect(calls[1]?.url).toBe(project+"/auth/v1/factors/"+factorId);
   });
@@ -109,7 +109,7 @@ describe("Supabase Auth MFA server transport",()=>{
       id:factorId,type:"totp",friendly_name:"Ishikeit Authenticator",
       totp:{qr_code:qr,secret:"JBSWY3DPEHPK3PXP",uri:"otpauth://totp/test"}
     }));
-    const enrollment=await client.enroll(bearer);
+    const enrollment=await client.enroll(bearer,"Primary authenticator");
     expect(enrollment.factorId).toBe(factorId);
     expect(enrollment.secret).toBe("JBSWY3DPEHPK3PXP");
     expect(enrollment.qrCodeDataUrl).toMatch(/^data:image\/svg\+xml;base64,/u);
@@ -134,7 +134,7 @@ describe("Supabase Auth MFA server transport",()=>{
           secret:"JBSWY3DPEHPK3PXP",qr_code:code
         }
       }));
-      const enrollment=await client.enroll(bearer);
+      const enrollment=await client.enroll(bearer,"Primary authenticator");
       expect(enrollment).toEqual({factorId,secret:"JBSWY3DPEHPK3PXP"});
       // Crucial: no provider DELETE just because a QR is unsupported.
       expect(calls.map(x=>x.options.method)).toEqual(["POST"]);
@@ -144,7 +144,7 @@ describe("Supabase Auth MFA server transport",()=>{
     const {client}=mockClient(()=>json({
       id:factorId,type:"totp",totp:{secret:"JBSWY3DPEHPK3PXP"}
     }));
-    expect(await client.enroll(bearer)).toEqual({
+    expect(await client.enroll(bearer,"Primary authenticator")).toEqual({
       factorId,secret:"JBSWY3DPEHPK3PXP"
     });
   });
@@ -158,7 +158,7 @@ describe("Supabase Auth MFA server transport",()=>{
         }
       }),{status:200}
     ));
-    await expect(client.enroll(bearer)).rejects.toThrow("Invalid MFA provider response");
+    await expect(client.enroll(bearer,"Primary authenticator")).rejects.toThrow("Invalid MFA provider response");
   });
 
   it("creates challenge and exchanges six-digit OTP for rotated provider tokens only internally",async()=>{
@@ -206,9 +206,9 @@ describe("Supabase Auth MFA server transport",()=>{
     const bad=mockClient(()=>json({id:factorId,type:"totp",totp:{
       secret:"bad",uri:"https://attacker.test"
     }}));
-    await expect(bad.client.enroll(bearer)).rejects.toThrow(/invalid/i);
+    await expect(bad.client.enroll(bearer,"Primary authenticator")).rejects.toThrow(/invalid/i);
     const failure=mockClient(()=>new Response("secret_should_not_leak",{status:401}));
-    await expect(failure.client.enroll(bearer))
+    await expect(failure.client.enroll(bearer,"Primary authenticator"))
       .rejects.toThrow("MFA provider rejected the request");
   });
   it("bounds unknown-length streams before allocating and decoding response",async()=>{

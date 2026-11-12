@@ -4,7 +4,8 @@ import { buildServer } from "../src/http/server.js";
 import type { BrowserAuthController } from "../src/http/private-browser-auth-routes.js";
 import {
   BrowserLoginSessionSetupError, BrowserMfaEnrollmentRateLimited,
-  BrowserMfaPendingEnrollment, BrowserMfaLastAuthenticatorError
+  BrowserMfaPendingEnrollment, BrowserMfaLastAuthenticatorError,
+  BrowserMfaPartialDeletionError
 } from "../src/auth/private-browser-auth.js";
 import type { InboundStore } from "../src/persistence/inbound.js";
 
@@ -53,13 +54,13 @@ function testServer(enabled=true,invitesEnabled=false){
     }),
     changeMfaSettings:vi.fn<BrowserAuthController["changeMfaSettings"]>((_cookie,_mutation)=>{
       void _cookie;void _mutation;
-      return Promise.resolve({cookieValue:"F".repeat(43),csrfToken:"G".repeat(43)});
+      return Promise.resolve({signedOut:false,cookieValue:"F".repeat(43),csrfToken:"G".repeat(43)});
     }),
     clearIncompleteTotp:vi.fn((_cookie:string)=>{
       void _cookie;return Promise.resolve({cleared:1});
     }),
-    enrollTotp:vi.fn((_cookie:string)=>{
-      void _cookie;return Promise.resolve({
+    enrollTotp:vi.fn((_cookie:string,_name:string)=>{
+      void _cookie;void _name;return Promise.resolve({
         factorId:"123e4567-e89b-42d3-a456-426614174000",
         secret:"JBSWY3DPEHPK3PXP",
         qrCodeDataUrl:"data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="
@@ -530,7 +531,7 @@ describe("private cookie-only browser auth routes",()=>{
       expect(missing.statusCode).toBe(403);
     }
     const enrolled=await server.inject({method:"POST",url:"/app/auth/mfa/totp/enroll",
-      headers:{...base,"x-ishikeit-csrf":csrf},payload:{}});
+      headers:{...base,"x-ishikeit-csrf":csrf},payload:{name:"My phone"}});
     expect(enrolled.statusCode).toBe(200);
     expect(enrolled.json()).toEqual({
       factorId:"123e4567-e89b-42d3-a456-426614174000",
@@ -578,8 +579,8 @@ describe("private cookie-only browser auth routes",()=>{
 
   it("requires fresh-factor security changes and rotates only HttpOnly cookie on success",async()=>{
     const {server,controller}=testServer();
-    const body={kind:"factor",factorId:"123e4567-e89b-42d3-a456-426614174000",
-      enabled:false,proofFactorId:"223e4567-e89b-42d3-a456-426614174000",
+    const body={kind:"remove",factorId:"123e4567-e89b-42d3-a456-426614174000",
+      proofFactorId:"223e4567-e89b-42d3-a456-426614174000",
       code:"654321"};
     const noCsrf=await server.inject({
       method:"POST",url:"/app/auth/mfa/preferences",
@@ -635,18 +636,37 @@ describe("private cookie-only browser auth routes",()=>{
     await server.close();
   });
 
+  it("invalidates cookies if provider factor removal partially completes and requires a fresh login",async()=>{
+    const {server,controller}=testServer();
+    controller.changeMfaSettings.mockRejectedValueOnce(new BrowserMfaPartialDeletionError());
+    const response=await server.inject({
+      method:"POST",url:"/app/auth/mfa/preferences",
+      headers:{...headers,cookie:authCookie(),"x-ishikeit-csrf":csrf},
+      payload:{kind:"disable_app",
+        proofFactorId:"123e4567-e89b-42d3-a456-426614174000",code:"123456"}
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({status:"authenticator_state_requires_signin"});
+    expect(response.headers["set-cookie"]).toEqual([
+      expect.stringContaining("__Host-ishikeit-session=; Path=/; Max-Age=0"),
+      expect.stringContaining("__Host-ishikeit-login=; Path=/; Max-Age=0")
+    ]);
+    expect(response.body).not.toContain(token);
+    await server.close();
+  });
+
   it("returns actionable 409 and 429 states for pending TOTP setup and enrollment cooldown",async()=>{
     const {server,controller}=testServer();
     const authHeaders={...headers,cookie:authCookie(),"x-ishikeit-csrf":csrf};
     controller.enrollTotp.mockRejectedValueOnce(new BrowserMfaPendingEnrollment());
     const pending=await server.inject({
-      method:"POST",url:"/app/auth/mfa/totp/enroll",headers:authHeaders,payload:{}
+      method:"POST",url:"/app/auth/mfa/totp/enroll",headers:authHeaders,payload:{name:"Test phone"}
     });
     expect(pending.statusCode).toBe(409);
     expect(pending.json()).toEqual({status:"mfa_incomplete_setup"});
     controller.enrollTotp.mockRejectedValueOnce(new BrowserMfaEnrollmentRateLimited());
     const limited=await server.inject({
-      method:"POST",url:"/app/auth/mfa/totp/enroll",headers:authHeaders,payload:{}
+      method:"POST",url:"/app/auth/mfa/totp/enroll",headers:authHeaders,payload:{name:"Test phone"}
     });
     expect(limited.statusCode).toBe(429);
     expect(limited.headers["retry-after"]).toBe("900");

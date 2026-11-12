@@ -1,3 +1,5 @@
+import { mfaModalHtml,mfaModalCss,mfaModalJs } from "./private-browser-mfa-modal.js";
+
 /** Static, progressive login, step-up and workspace shell.
  * All workspace data and AAL2 are authorized by the server, not the UI.
  * Never persist or render Supabase bearer/refresh tokens or TOTP secrets
@@ -127,7 +129,8 @@ export const privateLoginHtml = `<!doctype html>
         <p class="eyebrow">ACCOUNT SETTINGS</p>
         <h1 id="security-heading">Account security</h1>
         <p class="page-description">Manage how you verify your identity and protect your account.</p>
-        <article class="settings-card" aria-labelledby="mfa-settings-heading">
+        ${mfaModalHtml}
+        <article class="settings-card legacy-mfa-panel" hidden aria-labelledby="mfa-settings-heading">
           <div class="settings-card-head">
             <span class="security-icon" aria-hidden="true">✓</span>
             <div>
@@ -373,6 +376,8 @@ p{margin-bottom:0}
   .toast{left:15px;right:15px;bottom:15px;max-width:none}
 }
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.legacy-mfa-panel[hidden]{display:none!important}
+${mfaModalCss}
 `;
 
 export const privateLoginJs = `"use strict";
@@ -1074,7 +1079,8 @@ async function beginEnrollment(){
   const button=get(inSettings?"mfa-add":"mfa-enroll");
   button.disabled=true;
   try{
-    const response=await request("/app/auth/mfa/totp/enroll",{},csrfToken);
+    const response=await request("/app/auth/mfa/totp/enroll",
+        {name:inSettings?"Authenticator":"Primary authenticator"},csrfToken);
     if(response.status===409){
       if(inSettings)mfaSettingsSlot.hidden=false;
       mfaCancel.hidden=false;
@@ -1181,4 +1187,5 @@ document.addEventListener("visibilitychange",()=>{
   if(document.visibilityState==="visible")void maintainSession();
   else if(refreshTimer!==null){clearTimeout(refreshTimer);refreshTimer=null;}
 });
+${mfaModalJs}
 void initialize();`;

@@ -52,8 +52,9 @@ const beginSchema = z.object({
   provider,
   providerApplicationKey: provider,
   redirectUri: z.string().min(12).max(2048),
-  // Optional legacy/internal callers; authenticated facade always supplies it.
-  sessionId: uuid.optional()
+  // REQUIRED: the same live, server-verified owner/admin login session at
+  // intent creation, callback consumption and final account claim.
+  sessionId: uuid
 }).strict();
 const consumeSchema = beginSchema.extend({
   state: token,
@@ -116,7 +117,7 @@ export class PostgresWorkspaceConnectionIntents {
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now()+ interval '10 minutes')
          RETURNING expires_at`,
         [randomUUID(),p.workspaceId,p.actor.issuer,p.actor.subject,p.provider,
-          p.providerApplicationKey,redirectUri,digest(state),digest(browserNonce),p.sessionId ?? null]
+          p.providerApplicationKey,redirectUri,digest(state),digest(browserNonce),p.sessionId]
       );
       if (inserted.rows[0] === undefined) throw new Error("Connection intent unavailable");
       return inserted.rows[0].expires_at.toISOString();
@@ -154,7 +155,7 @@ export class PostgresWorkspaceConnectionIntents {
        WHERE i.workspace_id=$1 AND i.actor_issuer=$2 AND i.actor_subject=$3
          AND i.provider=$4 AND i.provider_application_key=$5 AND i.redirect_uri=$6
          AND i.state_hash=$7 AND i.browser_nonce_hash=$8
-         AND i.auth_session_id IS NOT DISTINCT FROM $9::uuid
+         AND i.auth_session_id=$9::uuid
          AND i.consumed_at IS NULL AND i.expires_at > now()
          AND EXISTS (
            SELECT 1 FROM public.ishikeit_workspace_memberships m

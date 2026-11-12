@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalEvent } from "../src/domain/events.js";
-import type { PostgresDatabase } from "../src/persistence/postgres.js";
 import {
   PostgresWorkspaceShadowInspector,
   ShadowWorkspaceInboundStore,
@@ -12,7 +11,7 @@ const meta = { provider: "meta", channel: "instagram", accountId: "178410000" };
 function inspector(rows: readonly { status: string; workspace_state: string }[]) {
   const query = vi.fn().mockResolvedValue({ rows });
   return {
-    probe: new PostgresWorkspaceShadowInspector({ query } as unknown as Pick<PostgresDatabase, "query">),
+    probe: new PostgresWorkspaceShadowInspector({ query }),
     query
   };
 }

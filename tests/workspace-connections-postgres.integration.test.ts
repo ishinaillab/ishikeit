@@ -315,6 +315,44 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     expect(await intents!.consume(callback)).toBeUndefined();
   });
 
+  it("fences an OAuth callback against concurrent membership revocation", async () => {
+    const begin = {
+      workspaceId:workspaceA,actor:ownerA,provider:"instagram",
+      providerApplicationKey:"app-test",redirectUri:"https://apps.example.test/callback"
+    };
+    const minted = await intents!.begin(begin);
+    const callback = {...begin,state:minted.state,browserNonce:minted.browserNonce};
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { started = resolve; });
+    const revoke = db!.transaction(async (tx) => {
+      await tx.query(
+        "UPDATE public.ishikeit_workspace_memberships SET state='revoked' WHERE workspace_id=$1",
+        [workspaceA]
+      );
+      started();
+      await gate;
+    });
+    await ready;
+    let finished = false;
+    const callbackResult = intents!.consume(callback).then((value) => {
+      finished = true;
+      return value;
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve,150));
+      expect(finished).toBe(false);
+    } finally {
+      release();
+    }
+    await revoke;
+    expect(await callbackResult).toBeUndefined();
+    expect((await db!.query<{consumed_at:Date|null}>(
+      "SELECT consumed_at FROM public.ishikeit_connection_intents"
+    )).rows[0]?.consumed_at).toBeNull();
+  });
+
   it("rejects expired, malicious, or non-HTTPS redirect attempts without cross-tenant side effects", async () => {
     const begin = {
       workspaceId:workspaceA,actor:ownerA,provider:"instagram",

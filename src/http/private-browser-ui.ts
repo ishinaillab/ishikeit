@@ -18,7 +18,9 @@ export const privateLoginHtml = `<!doctype html>
 <a class="skip-link" id="skip-link" href="#auth-main">Skip to main content</a>
 <div id="boot-panel" class="boot-panel" role="status" aria-live="polite">
   <div class="brand"><span class="brand-symbol" aria-hidden="true">i</span><span>ISHIKEIT</span></div>
-  <p class="muted">Checking your session…</p>
+  <div id="boot-progress" class="boot-progress" aria-hidden="true" hidden></div>
+  <p id="boot-slow-copy" class="muted" hidden>Opening Ishikeit…</p>
+  <span class="sr-only">Loading Ishikeit</span>
 </div>
 
 <div id="auth-shell" class="auth-shell" hidden>
@@ -250,8 +252,21 @@ p{margin-bottom:0}
 .skip-link{position:absolute;left:14px;top:-90px;padding:11px 16px;border-radius:8px;
   color:#fff;background:var(--ishi-ink);z-index:1000}
 .skip-link:focus{top:12px}
-.boot-panel{min-height:100vh;display:grid;place-content:center;justify-items:center;gap:18px}
-.boot-panel p{font-size:.9rem}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.boot-panel{position:relative;min-height:100vh;display:grid;place-content:center;justify-items:center;gap:20px;
+  background:linear-gradient(145deg,var(--ishi-cream),var(--ishi-paper) 90%)}
+.boot-progress{position:absolute;left:50%;top:calc(50% + 30px);transform:translateX(-50%);
+  width:132px;height:3px;border-radius:999px;overflow:hidden;background:var(--ishi-blush)}
+.boot-progress::before{content:"";display:block;width:42%;height:100%;border-radius:inherit;
+  background:var(--ishi-pink-hover);animation:boot-progress-sweep 1.35s ease-in-out infinite}
+@keyframes boot-progress-sweep{
+  0%{transform:translateX(-110%)}
+  50%{transform:translateX(105%)}
+  100%{transform:translateX(255%)}
+}
+.boot-panel .muted{position:absolute;left:50%;top:calc(50% + 46px);
+  transform:translateX(-50%);white-space:nowrap;font-size:.85rem}
 .auth-shell{min-height:100vh;display:flex;flex-direction:column;align-items:center;
   justify-content:center;padding:36px 20px;background:linear-gradient(145deg,#FFF8F3,#FFFFFF 90%)}
 .auth-brand{width:100%;max-width:464px;margin:0 auto 28px}
@@ -385,7 +400,10 @@ p{margin-bottom:0}
   .account-menu{right:0}
   .toast{left:15px;right:15px;bottom:15px;max-width:none}
 }
-@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media(prefers-reduced-motion:reduce){
+  .boot-progress::before{width:100%;transform:none}
+  *{animation:none!important;transition:none!important}
+}
 .legacy-mfa-panel[hidden]{display:none!important}
 ${mfaModalCss}
 `;
@@ -409,6 +427,8 @@ if(window.location.hash || window.location.search){
 }
 const get=id=>document.getElementById(id);
 const bootPanel=get("boot-panel");
+const bootProgress=get("boot-progress");
+const bootSlowCopy=get("boot-slow-copy");
 const authShell=get("auth-shell");
 const dashboardShell=get("dashboard-shell");
 const authTitle=get("auth-title");
@@ -460,6 +480,26 @@ let mfaState=null;
 let securityChange=null;
 let lastPendingCount=0;
 let mfaRetryTimer=null;
+// Keep the initial check invisible during normal fast navigation. Show a
+// lightweight progress line after a perceptible wait and a plain-language
+// explanation only if opening the app is unusually slow.
+let bootProgressTimer=setTimeout(()=>{
+  bootProgressTimer=null;
+  if(mode==="boot")bootProgress.hidden=false;
+},900);
+let bootSlowTimer=setTimeout(()=>{
+  bootSlowTimer=null;
+  if(mode==="boot")bootSlowCopy.hidden=false;
+},4000);
+function finishBoot(){
+  if(bootProgressTimer!==null){
+    clearTimeout(bootProgressTimer);bootProgressTimer=null;
+  }
+  if(bootSlowTimer!==null){
+    clearTimeout(bootSlowTimer);bootSlowTimer=null;
+  }
+  bootPanel.hidden=true;
+}
 
 function message(value){
   status.textContent=value;
@@ -569,7 +609,7 @@ function showLogin(notice){
   loginPanel.hidden=false;
   authShell.hidden=false;
   dashboardShell.hidden=true;
-  bootPanel.hidden=true;
+  finishBoot();
   emailForm.hidden=false;
   codeForm.hidden=true;
   get("code").value="";
@@ -591,7 +631,7 @@ function showGate(data,preserve){
   authDescription.textContent="Enter the six-digit code from your authenticator app to continue.";
   document.title="ISHIKEIT · Verify your identity";
   window.history.replaceState(null,"","/app/login");
-  bootPanel.hidden=true;
+  finishBoot();
   dashboardShell.hidden=true;
   authShell.hidden=false;
   loginPanel.hidden=true;
@@ -679,7 +719,7 @@ function showDashboard(data,preserve){
   if(teamNav.hidden && selectedPanel==="team")selectedPanel="overview";
   authShell.hidden=true;
   dashboardShell.hidden=false;
-  bootPanel.hidden=true;
+  finishBoot();
   get("skip-link").href="#primary-content";
   document.title="ISHIKEIT · "+workspaceRows[0].displayName;
   window.history.replaceState(null,"","/app/workspaces");

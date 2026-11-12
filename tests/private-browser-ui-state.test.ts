@@ -366,6 +366,27 @@ describe("secure workspace UX and real static frontend lifecycle",()=>{
     expect(ui.dom.getElementById("mfa-devices").children).toHaveLength(2);
   });
 
+  it("keeps authenticator switch names stable across toggles per WAI-ARIA APG",async()=>{
+    const ui=setup({factorCount:2});
+    await ui.flush();
+    await ui.click("nav-security");
+    const list=ui.dom.getElementById("mfa-devices");
+    const before=list.children[1]?.children[1]?.getAttribute("aria-label");
+    expect(before).toBe("Backup authenticator");
+    await ui.clickDevice(1);
+    ui.dom.getElementById("mfa-change-code").value="654321";
+    await ui.submit("mfa-change-form");
+    const after=list.children[1]?.children[1];
+    expect(after?.getAttribute("aria-label")).toBe(before);
+    expect(after?.getAttribute("aria-checked")).toBe("false");
+    expect(ui.dom.getElementById("mfa-last-device-help").hidden).toBe(false);
+    await ui.clickDevice(1);
+    ui.dom.getElementById("mfa-change-code").value="123456";
+    await ui.submit("mfa-change-form");
+    expect(list.children[1]?.children[1]?.getAttribute("aria-label")).toBe(before);
+    expect(ui.dom.getElementById("mfa-last-device-help").hidden).toBe(true);
+  });
+
   it("makes account-wide sign-in 2FA On/Off an explicit reauthentication step",async()=>{
     const ui=setup({factorCount:2});
     await ui.flush();
@@ -391,7 +412,11 @@ describe("secure workspace UX and real static frontend lifecycle",()=>{
     const ui=setup({factorCount:1});
     await ui.flush();
     await ui.click("nav-security");
-    expect(ui.dom.getElementById("mfa-devices").children[0]?.children[1]?.disabled).toBe(true);
+    const control=ui.dom.getElementById("mfa-devices").children[0]?.children[1];
+    expect(control?.disabled).toBe(true);
+    expect(control?.getAttribute("aria-describedby")).toBe("mfa-last-device-help");
+    expect(control?.getAttribute("aria-label")).toBe("Primary authenticator");
+    expect(ui.dom.getElementById("mfa-last-device-help").hidden).toBe(false);
     expect(ui.dom.getElementById("mfa-account-toggle").disabled).toBe(false);
   });
 

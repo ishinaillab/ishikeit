@@ -150,6 +150,7 @@ export const privateLoginHtml = `<!doctype html>
             </div>
             <div id="mfa-devices" class="device-list" aria-live="polite"></div>
             <p id="mfa-devices-empty" class="muted">Loading authenticators…</p>
+            <p id="mfa-last-device-help" class="muted last-device-note" hidden>Keep at least one authenticator enabled so you can approve security changes and recover access.</p>
           </div>
           <section id="mfa-change-panel" class="security-detail security-proof"
             aria-labelledby="mfa-change-title" hidden>
@@ -334,6 +335,7 @@ p{margin-bottom:0}
 .security-switch[aria-checked="true"] .switch-track{background:#775365}
 .security-switch[aria-checked="true"] .switch-track span{transform:translateX(17px)}
 .security-switch .switch-label{min-width:24px}
+.last-device-note{margin-top:12px;font-size:.83rem;line-height:1.5}
 .security-proof{background:#fdfbfc;border:1px solid #eadfe5;border-radius:13px;
   padding:20px;margin-top:23px}
 .security-proof .muted{font-size:.87rem;margin:0 0 16px}
@@ -413,6 +415,7 @@ const mfaPendingHelp=get("mfa-pending-help");
 const mfaCancel=get("mfa-cancel");
 const mfaDevices=get("mfa-devices");
 const mfaDevicesEmpty=get("mfa-devices-empty");
+const mfaLastDeviceHelp=get("mfa-last-device-help");
 const mfaAccountToggle=get("mfa-account-toggle");
 const mfaAccountDescription=get("mfa-account-description");
 const mfaChangePanel=get("mfa-change-panel");
@@ -481,6 +484,7 @@ function clearMfa(){
   lastPendingCount=0;
   mfaDevices.replaceChildren();
   mfaDevicesEmpty.textContent="Loading authenticators…";
+  mfaLastDeviceHelp.hidden=true;
   mfaAccountToggle.disabled=true;
 }
 function closeAccountMenu(){
@@ -687,6 +691,7 @@ function renderMfaDeviceList(data){
   mfaAccountToggle.disabled=devices.length===0;
   mfaDevices.replaceChildren();
   const count=devices.filter(item=>item.enabled).length;
+  mfaLastDeviceHelp.hidden=!(devices.length>0 && count===1);
   for(const device of devices){
     const row=document.createElement("div");row.className="device-row";
     const information=document.createElement("div");information.className="device-info";
@@ -704,8 +709,8 @@ function renderMfaDeviceList(data){
     control.type="button";control.className="security-switch";
     control.setAttribute("role","switch");
     control.setAttribute("aria-checked",device.enabled?"true":"false");
-    control.setAttribute("aria-label",
-      (device.enabled?"Disable ":"Enable ")+device.label.toLowerCase());
+    // The WAI-ARIA switch's accessible name must stay stable across state changes.
+    control.setAttribute("aria-label",device.label);
     const track=document.createElement("span");track.className="switch-track";
     track.setAttribute("aria-hidden","true");
     track.append(document.createElement("span"));
@@ -715,8 +720,10 @@ function renderMfaDeviceList(data){
     // At least one usable authenticator must remain for privileged actions
     // and recovery, even if sign-in MFA is switched off.
     control.disabled=device.enabled && count<=1;
-    if(control.disabled)
+    if(control.disabled){
+      control.setAttribute("aria-describedby","mfa-last-device-help");
       control.title="Keep at least one authenticator enabled for security and recovery.";
+    }
     control.addEventListener("click",()=>{
       openSecurityChange({kind:"factor",factorId:device.factorId,
         enabled:!device.enabled,label:device.label});

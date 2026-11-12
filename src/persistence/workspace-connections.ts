@@ -45,6 +45,16 @@ const idAction = z.object({
   connectionId: uuid,
   actor: principalSchema
 }).strict();
+/** Activation must attest the exact provider app/connection/credential binding
+ * already recorded at link time, not merely the provider user/account ID.
+ * These values MUST originate from server-trusted provider readback. */
+const activationSchema = z.object({
+  ...idAction.shape,
+  proof: proofSchema,
+  providerApplicationKey: shortRef,
+  providerConnectionId: accountId.optional(),
+  credentialAccountId: accountId.optional()
+}).strict();
 
 export type WorkspacePrincipal = z.infer<typeof principalSchema>;
 export type VerifiedAccountProof = z.infer<typeof proofSchema>;
@@ -68,6 +78,11 @@ interface ConnectionRow extends pg.QueryResultRow {
   generation: string | number;
 }
 interface MemberRow extends pg.QueryResultRow { role: "owner" | "admin" | "agent" | "viewer" }
+interface BindingRow extends pg.QueryResultRow {
+  provider_application_key: string;
+  provider_connection_id: string | null;
+  credential_account_id: string | null;
+}
 interface WorkspaceAccess extends WorkspacePrincipal { workspaceId: string }
 
 function validatedProof(input: VerifiedAccountProof): z.infer<typeof proofSchema> {
@@ -202,11 +217,8 @@ export class PostgresWorkspaceConnectionRegistry {
     });
   }
 
-  async activateVerified(input: {
-    workspaceId: string; connectionId: string; actor: WorkspacePrincipal;
-    proof: VerifiedAccountProof;
-  }): Promise<WorkspaceConnection> {
-    const p = z.object({ ...idAction.shape, proof: proofSchema }).strict().parse(input);
+  async activateVerified(input: z.infer<typeof activationSchema>): Promise<WorkspaceConnection> {
+    const p = activationSchema.parse(input);
     const proof = validatedProof(p.proof);
     return this.db.transaction(async (tx) => {
       await authorize(tx, { workspaceId: p.workspaceId, ...p.actor }, "admin");
@@ -214,6 +226,23 @@ export class PostgresWorkspaceConnectionRegistry {
       if (previous.status !== "verifying" || previous.provider !== proof.provider
         || previous.accountId !== proof.accountId) {
         throw new Error("Connection activation requires exact fresh provider identity proof");
+      }
+      // readLocked() holds a row FOR UPDATE for this entire transaction.
+      // Require the fresh provider readback to match the original application,
+      // provider connection and credential subject, not just a shared user ID.
+      // Exact nullable matching prevents silently stripping a binding.
+      const binding = await tx.query<BindingRow>(
+        `SELECT provider_application_key,provider_connection_id,credential_account_id
+           FROM public.ishikeit_account_connections
+          WHERE workspace_id=$1 AND connection_id=$2`,
+        [p.workspaceId,p.connectionId]
+      );
+      const original = binding.rows[0];
+      if (original === undefined
+        || original.provider_application_key !== p.providerApplicationKey
+        || original.provider_connection_id !== (p.providerConnectionId ?? null)
+        || original.credential_account_id !== (p.credentialAccountId ?? null)) {
+        throw new Error("Connection activation requires exact fresh provider binding proof");
       }
       const result = await tx.query<ConnectionRow>(
         `UPDATE public.ishikeit_account_connections

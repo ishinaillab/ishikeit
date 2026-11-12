@@ -59,7 +59,7 @@ describe("workspace shadow comparison (no tenant cutover)", () => {
       ["paused", "active"], ["verifying", "active"],
       ["revoked", "active"], ["disconnecting", "active"],
       ["connected", "suspended"]
-    ]) {
+    ] as const) {
       const { probe } = inspector([{ status, workspace_state }]);
       expect(await probe.inspect(meta)).toBe("inactive");
     }

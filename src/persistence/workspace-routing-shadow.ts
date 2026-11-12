@@ -110,7 +110,9 @@ export class ShadowWorkspaceInboundStore implements InboundStore {
           // Observability must never change existing messaging delivery.
         }
       };
-      void this.inspector.inspect(event).then(
+      void this.inspector.inspect({
+        provider: event.provider, channel: event.channel, accountId: event.accountId
+      }).then(
         (decision) => emit(decision),
         () => emit("lookup_unavailable")
       );

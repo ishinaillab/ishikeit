@@ -20,6 +20,8 @@ const schema = z.object({
   OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64: z.string().min(40).max(64).optional(),
   BROWSER_AUTH_ENABLED: booleanFromEnv.default(false),
   BROWSER_WORKSPACE_INVITES_ENABLED: booleanFromEnv.default(false),
+  // Observation-only. Never enables tenant routing, ownership claims or sends.
+  WORKSPACE_SHADOW_ROUTING_ENABLED: booleanFromEnv.default(false),
   BROWSER_AUTH_ORIGIN: z.string().url().optional(),
   SUPABASE_AUTH_PROJECT_URL: z.string().url().optional(),
   SUPABASE_AUTH_PUBLISHABLE_KEY: z.string().regex(/^sb_publishable_[A-Za-z0-9_-]{8,200}$/u).optional(),

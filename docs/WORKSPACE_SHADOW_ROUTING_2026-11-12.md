@@ -1,0 +1,32 @@
+# Ishikeit workspace account shadow comparison (2026-11-12)
+
+Issue: [#230](https://github.com/ishinaillab/ishikeit/issues/230). This is a **non-authoritative, opt-in observation-only stage**, not the tenant ingress/outbound cutover.
+
+## Current read-only production baseline
+
+At inspection on November 12, 2026, the private Supabase workspace registry had **one workspace, one member, zero provider accounts and zero account connections**. The OAuth credential store had one Instagram and one TikTok record; capability facts covered one Instagram and one Messenger account. Recent signed ingress represented Meta Instagram/Messenger/WhatsApp and Telegram bot identities. These sources are separate observations, NOT an independently verified owner-to-workspace claim. No credentials, secrets, messages or account identifiers are recorded in this document.
+
+Production Hostinger's exact released commit before this change was `ee8b41cfeea501c005913e02b03604e6211e842c` (PR #278). The original seven unpublished local modifications remain outside this GitHub integration branch.
+
+## Relevant authoritative guidance
+
+- [Telegram Bot API BusinessConnection / getBusinessConnection](https://core.telegram.org/bots/api#getbusinessconnection): an authenticated BusinessConnection distinguishes the **user.id**, the **connection.id**, and the bot identity. A normalized Telegram bot webhook's `accountId` is the **bot id**, even for Business messages; it MUST NOT be interpreted as the Business owner's user ID.
+- [PostgreSQL 17 Row Security](https://www.postgresql.org/docs/17/ddl-rowsecurity.html): deny-by-default with no permissive policies; existing private registry access remains server-only. This change adds NO SQL migration, row policy, grant or customer data.
+- [Supabase Data API security](https://supabase.com/docs/guides/api/securing-your-api): least-privilege grants and RLS together; never expose these internal queries as customer-facing endpoints.
+- [OWASP API1:2023 BOLA](https://api-security.owasp.org/editions/2023/en/0xa1-broken-object-level-authorization/): matching an object identifier is never sufficient tenant authorization. Authorization must be enforced again at the final action.
+- Meta and TikTok existing signed-webhook validation and provider-specific normalizers in this repository: provider event source and webhook account ID are not owner-workspace proof, provider account scopes, or routing authorization.
+
+## Implemented boundary
+
+`WORKSPACE_SHADOW_ROUTING_ENABLED` is a new **default-false** boolean environment option. Only when explicitly enabled, the existing `PostgresInboundStore` is decorated with `ShadowWorkspaceInboundStore`. The original signed-webhook handler and durable insert run first. For each newly inserted canonical event, an asynchronously handled read-only inspector compares a bounded provider/account key with private `ishikeit_account_connections` and workspace state. The comparison runs after the normal ingestion promise completes, outside the durable transaction, without extending webhook acknowledgement latency.
+
+The shadow comparison maps canonical `meta` provider + `instagram`/`messenger`/`whatsapp` channel to the verified account namespace, and supports TikTok Business's existing account ID as an **observed candidate** only. Telegram bot updates and any other unsupported source return `identity_unresolved`, not a fabricated Business owner match. Even a connected registry account is labeled **candidate_active**, never `authorized` or `routable`: provider app matching, consent, current rights, source verification and per-send authorization have not been evaluated. A missing claim is `unclaimed`; inactive workspace, disconnected-in-progress, paused or revoked states are `inactive`; unexpected duplicated active claims are `ambiguous`; read errors are `lookup_unavailable`. No status controls inbound acceptance, AI, outgoing dispatch, any account link or OAuth.
+
+Only the bounded fields `provider`, `channel`, `decision` are passed to the log callback. The inspector receives only the three account identity fields, not messages, recipients, event payload, signed request body, token, signature, hashes or workspace ID. Duplicates are not observed. Lookup/logging errors cannot reject live ingestion. Existing `WORKSPACE_SHADOW_ROUTING_ENABLED` unset means **zero shadow calls** and no live routing behavior change. **Do not enable in production without reviewing log volume, PG load and operations monitoring**, and do not claim enabling this flag enables tenant-safe routing.
+
+## Verification and later gates
+
+- New isolated Vitest suite: namespace mapping, Telegram bot/owner separation, unclaimed/suspended/paused/revoked cases, duplicate rows, non-blocking DB/observer errors, no PII to the observer, duplicates, and live failure semantics.
+- Existing disposable PostgreSQL 17 integration suite extended to observe real two-workspace connection transitions and verify it produces no ownership changes.
+- Protected GitHub Node/PG/PHP/context CI must all pass before merge. Exact Hostinger deployment must be checked separately.
+- **Still blocked:** genuinely owner-authorized immutable provider account proof, Telegram `getBusinessConnection` owner readback with owner consent, provider connection credential ownership, per-tenant backfill, persistent tenant IDs in inbound/outbox, generation-fenced ingress and dispatch, customer-facing connection/disconnect UI, policies/entitlements #206, live provider canaries. Keep existing Telegram legacy owner binding untouched. Never infer ownership from a webhook, a handle, a credential's mere presence or an OAuth tester account. Do not activate tenant routing or public onboarding.

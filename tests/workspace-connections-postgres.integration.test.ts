@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { PostgresDatabase } from "../src/persistence/postgres.js";
 import { AuthenticatedWorkspacePortfolio } from "../src/auth/authenticated-workspace-portfolio.js";
 import { PostgresWorkspaceConnectionIntents } from "../src/persistence/workspace-connection-intents.js";
+import { PostgresWorkspaceShadowInspector } from "../src/persistence/workspace-routing-shadow.js";
 import {
   PostgresWorkspaceConnectionRegistry, type WorkspacePrincipal,
   type VerifiedAccountProof
@@ -81,6 +82,32 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     } finally {
       await db!.close();
     }
+  });
+
+  it("shadows verified registry state without altering durable inbound or tenant ownership", async () => {
+    const shadow = new PostgresWorkspaceShadowInspector(db!);
+    const candidate = {provider:"meta",channel:"instagram",accountId:"verified-insta-A"};
+    expect(await shadow.inspect(candidate)).toBe("unclaimed");
+    const pending = await link(workspaceA,ownerA,"instagram",candidate.accountId);
+    expect(await shadow.inspect(candidate)).toBe("inactive");
+    await activate(pending.connectionId,workspaceA,ownerA,"instagram",candidate.accountId);
+    expect(await shadow.inspect(candidate)).toBe("candidate_active");
+    const unrelated = await link(workspaceB,ownerB,"instagram","verified-insta-B");
+    await activate(unrelated.connectionId,workspaceB,ownerB,"instagram","verified-insta-B");
+    expect(await shadow.inspect({...candidate,accountId:"verified-insta-B"}))
+      .toBe("candidate_active");
+    expect(await shadow.inspect({...candidate,accountId:"unclaimed-user"}))
+      .toBe("unclaimed");
+    await registry!.pause({
+      workspaceId:workspaceA,connectionId:pending.connectionId,actor:ownerA
+    });
+    expect(await shadow.inspect(candidate)).toBe("inactive");
+    const [connectionCount, inboundCount] = await Promise.all([
+      db!.query<{ n: number }>("SELECT count(*)::int AS n FROM public.ishikeit_account_connections"),
+      db!.query<{ n: number }>("SELECT count(*)::int AS n FROM public.ishikeit_connection_audit")
+    ]);
+    expect(connectionCount.rows[0]?.n).toBe(2);
+    expect(inboundCount.rows[0]?.n).toBe(5);
   });
 
   it("does not route an account while verifying; activates only verified exact account", async () => {

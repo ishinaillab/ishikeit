@@ -11,9 +11,14 @@ authenticated GoTrue API. An individual Remove unenrolls only the selected facto
 Removing the last factor automatically makes the authentication-app method
 unconfigured, and reenrollment must produce a fresh factor/secret and verified code.
 
-An independent **Require authenticator at sign-in** preference changes only the
-ordinary workspace-login policy; it does **not** delete or reenable TOTP factors.
-Privileged actions continue demanding verified AAL2 and live session/factor binding.
+**2026-11-12 UX/security correction (supersedes the earlier standalone switch):**
+there is no independent "Require authenticator at sign-in" control. Once an
+authenticator is enrolled, all workspace sign-ins require its verified AAL2
+challenge; preexisting database preferences that disabled login MFA cannot bypass
+this enforcement. The authentication-app method is the only user-facing 2FA
+control. Turning the method off permanently removes its Supabase TOTP factors
+after fresh existing-factor proof, not a temporary pause of their secrets.
+Privileged operations still require live AAL2 and exact factor/session binding.
 
 SMS, WhatsApp, passkeys-as-MFA, self-service recovery codes and trusted-device
 exemptions are **not implemented** for Ishikeit. The UI must never falsely show
@@ -26,8 +31,8 @@ as implemented. Do not claim this is phishing-resistant MFA: TOTP is not.
 - Server holds opaque host-only HttpOnly Secure SameSite=Strict session cookie,
   CSRF proof, exact-host/Origin checks, rate limits, current workspace membership,
   GoTrue JWT verification and an exact live `auth.sessions` / AAL2 / factor binding.
-- **Fresh factor challenge/verification** is required for every account-wide
-  sign-in preference change, rename and removal, and for adding an additional
+- **Fresh factor challenge/verification** is required for any factor
+  rename and removal, and for adding an additional
   authenticator. The provider owns TOTP secret generation, allowed time window,
   replay handling and verification. Client requests contain a six-digit code
   only; no TOTP seed, provider access token or refresh token is persisted in
@@ -59,8 +64,9 @@ Security -> Two-factor authentication opens a native dialog, with separate
 stages for overview, configured versus available methods, connected devices,
 name selection, QR and key (Copy key), six-digit verification, success, individual
 Edit/Rename/Remove, method Turn off, confirmation and fresh factor proof.
-Cancellation is non-mutating; canceling a pending setup calls the official
-factor reset. The code field enables Next only when six ASCII digits are present.
+Closing without an unfinished enrollment leaves verified factors unchanged;
+explicitly canceling an unfinished setup uses the official owner-bound reset
+to remove only the unverified secret. The code field enables Next only when six ASCII digits are present.
 Method state and list are reloaded from GoTrue-backed server data after changes.
 Responsive buttons, accessible dialog labels, status messages, live regions,
 and focus behavior are included. Setup key and QR are cleared on success/reset.
@@ -90,3 +96,45 @@ and focus behavior are included. Setup key and QR are cleared on success/reset.
 - RFC 6238: https://www.rfc-editor.org/rfc/rfc6238
 - Supabase Auth MFA: https://supabase.com/docs/guides/auth/auth-mfa
 - Supabase unenroll: https://supabase.com/docs/reference/javascript/auth-mfa-unenroll
+
+
+## Qwery Nails UI remediation and verification
+
+The post-release UX review identified a stuck `metaBusy` flag when adding a
+second/backup authenticator. The UI verified an existing factor and then tried
+enrollment while the same flag remained set, so no new enroll request was sent.
+The corrected sequence releases the proof-request guard before starting enrollment
+and tests that the provider enrollment endpoint is actually called.
+
+A stale pending, unverified enrollment now offers **Restart setup**, which uses
+the existing CSRF-protected owner-bound reset without deleting verified authenticators.
+The former duplicate sign-in protection switch is removed from visible UI AND the
+server-side bypass; obsolete `sign_in` preference writes return HTTP 400.
+Legacy false preferences are ignored and an AAL2 challenge remains mandatory.
+
+Design tokens were read from the active WordPress **Qwery Child / Nails skin**
+generated `skins/nails/css/__custom.css` rather than Elementor default kit values:
+Questrial (body), Lusitana (headings), #FFF8F3 (warm cream),
+#FFFFFF (white), #F8E0D2 (blush/borders), #FFABB4 / #F18B96
+(primary/hover) and #242530 (dark text). Font stylesheet access is
+restricted to Google Fonts domains by CSP; no inline scripts or secret storage
+was added. All visible hover buttons/menu items set both foreground and
+background explicitly. Reduced-motion and keyboard focus treatments remain.
+
+Validation:
+- Node 24 full CI-equivalent `npm run check`: **711 passed, 98 skipped**
+  (database suites skipped when PostgreSQL test URL is not supplied),
+  ESLint, TypeScript, and production build passed.
+- Isolated disposable PostgreSQL 17 browser MFA integration:
+  **34 of 34 passed**, including legacy false sign-in preference denial.
+- Focused UI/HTTP state machine: **48 of 48 passed**, including
+  adding a second authenticator and resetting unfinished setup.
+- Four Qwery Nails color/contrast regressions passed; mobile
+  390px and desktop 1440px browser previews inspected.
+- This evidence does NOT substitute for a genuine authenticated
+  owner-origin TOTP enrollment test after deployment.
+
+Sources: https://supabase.com/docs/guides/auth/auth-mfa/totp ;
+https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html ;
+https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html ;
+https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/ .

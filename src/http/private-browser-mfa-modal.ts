@@ -17,18 +17,7 @@ export const mfaModalHtml = `
     <div id="mfa-configured-methods" class="mfa-menu-group"></div>
     <h3 id="mfa-add-methods-heading">Add a backup method</h3>
     <div id="mfa-available-methods" class="mfa-menu-group"></div>
-    <h3>Sign-in protection</h3>
-    <div class="mfa-switch-row">
-      <div><strong>Require authenticator at sign-in</strong>
-        <p class="muted">Separate from connected authenticators. Turning this off does not delete their secrets; it only changes the sign-in policy. Sensitive changes still require current MFA proof.</p>
-      </div>
-      <button type="button" role="switch" id="mfa-signin-toggle" aria-label="Require authenticator at sign-in"
-        aria-checked="false" class="security-switch" disabled>
-        <span class="switch-track" aria-hidden="true"><span></span></span>
-        <span id="mfa-signin-status" class="switch-label">Off</span>
-      </button>
-    </div>
-    <p class="muted mfa-note">Only authentication-app verification is currently supported by Ishikeit. SMS, WhatsApp, recovery codes and trusted-device bypass are not available.</p>
+    <p class="muted mfa-note">After your email sign-in code, Ishikeit asks for a code from a connected authenticator. If you remove all authenticators, you'll need a new setup to restore this protection.</p>
   </section>
   <section id="mfa-modal-manage" class="mfa-stage" hidden>
     <h2>Authentication app</h2>
@@ -46,8 +35,12 @@ export const mfaModalHtml = `
   <section id="mfa-modal-connect" class="mfa-stage" hidden>
     <h2>Connect device</h2>
     <p>Name this device. This will help identify each device associated with the account.</p>
-    <label for="mfa-modal-name">Name</label>
-    <input id="mfa-modal-name" type="text" maxlength="64" autocomplete="off" placeholder="My Samsung" required>
+    <label for="mfa-modal-name">Device name</label>
+    <input id="mfa-modal-name" type="text" maxlength="64" autocomplete="off" placeholder="e.g. My Samsung" required>
+    <div id="mfa-modal-pending-note" class="mfa-restart-note" hidden>
+      <p>A previous setup wasn't finished. To continue, start over with a new secure setup key.</p>
+      <button type="button" id="mfa-modal-restart" class="mfa-secondary">Restart setup</button>
+    </div>
     <button type="button" id="mfa-modal-connect-next" class="mfa-primary" disabled>Next</button>
   </section>
   <section id="mfa-modal-instructions" class="mfa-stage" hidden>
@@ -112,7 +105,7 @@ export const mfaModalHtml = `
   <section id="mfa-modal-method-confirm" class="mfa-stage" hidden>
     <h2>Turn off authentication app?</h2>
     <p>All authenticator-app enrollments will be permanently deleted. Their old codes will stop working. Turning the method on again requires new QR codes, new setup keys, and verification.</p>
-    <p>Other configured authentication methods, if supported and available, are not removed. You will be signed out to protect your account.</p>
+    <p>You will be signed out. To access this workspace again, you will need to set up a new authenticator after your email sign-in code. Any separately supported authentication methods are not changed.</p>
     <div class="mfa-actions">
       <button type="button" id="mfa-modal-method-cancel" class="mfa-secondary">Cancel</button>
       <button type="button" id="mfa-modal-turn-off" class="mfa-danger">Turn off</button>
@@ -137,54 +130,170 @@ export const mfaModalHtml = `
 </dialog>
 `;
 export const mfaModalCss = `
-.mfa-entry{width:100%;display:flex;align-items:center;justify-content:space-between;text-align:left;
-  background:#fff;color:#28252a;border:1px solid #e4dee3;padding:17px 18px;border-radius:13px;
-  cursor:pointer;margin-bottom:16px;min-height:74px}
-.mfa-entry span{display:grid;gap:4px}.mfa-entry small{color:#6c6770;font-size:.86rem;font-weight:400}
-.mfa-dialog{position:fixed;inset:0;margin:auto;border:0;border-radius:24px;
-  width:min(620px,calc(100vw - 28px));max-height:min(88vh,850px);
-  padding:22px;box-shadow:0 24px 64px #0004;background:white;color:#17161a;overflow-y:auto}
-.mfa-dialog::backdrop{background:rgba(0,0,0,.65)}
-.mfa-dialog-head{display:flex;align-items:center;gap:14px;min-height:40px}
-.mfa-dialog-head strong{font-size:.9rem;font-weight:600;flex:1}
-.mfa-icon-button{border:0;background:transparent;color:inherit;font-size:1.7rem;
-  min-width:44px;min-height:44px;cursor:pointer;padding:2px}
-.mfa-stage{display:grid;gap:14px;padding:10px 0 0}
+/* Current Qwery / Nails design tokens, sourced from the live generated CSS.
+   All hover/focus states include explicit foreground AND background colors. */
+.mfa-entry{
+  display:flex;justify-content:space-between;align-items:center;gap:16px;width:100%;
+  min-height:76px;padding:20px 22px;margin:0 0 22px;text-align:left;
+  border:1px solid var(--ishi-border);border-radius:8px;
+  background:var(--ishi-paper);color:var(--ishi-ink);
+  box-shadow:0 6px 24px rgba(36,37,48,.035);
+  transition:background .15s ease,border-color .15s ease,box-shadow .15s ease
+}
+.mfa-entry span:first-child{display:grid;gap:3px;min-width:0}
+.mfa-entry strong{font-family:var(--ishi-heading-font);font-weight:400;font-size:1.15rem}
+.mfa-entry small{font-size:.88rem;color:var(--ishi-muted);font-weight:400}
+.mfa-entry:hover,.mfa-entry:focus-visible{
+  background:var(--ishi-blush);color:var(--ishi-ink);border-color:var(--ishi-pink-hover);
+  box-shadow:0 9px 28px rgba(36,37,48,.06)
+}
+.mfa-entry:hover small,.mfa-entry:focus-visible small{color:var(--ishi-muted)}
+.mfa-dialog{
+  position:fixed;inset:0;margin:auto;padding:clamp(21px,3.5vw,32px);
+  width:min(600px,calc(100vw - 28px));max-height:min(88vh,850px);max-height:min(88dvh,850px);
+  overflow-y:auto;overscroll-behavior:contain;background:var(--ishi-paper);
+  color:var(--ishi-ink);font-family:var(--ishi-body-font);line-height:1.55;
+  border:1px solid var(--ishi-border);border-radius:15px;
+  box-shadow:0 30px 95px rgba(36,37,48,.24)
+}
+.mfa-dialog::backdrop{background:rgba(36,37,48,.56)}
+.mfa-dialog-head{display:flex;align-items:center;gap:12px;margin:-3px -7px 11px;min-height:42px}
+.mfa-dialog-head strong{flex:1;font:400 .88rem var(--ishi-body-font);letter-spacing:.045em;color:var(--ishi-muted)}
+.mfa-dialog .mfa-icon-button{
+  display:grid;place-items:center;min-width:44px;min-height:44px;padding:3px;
+  background:transparent;color:var(--ishi-ink);border:1px solid transparent;
+  border-radius:8px;font:400 1.75rem/1 var(--ishi-body-font)
+}
+.mfa-dialog .mfa-icon-button:hover,.mfa-dialog .mfa-icon-button:focus-visible{
+  background:var(--ishi-blush);color:var(--ishi-ink);border-color:var(--ishi-border)
+}
+.mfa-stage{display:grid;gap:13px;min-width:0;padding:9px 0 1px}
 .mfa-stage[hidden],.mfa-dialog[hidden]{display:none!important}
-.mfa-stage h2{font-size:1.43rem;line-height:1.35;margin:0 0 3px}
-.mfa-stage h3{font-size:1rem;margin:8px 0 0}
-.mfa-stage p{line-height:1.5;margin:0}
-.mfa-stage .muted,.mfa-stage .mfa-note{color:#6b6670;font-size:.9rem}
-.mfa-menu-group{border:1px solid #dedbe2;border-radius:13px;overflow:hidden}
-.mfa-menu-item{display:flex;justify-content:space-between;align-items:center;width:100%;
-  border:0;background:white;color:#222;text-align:left;padding:15px 16px;min-height:55px;cursor:pointer}
-.mfa-menu-item+.mfa-menu-item{border-top:1px solid #e7e5e9}
-.mfa-menu-item small{display:block;font-size:.87rem;color:#696670;margin-top:4px}
-.mfa-switch-row{display:flex;align-items:center;justify-content:space-between;
-  gap:12px;padding:14px;border:1px solid #e1dde3;border-radius:14px}
-.mfa-device-heading{display:flex;justify-content:space-between;align-items:center;margin-top:18px}
+.mfa-stage h2{
+  font:400 clamp(1.48rem,2.8vw,1.77rem)/1.27 var(--ishi-heading-font);
+  letter-spacing:0;color:var(--ishi-ink);margin:0 0 5px
+}
+.mfa-stage h3{
+  font:400 1.14rem/1.3 var(--ishi-heading-font);
+  color:var(--ishi-ink);margin:14px 0 0
+}
+.mfa-stage p{margin:0;line-height:1.55;color:var(--ishi-ink)}
+.mfa-stage .muted,.mfa-stage .mfa-note{
+  color:var(--ishi-muted);font-size:.9rem;line-height:1.55
+}
+.mfa-stage .mfa-note{border-top:1px solid var(--ishi-border);padding-top:15px;margin-top:7px}
+.mfa-menu-group{border:1px solid var(--ishi-border);border-radius:8px;overflow:hidden;background:#fff}
+.mfa-dialog .mfa-menu-item{
+  display:flex;justify-content:space-between;align-items:center;gap:16px;
+  width:100%;min-height:68px;padding:16px 18px;border:0;border-radius:0;
+  background:#fff;color:var(--ishi-ink);text-align:left;font-weight:400;
+  line-height:1.3;transition:background .15s ease
+}
+.mfa-dialog .mfa-menu-item+.mfa-menu-item{border-top:1px solid var(--ishi-border)}
+.mfa-dialog .mfa-menu-item strong{font-size:.97rem;font-weight:600;color:var(--ishi-ink)}
+.mfa-dialog .mfa-menu-item small{display:block;color:var(--ishi-muted);font-size:.86rem;margin-top:5px;font-weight:400}
+.mfa-dialog .mfa-menu-item>span:last-child{font-size:1.36rem;color:var(--ishi-ink);flex-shrink:0}
+.mfa-dialog .mfa-menu-item:hover,.mfa-dialog .mfa-menu-item:focus-visible{
+  background:var(--ishi-blush);color:var(--ishi-ink)
+}
+.mfa-dialog .mfa-menu-item:hover strong,.mfa-dialog .mfa-menu-item:hover small,
+.mfa-dialog .mfa-menu-item:focus-visible strong,.mfa-dialog .mfa-menu-item:focus-visible small{
+  color:var(--ishi-ink)
+}
+.mfa-switch-row{
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:18px 17px;border:1px solid var(--ishi-border);
+  border-radius:8px;background:#fff
+}
+.mfa-switch-row strong{font-weight:650}
+.mfa-device-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-top:18px}
 .mfa-device-heading h3{margin:0}
-.mfa-link{border:0;background:transparent;color:#075bc9;cursor:pointer;padding:10px;min-height:44px;font-weight:600}
-.mfa-dialog input,.mfa-dialog select{border:1px solid #a4a0aa;border-radius:12px;
-  min-height:48px;padding:10px 14px;width:100%;background:#fff;color:#151517}
+.mfa-dialog .mfa-link{
+  padding:10px 13px;min-height:44px;border:1px solid transparent;border-radius:7px;
+  background:transparent;color:var(--ishi-ink);font-weight:650;text-decoration:underline;
+  text-underline-offset:3px
+}
+.mfa-dialog .mfa-link:hover,.mfa-dialog .mfa-link:focus-visible{
+  background:var(--ishi-blush);color:var(--ishi-ink);border-color:var(--ishi-border)
+}
+.mfa-dialog input,.mfa-dialog select{
+  min-width:0;width:100%;min-height:49px;padding:11px 14px;
+  border:1px solid #afa1a9;border-radius:7px;
+  color:var(--ishi-ink);background:#fff;font:400 1rem var(--ishi-body-font)
+}
+.mfa-dialog input::placeholder{color:var(--ishi-muted)}
+.mfa-dialog input:hover,.mfa-dialog select:hover{
+  border-color:var(--ishi-ink);background:#fff;color:var(--ishi-ink)
+}
+.mfa-dialog input:focus-visible,.mfa-dialog select:focus-visible{
+  background:#fff;color:var(--ishi-ink);border-color:var(--ishi-ink)
+}
 .mfa-dialog form{display:grid;gap:13px}
-.mfa-stage label{font-size:.92rem;font-weight:600}
-.mfa-primary,.mfa-secondary,.mfa-danger{border:0;border-radius:24px;
-  padding:12px 17px;min-height:46px;cursor:pointer;font-weight:650}
-.mfa-primary{background:#0966d9;color:#fff;margin-top:8px}
-.mfa-danger{background:#c83232;color:#fff}
-.mfa-secondary{background:#f2f2f3;color:#16171b}
-.mfa-dialog button:disabled{opacity:.5;cursor:not-allowed}
-.mfa-actions{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}
-.mfa-stage>.mfa-primary{width:100%;margin-top:18px}
-.mfa-setup-grid{display:grid;grid-template-columns:minmax(0,190px) 1fr;gap:20px;align-items:center}
-.mfa-setup-grid img{max-width:100%;height:auto;border:1px solid #ddd;border-radius:10px}
-.mfa-modal-key{display:block;font-family:ui-monospace,Consolas,monospace;
-  overflow-wrap:anywhere;font-size:.87rem;user-select:text}
-.mfa-modal-status{margin-top:10px;color:#9b2424;font-size:.88rem}
-@media(max-width:540px){.mfa-dialog{padding:17px;border-radius:18px}
- .mfa-setup-grid{grid-template-columns:1fr}.mfa-setup-grid img{width:180px}
- .mfa-actions{gap:8px}}
+.mfa-stage label{font-size:.9rem;font-weight:600;color:var(--ishi-ink)}
+.mfa-dialog .mfa-primary,.mfa-dialog .mfa-secondary,.mfa-dialog .mfa-danger{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-height:48px;padding:12px 20px;max-width:100%;
+  border:1px solid transparent;border-radius:6px;
+  font:600 1rem/1.25 var(--ishi-body-font);
+  cursor:pointer;transition:background .15s ease,border-color .15s ease;
+  text-align:center
+}
+.mfa-dialog .mfa-primary{
+  margin-top:10px;background:var(--ishi-pink);color:var(--ishi-ink);
+  border-color:var(--ishi-pink)
+}
+.mfa-dialog .mfa-primary:hover,.mfa-dialog .mfa-primary:focus-visible{
+  background:var(--ishi-pink-hover);color:var(--ishi-ink);border-color:var(--ishi-pink-hover)
+}
+.mfa-dialog .mfa-secondary{
+  background:var(--ishi-cream);color:var(--ishi-ink);border-color:var(--ishi-border)
+}
+.mfa-dialog .mfa-secondary:hover,.mfa-dialog .mfa-secondary:focus-visible{
+  background:var(--ishi-blush);color:var(--ishi-ink);border-color:var(--ishi-pink-hover)
+}
+.mfa-dialog .mfa-danger{
+  background:#B42338;color:#fff;border-color:#B42338
+}
+.mfa-dialog .mfa-danger:hover,.mfa-dialog .mfa-danger:focus-visible{
+  background:#86192A;color:#fff;border-color:#86192A
+}
+.mfa-dialog button:focus-visible,.mfa-entry:focus-visible{
+  outline:3px solid var(--ishi-ink);outline-offset:3px
+}
+.mfa-dialog button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
+.mfa-actions{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:19px}
+.mfa-stage>.mfa-primary{width:100%;margin-top:20px}
+.mfa-setup-grid{display:grid;grid-template-columns:minmax(0,188px) minmax(0,1fr);
+  gap:20px;align-items:center;padding:9px 0}
+.mfa-setup-grid img{width:100%;max-width:188px;height:auto;image-rendering:pixelated;
+  padding:8px;background:#fff;border:1px solid var(--ishi-border);border-radius:7px}
+.mfa-modal-key{
+  display:block;max-width:100%;overflow-wrap:anywhere;font:600 .91rem/1.5 ui-monospace,Consolas,monospace;
+  user-select:all;color:var(--ishi-ink);background:var(--ishi-cream);
+  padding:12px;border:1px solid var(--ishi-border);border-radius:7px
+}
+.mfa-modal-status{
+  padding:10px 12px;margin-top:12px;border:1px solid #edb0b6;border-radius:7px;
+  background:#fff2f1;color:#8B1A2B;font-size:.87rem
+}
+.mfa-modal-status[data-tone="success"]{
+  background:#eef7f1;border-color:#a8d3b8;color:#23563A
+}
+.mfa-restart-note{
+  display:grid;gap:12px;padding:14px;border:1px solid var(--ishi-border);
+  border-radius:7px;background:var(--ishi-cream);font-size:.9rem
+}
+.mfa-restart-note[hidden]{display:none!important}
+.mfa-restart-note button{justify-self:start}
+@media(max-width:540px){
+  .mfa-dialog{padding:18px;border-radius:12px}
+  .mfa-setup-grid{grid-template-columns:1fr;justify-items:start}
+  .mfa-setup-grid img{width:180px}
+  .mfa-actions{gap:9px}
+}
+@media(prefers-reduced-motion:reduce){
+  .mfa-dialog *, .mfa-entry{transition:none!important;animation:none!important}
+}
 `;
 
 /** Browser source appended to privateLoginJs; uses its existing BFF request helpers. */
@@ -200,10 +309,11 @@ let metaEnrollmentKey="";
 let metaOperation=null;
 let metaProofReturn="manage";
 let metaBusy=false;
-function metaStatus(value){
+function metaStatus(value,tone="error"){
   const output=get("mfa-modal-status");
   output.textContent=value||"";
   output.hidden=!value;
+  output.setAttribute("data-tone",tone);
 }
 function metaValidName(value){
   const name=value.trim();
@@ -250,10 +360,8 @@ function metaRender(){
   get("mfa-overview-heading").textContent=ready
     ?"Two-factor authentication is on":"Set up two-factor authentication";
   get("mfa-overview-description").textContent=ready
-    ?(mfaState.signIn2faEnabled
-      ?"Your connected authenticator apps help secure your Ishikeit sign-in."
-      :"An authenticator is connected. The separate sign-in 2FA preference is off.")
-    :"No authenticator app is currently configured. Add one to require codes from an authentication app.";
+    ?"Your connected authenticator apps protect your sign-in and security changes."
+    :"No authenticator app is connected yet. Add one to protect your account.";
   const configured=get("mfa-configured-methods");
   const available=get("mfa-available-methods");
   configured.replaceChildren();available.replaceChildren();
@@ -265,10 +373,6 @@ function metaRender(){
   else available.append(metaItem("Authentication app",
     "Set up a new authenticator and verify its code",
     ()=>metaConnect()));
-  const signInToggle=get("mfa-signin-toggle");
-  signInToggle.disabled=!ready;
-  signInToggle.setAttribute("aria-checked",mfaState.signIn2faEnabled?"true":"false");
-  get("mfa-signin-status").textContent=mfaState.signIn2faEnabled?"On":"Off";
   const toggle=get("mfa-method-toggle");
   toggle.disabled=false;
   toggle.setAttribute("aria-checked",ready?"true":"false");
@@ -327,6 +431,8 @@ function metaConnect(){
   metaDeviceName="";
   get("mfa-modal-name").value="";
   get("mfa-modal-connect-next").disabled=true;
+  const hasPending=(mfaState?.pendingCount||0)>0;
+  get("mfa-modal-pending-note").hidden=!hasPending;
   metaStageSet("connect");
 }
 function metaEdit(){
@@ -355,9 +461,7 @@ function metaBeginProof(operation,previous){
       ?"To remove the selected authenticator, approve the change using a current six-digit code."
       :operation.kind==="rename"
         ?"Verify this display-name change with your current authenticator code."
-        :operation.kind==="sign_in"
-          ?"Verify this account sign-in policy change with an enrolled authenticator code."
-          :"Verify an existing authenticator before adding another one.";
+        :"Verify an existing authenticator before adding another one.";
   metaStageSet("proof");
 }
 async function metaEnroll(){
@@ -365,7 +469,12 @@ async function metaEnroll(){
   metaBusy=true;
   try{
     const response=await request("/app/auth/mfa/totp/enroll",{name:metaDeviceName},csrfToken);
-    if(response.status===409)throw Error("An unfinished setup exists. Cancel the previous setup before trying again.");
+    if(response.status===409){
+      await metaRead();
+      get("mfa-modal-pending-note").hidden=false;
+      metaStageSet("connect");
+      throw Error("An unfinished setup exists. Select Restart setup to create a new key.");
+    }
     if(response.status===429)throw Error("Too many setup requests. Try again after the security cooldown.");
     if(!response.ok)throw Error("Unable to start authenticator setup.");
     const body=await response.json();
@@ -405,16 +514,28 @@ get("mfa-modal-back").addEventListener("click",metaReturn);
 metaDialog.addEventListener("cancel",event=>{
   event.preventDefault();void metaClose();
 });
-get("mfa-signin-toggle").addEventListener("click",()=>{
-  if(!mfaState || !mfaState.devices.some(x=>x.enabled))return;
-  metaBeginProof({kind:"sign_in",enabled:!mfaState.signIn2faEnabled},"overview");
-});
 get("mfa-method-toggle").addEventListener("click",()=>{
   if(!mfaState)return;
   if(mfaState.devices.filter(x=>x.enabled).length)metaStageSet("method-confirm");
   else metaConnect();
 });
 get("mfa-modal-add-device").addEventListener("click",metaConnect);
+get("mfa-modal-restart").addEventListener("click",async()=>{
+  if(metaBusy || !csrfToken)return;
+  metaBusy=true;
+  const restart=get("mfa-modal-restart");
+  restart.disabled=true;
+  try{
+    const response=await request("/app/auth/mfa/totp/reset",{},csrfToken);
+    if(!response.ok)throw Error("Could not restart the previous setup.");
+    metaClearKey();
+    await metaRead();
+    get("mfa-modal-pending-note").hidden=true;
+    metaStatus("Previous setup canceled. You can connect a new authenticator.","success");
+  }catch(error){
+    metaStatus(error instanceof Error?error.message:"Setup could not be reset.");
+  }finally{metaBusy=false;restart.disabled=false;}
+});
 get("mfa-modal-name").addEventListener("input",()=>{
   const value=get("mfa-modal-name").value;
   get("mfa-modal-connect-next").disabled=!metaValidName(value);
@@ -432,7 +553,7 @@ get("mfa-modal-copy").addEventListener("click",async()=>{
     if(typeof navigator==="undefined" || !navigator.clipboard
       || typeof navigator.clipboard.writeText!=="function")throw Error("Clipboard unavailable");
     await navigator.clipboard.writeText(metaEnrollmentKey);
-    metaStatus("Setup key copied.");
+    metaStatus("Setup key copied.","success");
   }catch{metaStatus("Could not copy the key. Select and copy it manually.");}
 });
 get("mfa-modal-enter-code").addEventListener("click",()=>metaStageSet("verify"));
@@ -489,7 +610,7 @@ get("mfa-modal-edit-remove").addEventListener("click",()=>{
     ?"Removing this authenticator will turn off the authentication-app method"
     :"Remove "+metaSelected.label+"?";
   get("mfa-modal-remove-help").textContent=last
-    ?"This is your final authenticator. Its secret will be deleted, old codes will stop working, and you will be signed out. You will need a fresh setup to restore authenticator-app 2FA."
+    ?"This is your final authenticator. Its secret will be permanently deleted and you will be signed out. A new authenticator must be enrolled before workspace access can resume."
     :"The selected authenticator will be permanently deleted. Other enrolled authenticators will stay active.";
   metaStageSet("remove-confirm");
 });
@@ -523,6 +644,9 @@ get("mfa-modal-proof-form").addEventListener("submit",async event=>{
       metaOperation=null;
       if(mfaState)mfaState.canEnroll=true;
       metaStageSet("connect");
+      // The proof request is finished. Release its busy guard BEFORE
+      // beginning a second, separately rate-limited enrollment request.
+      metaBusy=false;
       await metaEnroll();
       return;
     }

@@ -619,7 +619,7 @@ describe("private cookie-only browser auth routes",()=>{
   it("rejects last-factor disable and throttles sensitive account 2FA changes",async()=>{
     const {server,controller}=testServer();
     const h={...headers,cookie:authCookie(),"x-ishikeit-csrf":csrf};
-    const body={kind:"sign_in",enabled:false,
+    const body={kind:"disable_app",
       proofFactorId:"123e4567-e89b-42d3-a456-426614174000",code:"654321"};
     controller.changeMfaSettings.mockRejectedValueOnce(new BrowserMfaLastAuthenticatorError());
     const locked=await server.inject({method:"POST",url:"/app/auth/mfa/preferences",
@@ -633,6 +633,20 @@ describe("private cookie-only browser auth routes",()=>{
     expect(limited.headers["retry-after"]).toBe("900");
     expect(limited.json()).toEqual({status:"security_change_rate_limited"});
     expect(limited.body).not.toContain(token);
+    await server.close();
+  });
+
+  it("rejects deprecated preference to disable sign-in MFA instead of bypassing the factor",async()=>{
+    const {server,controller}=testServer();
+    const response=await server.inject({
+      method:"POST",url:"/app/auth/mfa/preferences",
+      headers:{...headers,cookie:authCookie(),"x-ishikeit-csrf":csrf},
+      payload:{kind:"sign_in",enabled:false,
+        proofFactorId:"123e4567-e89b-42d3-a456-426614174000",code:"123456"}
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({status:"invalid_request"});
+    expect(controller.changeMfaSettings).not.toHaveBeenCalled();
     await server.close();
   });
 

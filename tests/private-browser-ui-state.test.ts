@@ -43,6 +43,7 @@ interface UiFixtureOptions {
   emailLinkHint?:string;
   restoreSuccess?:boolean;
   factorCount?:number;
+  pendingInitial?:boolean;
   nearExpiry?:boolean;
   enrollStatus?:number;
   allowTeam?:boolean;
@@ -87,7 +88,7 @@ function setup(options:UiFixtureOptions={}){
     confirm:(s:string)=>{void s;return true;}
   };
   let factors=options.factorCount??0;
-  let pending=0;
+  let pending=options.pendingInitial?1:0;
   let enrollRequests=0;
   let refreshRequests=0;
   let logoutRequests=0;
@@ -191,6 +192,7 @@ function setup(options:UiFixtureOptions={}){
     }
     if(path==="/app/auth/mfa/totp/enroll" && mutation){
       enrollRequests++;
+      if(pending>0)return Promise.resolve(response({status:"mfa_incomplete_setup"},409));
       if(options.enrollStatus && options.enrollStatus!==200)
         return Promise.resolve(response({status:"enrollment_limited"},options.enrollStatus));
       pending=1;
@@ -268,20 +270,43 @@ function setup(options:UiFixtureOptions={}){
 
 describe("secure workspace UX and real static frontend lifecycle",()=>{
 
-  it("keeps overall sign-in protection separate from authenticator-method enrollment",async()=>{
+  it("uses one discoverable authenticator method and no confusing sign-in protection switch",async()=>{
     const ui=setup({factorCount:2});
     await ui.flush();await ui.click("nav-security");await ui.click("mfa-open-dialog");
-    const toggle=ui.dom.getElementById("mfa-signin-toggle");
-    expect(toggle.getAttribute("aria-checked")).toBe("true");
-    await ui.click("mfa-signin-toggle");
+    expect(privateLoginHtml).not.toContain("id=\"mfa-signin-toggle\"");
+    expect(privateLoginHtml).not.toContain("Require authenticator at sign-in");
+    expect(ui.dom.getElementById("mfa-configured-methods").children).toHaveLength(1);
+    expect(ui.dom.getElementById("mfa-overview-description").textContent)
+      .toContain("protect your sign-in");
+  });
+
+  it("allows adding a second or third authenticator after fresh AAL2 proof",async()=>{
+    const ui=setup({factorCount:2});
+    await ui.flush();await ui.click("nav-security");await ui.click("mfa-open-dialog");
+    await ui.clickElement(ui.dom.getElementById("mfa-configured-methods").children[0]!);
+    await ui.click("mfa-modal-add-device");
+    await ui.input("mfa-modal-name","My Samsung");
+    await ui.click("mfa-modal-connect-next");
     expect(ui.dom.getElementById("mfa-modal-proof").hidden).toBe(false);
-    expect(ui.stats().signIn2faEnabled).toBe(true);
+    expect(ui.stats().enrollRequests).toBe(0);
     await ui.input("mfa-modal-proof-code","123456");
     await ui.submit("mfa-modal-proof-form");
-    expect(ui.stats().signIn2faEnabled).toBe(false);
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
-    expect(ui.dom.getElementById("mfa-configured-methods").children).toHaveLength(1);
-    expect(ui.stats().deletedByProvider).toBe(0);
+    expect(ui.stats().enrollRequests).toBe(1);
+    expect(ui.dom.getElementById("mfa-modal-instructions").hidden).toBe(false);
+    expect(ui.dom.getElementById("mfa-modal-key").textContent).toBe("JBSWY3DPEHPK3PXP");
+  });
+
+  it("offers a functional restart for pending unfinished provider enrollment",async()=>{
+    const ui=setup({factorCount:2,pendingInitial:true});
+    await ui.flush();await ui.click("nav-security");await ui.click("mfa-open-dialog");
+    await ui.clickElement(ui.dom.getElementById("mfa-configured-methods").children[0]!);
+    await ui.click("mfa-modal-add-device");
+    expect(ui.dom.getElementById("mfa-modal-pending-note").hidden).toBe(false);
+    await ui.click("mfa-modal-restart");
+    expect(ui.stats().resetRequests).toBe(1);
+    expect(ui.dom.getElementById("mfa-modal-pending-note").hidden).toBe(true);
+    expect(ui.dom.getElementById("mfa-modal-status").textContent)
+      .toContain("Previous setup canceled");
   });
 
   it("opens a Meta-inspired overview and lists verified authentication app under active login codes",async()=>{
@@ -515,27 +540,6 @@ describe("secure workspace UX and real static frontend lifecycle",()=>{
     await ui.submit("mfa-change-form");
     expect(list.children[1]?.children[1]?.getAttribute("aria-label")).toBe(before);
     expect(ui.dom.getElementById("mfa-last-device-help").hidden).toBe(true);
-  });
-
-  it("makes account-wide sign-in 2FA On/Off an explicit reauthentication step",async()=>{
-    const ui=setup({factorCount:2});
-    await ui.flush();
-    await ui.click("nav-security");
-    await ui.click("mfa-account-toggle");
-    expect(ui.dom.getElementById("mfa-change-panel").hidden).toBe(false);
-    expect(ui.dom.getElementById("mfa-account-toggle").getAttribute("aria-checked")).toBe("true");
-    expect(ui.dom.getElementById("mfa-change-description").textContent)
-      .toContain("Future sign-ins");
-    ui.dom.getElementById("mfa-change-code").value="123456";
-    await ui.submit("mfa-change-form");
-    expect(ui.stats().signIn2faEnabled).toBe(false);
-    expect(ui.dom.getElementById("mfa-account-toggle").getAttribute("aria-checked")).toBe("false");
-    expect(ui.dom.getElementById("mfa-devices").children).toHaveLength(2);
-    await ui.click("mfa-account-toggle");
-    ui.dom.getElementById("mfa-change-code").value="654321";
-    await ui.submit("mfa-change-form");
-    expect(ui.stats().signIn2faEnabled).toBe(true);
-    expect(ui.dom.getElementById("mfa-account-toggle").getAttribute("aria-checked")).toBe("true");
   });
 
   it("never offers a switch to disable the last usable authenticator",async()=>{

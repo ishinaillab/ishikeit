@@ -32,7 +32,6 @@ interface TotpFactorRow extends pg.QueryResultRow {
   id:string; status:string; factor_type:string;
   created_at?:Date;label?:string
 }
-interface MfaPolicyRow extends pg.QueryResultRow { sign_in_2fa_enabled:boolean }
 export interface BrowserMfaDevice {
   factorId:string;label:string;enrolledAt:string;enabled:boolean;
 }
@@ -45,7 +44,6 @@ export type BrowserMfaSettingsChange =
   | {signedOut:false;cookieValue:string;csrfToken:string}
   | {signedOut:true;removed:number};
 export type BrowserMfaSettingsMutation =
-  | {kind:"sign_in";enabled:boolean;proofFactorId:string;code:string}
   | {kind:"remove";factorId:string;proofFactorId:string;code:string}
   | {kind:"disable_app";proofFactorId:string;code:string}
   | {kind:"rename";factorId:string;name:string;proofFactorId:string;code:string};
@@ -449,27 +447,14 @@ export class PrivateBrowserAuthService {
     return this.csrfForCookie(cookie);
   }
 
-  /**
-   * Ordinary workspace read access follows the user's explicit sign-in 2FA
-   * preference. Sensitive mutations independently require enabled-factor
-   * AAL2 regardless of this preference.
+  /** AAL2 remains mandatory for workspace access. The removed legacy
+   * sign-in preference cannot silently bypass enrolled-factor security.
    */
   async #describeSession(
     access:string,verified:VerifiedIshikeitSession,cookie:string
   ):Promise<BrowserSessionView>{
     const eligible=await this.deps.portfolio.list(access,{pageSize:1});
     if(eligible.items.length===0)throw new Error("Browser workspace membership unavailable");
-    const policy=await this.deps.db.query<MfaPolicyRow>(
-      `SELECT sign_in_2fa_enabled FROM public.ishikeit_browser_mfa_policies
-       WHERE user_id=$1::uuid`,[verified.principal.subject]
-    );
-    if(policy.rows[0]?.sign_in_2fa_enabled===false){
-      const workspaces=await this.deps.portfolio.list(access,{pageSize:50});
-      if(workspaces.items.length===0)throw new Error("Browser workspace membership unavailable");
-      return {status:"authenticated",sessionId:verified.sessionId,
-        expiresAt:verified.expiresAt,csrfToken:this.csrfForCookie(cookie),workspaces,
-        memberInvitationsEnabled:this.deps.memberInvites!==undefined};
-    }
     try{
       const mfa=await this.deps.auth.verifyPrivilegedAccessToken(access);
       if(mfa.principal.subject!==verified.principal.subject
@@ -551,8 +536,7 @@ export class PrivateBrowserAuthService {
     const {access,verified}=await this.#bearer(cookie);
     const eligible=await this.deps.portfolio.list(access,{pageSize:1});
     if(eligible.items.length===0)throw new Error("Workspace authorization required");
-    const [rows,policy]=await Promise.all([
-      this.deps.db.query<TotpFactorRow>(
+    const rows=await this.deps.db.query<TotpFactorRow>(
         `SELECT f.id,f.status::text AS status,f.factor_type::text AS factor_type,
            f.created_at,
            COALESCE(l.display_name,NULLIF(
@@ -564,12 +548,7 @@ export class PrivateBrowserAuthService {
          WHERE f.user_id=$1::uuid
          ORDER BY f.created_at ASC,f.id ASC`,
         [verified.principal.subject]
-      ),
-      this.deps.db.query<MfaPolicyRow>(
-        `SELECT sign_in_2fa_enabled FROM public.ishikeit_browser_mfa_policies
-         WHERE user_id=$1::uuid`,[verified.principal.subject]
-      )
-    ]);
+      );
     const verifiedTotp=rows.rows.filter(x=>
       x.status==="verified" && x.factor_type==="totp");
     const devices=verifiedTotp.map((f,i)=>({
@@ -588,8 +567,7 @@ export class PrivateBrowserAuthService {
       try{await this.deps.auth.verifyPrivilegedAccessToken(access);canEnroll=true;}
       catch{/* No backup enrollment without active AAL2. */}
     }
-    return {factors,devices,pendingCount,canEnroll,
-      signIn2faEnabled:policy.rows[0]?.sign_in_2fa_enabled!==false};
+    return {factors,devices,pendingCount,canEnroll,signIn2faEnabled:true};
   }
 
   /** An explicit, CSRF-protected user action can reset only incomplete,
@@ -797,8 +775,9 @@ export class PrivateBrowserAuthService {
         await tx.query(
           "INSERT INTO public.ishikeit_browser_mfa_policies(user_id) VALUES($1::uuid) ON CONFLICT(user_id) DO NOTHING",
           [row.user_id]);
-        const policy=await tx.query<MfaPolicyRow>(
-          "SELECT sign_in_2fa_enabled FROM public.ishikeit_browser_mfa_policies WHERE user_id=$1::uuid FOR UPDATE",
+        // Row lock still serializes removal and rename operations on this account.
+        await tx.query(
+          "SELECT user_id FROM public.ishikeit_browser_mfa_policies WHERE user_id=$1::uuid FOR UPDATE",
           [row.user_id]);
         const all=await tx.query<TotpFactorRow>(
           "SELECT id,status::text AS status,factor_type::text AS factor_type FROM auth.mfa_factors WHERE user_id=$1::uuid AND factor_type='totp' ORDER BY created_at ASC,id ASC",
@@ -817,9 +796,6 @@ export class PrivateBrowserAuthService {
           throw new Error("Authenticator not available");
         if(mutation.kind==="remove" && verified.length>1 && targetId===proofId)
           throw new Error("Choose another authenticator to approve removal");
-        if(mutation.kind==="sign_in"
-          && (policy.rows[0]?.sign_in_2fa_enabled!==false)===mutation.enabled)
-          throw new Error("Sign-in 2FA already in requested state");
         issued=await this.deps.mfa.challengeAndVerify(access,proofId,passcode);
         const next=await this.deps.auth.verifyAccessToken(issued.access_token);
         if(next.principal.subject!==row.user_id ||
@@ -832,14 +808,7 @@ export class PrivateBrowserAuthService {
         if(proof.rows[0]?.n!==1)
           throw new Error("Fresh authenticator proof required");
         let signOut=false;
-        if(mutation.kind==="sign_in"){
-          await tx.query(
-            "UPDATE public.ishikeit_browser_mfa_policies SET sign_in_2fa_enabled=$2,updated_at=now() WHERE user_id=$1::uuid",
-            [row.user_id,mutation.enabled]);
-          await tx.query(
-            "INSERT INTO public.ishikeit_browser_mfa_security_events(user_id,event_kind) VALUES($1::uuid,$2)",
-            [row.user_id,mutation.enabled?"sign_in_2fa_enabled":"sign_in_2fa_disabled"]);
-        }else if(mutation.kind==="rename"){
+        if(mutation.kind==="rename"){
           if(targetId===undefined || newName===undefined)
             throw new Error("Invalid authenticator rename");
           await tx.query(

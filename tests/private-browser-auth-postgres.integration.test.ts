@@ -622,42 +622,25 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     expect((await db!.query("SELECT 1 FROM auth.mfa_factors")).rowCount).toBe(0);
   });
 
-  it("turns sign-in 2FA off and on only after fresh authenticator proof while keeping sensitive actions AAL2",async()=>{
-    await db!.query("INSERT INTO auth.mfa_factors(id,user_id,status,factor_type) VALUES($1,$2,'verified','totp')",
+  it("always requires MFA to access workspace even if an old sign-in policy preference was off",async()=>{
+    await db!.query(
+      "INSERT INTO auth.mfa_factors(id,user_id,status,factor_type) VALUES($1,$2,'verified','totp')",
       [factorId,userId]);
-    const first=await service!.verify(
-      await service!.begin("invited@example.com","mfa-policy-first"),"123456","mfa-policy-first"
-    );
-    const stepped=await service!.verifyTotp(first.cookieValue,factorId,"123456");
-    const switchedOff=await service!.changeMfaSettings(stepped.cookieValue,{
-      kind:"sign_in",enabled:false,proofFactorId:factorId,code:"123456"
-    });
-    if(switchedOff.signedOut)throw new Error("Sign-in preference must preserve existing factors");
-    expect((await service!.listTotpFactors(switchedOff.cookieValue)).signIn2faEnabled)
-      .toBe(false);
-    // New logins after opting out of sign-in MFA can view their own active
-    // workspace but cannot use privileged actions without a fresh AAL2.
+    // Legacy preference rows must no longer silently bypass AAL2.
+    await db!.query(
+      "INSERT INTO public.ishikeit_browser_mfa_policies(user_id,sign_in_2fa_enabled) VALUES($1,false) ON CONFLICT(user_id) DO UPDATE SET sign_in_2fa_enabled=false",
+      [userId]);
     const emailOnly=await service!.verify(
-      await service!.begin("invited@example.com","mfa-policy-second"),"123456","mfa-policy-second"
+      await service!.begin("invited@example.com","mfa-policy-off-legacy"),"123456","mfa-policy-off-legacy"
     );
-    expect((await service!.sessionStatus(emailOnly.cookieValue)).status).toBe("authenticated");
+    expect((await service!.sessionStatus(emailOnly.cookieValue)).status).toBe("mfa_required");
     await expect(service!.inviteWorkspaceMember(emailOnly.cookieValue,{
       workspaceId,email:"colleague@example.com",role:"viewer"
     })).rejects.toThrow(/multi-factor/i);
     expect(memberInvites.invite).not.toHaveBeenCalled();
-    const turnedOn=await service!.changeMfaSettings(emailOnly.cookieValue,{
-      kind:"sign_in",enabled:true,proofFactorId:factorId,code:"654321"
-    });
-    if(turnedOn.signedOut)throw new Error("Sign-in preference must preserve existing factors");
-    expect((await service!.listTotpFactors(turnedOn.cookieValue)).signIn2faEnabled).toBe(true);
-    await expect(service!.sessionStatus(emailOnly.cookieValue)).rejects.toThrow();
-    const future=await service!.verify(
-      await service!.begin("invited@example.com","mfa-policy-third"),"123456","mfa-policy-third"
-    );
-    expect((await service!.sessionStatus(future.cookieValue)).status).toBe("mfa_required");
-    expect((await db!.query(
-      "SELECT 1 FROM public.ishikeit_browser_mfa_security_events WHERE event_kind IN ('sign_in_2fa_disabled','sign_in_2fa_enabled')"
-    )).rowCount).toBe(2);
+    const stepped=await service!.verifyTotp(emailOnly.cookieValue,factorId,"123456");
+    expect((await service!.sessionStatus(stepped.cookieValue)).status).toBe("authenticated");
+    expect((await service!.listTotpFactors(stepped.cookieValue)).signIn2faEnabled).toBe(true);
   });
 
   it("denies removal of foreign factors before provider proof",async()=>{

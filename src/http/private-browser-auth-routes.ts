@@ -135,7 +135,8 @@ export function registerPrivateBrowserAuthRoutes(
     if(type==="html"){
       return reply
         .header("content-security-policy",
-          "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "+
+          "default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; "+
+          "font-src https://fonts.gstatic.com; img-src 'self' data:; "+
           "connect-src 'self'; object-src 'none'; "+
           "frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
         .type("text/html; charset=utf-8").send(privateLoginHtml);
@@ -286,8 +287,6 @@ export function registerPrivateBrowserAuthRoutes(
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
   const mfaSettingsSchema=z.discriminatedUnion("kind",[
-    z.object({kind:z.literal("sign_in"),enabled:z.boolean(),
-      proofFactorId:z.string().uuid(),code:z.string().regex(/^[0-9]{6}$/u)}).strict(),
     z.object({kind:z.literal("remove"),factorId:z.string().uuid(),
       proofFactorId:z.string().uuid(),code:z.string().regex(/^[0-9]{6}$/u)}).strict(),
     z.object({kind:z.literal("disable_app"),

@@ -48,8 +48,11 @@ services:
     init: true
     # Explicit source allowlist excludes .env, .git, secrets and untracked files.
     # Includes lint, typecheck, Vitest unit + real PG integration, and build.
+    # Integration files share one disposable PG database and must not drop
+    # each other's fixtures: serialize test files, preserving per-file isolation.
+    # Email template fixtures are part of the source allowlist.
     # No HTTP server, WordPress, Telegram, Meta or WhatsApp client is started.
-    command: ["sh", "-ec", "for item in package.json package-lock.json tsconfig.json tsconfig.build.json eslint.config.js README.md src tests scripts migrations wordpress docs; do cp -a \"/source/$$item\" /workspace/; done; npm ci --ignore-scripts --no-audit --no-fund && npm run check"]
+    command: ["sh", "-ec", "for item in package.json package-lock.json tsconfig.json tsconfig.build.json eslint.config.js README.md src tests scripts migrations wordpress docs email; do cp -a \"/source/$$item\" /workspace/; done; npm ci --ignore-scripts --no-audit --no-fund && npm run lint && npm run typecheck && npx vitest run --no-file-parallelism && npm run build"]
 
 volumes:
   postgres_test_data:

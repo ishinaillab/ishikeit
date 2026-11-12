@@ -32,6 +32,7 @@ import {
   MessengerPageSubscriptionError
 } from "../auth/messenger-page-subscription.js";
 import { PostgresInboundEventRepository, PostgresInboundStore } from "../persistence/inbound.js";
+import { PostgresWorkspaceShadowInspector, ShadowWorkspaceInboundStore } from "../persistence/workspace-routing-shadow.js";
 import { PostgresMetaHandoffStore } from "../persistence/meta-handoff.js";
 import { PostgresMetaDisclosureReader } from "../persistence/meta-disclosure.js";
 import { PostgresWhatsAppConsentStore } from "../persistence/whatsapp-consent.js";
@@ -634,7 +635,13 @@ const server = buildServer({
     && (oauthStore === undefined || await oauthStore.ready())
     && (instagramDataLifecycle === undefined || await instagramDataLifecycle.ready())
     && await tiktokAuthorizationReady(),
-  inbound: new PostgresInboundStore(db, whatsappConsents, latePointReminderPlans),
+  inbound: env.WORKSPACE_SHADOW_ROUTING_ENABLED
+    ? new ShadowWorkspaceInboundStore(
+        new PostgresInboundStore(db, whatsappConsents, latePointReminderPlans),
+        new PostgresWorkspaceShadowInspector(db),
+        (observation) => logger.info(observation, "Workspace shadow routing comparison")
+      )
+    : new PostgresInboundStore(db, whatsappConsents, latePointReminderPlans),
   metaHandoffs,
   appSecret: env.META_APP_SECRET,
   ...(env.META_INSTAGRAM_OAUTH_APP_SECRET === undefined

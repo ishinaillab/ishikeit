@@ -15,7 +15,8 @@ export type ShadowRoutingDecision =
   | "unclaimed"
   | "ambiguous"
   | "identity_unresolved"
-  | "lookup_unavailable";
+  | "lookup_unavailable"
+  | "capacity_skipped";
 
 export interface ShadowRoutingObservation {
   provider: string;
@@ -92,6 +93,9 @@ export class PostgresWorkspaceShadowInspector {
  * never an account ID, message, customer, raw payload, or tenant identifier.
  */
 export class ShadowWorkspaceInboundStore implements InboundStore {
+  private readonly maxInFlight = 4;
+  private inFlight = 0;
+
   constructor(
     private readonly live: InboundStore,
     private readonly inspector: Pick<PostgresWorkspaceShadowInspector, "inspect">,
@@ -102,21 +106,34 @@ export class ShadowWorkspaceInboundStore implements InboundStore {
     event: CanonicalEvent, identity: IngressIdentity, rawBodyHash: string
   ): Promise<"created" | "duplicate"> {
     const outcome = await this.live.ingest(event, identity, rawBodyHash);
-    if (outcome === "created") {
-      const emit = (decision: ShadowRoutingDecision) => {
-        try {
-          this.record({ provider: event.provider, channel: event.channel, decision });
-        } catch {
-          // Observability must never change existing messaging delivery.
-        }
-      };
-      void this.inspector.inspect({
+    if (outcome !== "created") return outcome;
+
+    const emit = (decision: ShadowRoutingDecision) => {
+      try {
+        this.record({ provider: event.provider, channel: event.channel, decision });
+      } catch {
+        // Observability must never change existing messaging delivery.
+      }
+    };
+    // Defensive per-process budget: never enqueue unbounded background reads
+    // while the shared PostgreSQL pool also serves live ingress/dispatch.
+    // Shadow comparisons are lossy by design; customer events are not.
+    if (this.inFlight >= this.maxInFlight) {
+      emit("capacity_skipped");
+      return outcome;
+    }
+    this.inFlight++;
+    void Promise.resolve()
+      .then(() => this.inspector.inspect({
         provider: event.provider, channel: event.channel, accountId: event.accountId
-      }).then(
+      }))
+      .then(
         (decision) => emit(decision),
         () => emit("lookup_unavailable")
-      );
-    }
+      )
+      .finally(() => {
+        this.inFlight--;
+      });
     return outcome;
   }
 }

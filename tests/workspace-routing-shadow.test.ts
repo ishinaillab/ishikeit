@@ -96,6 +96,54 @@ describe("workspace shadow comparison (no tenant cutover)", () => {
     expect(record).not.toHaveBeenCalled();
   });
 
+  it("bounds overlapping observational DB reads without blocking real inbound delivery", async () => {
+    const release: Array<(value: "unclaimed") => void> = [];
+    const probe = { inspect: vi.fn().mockImplementation(() =>
+      new Promise<"unclaimed">((resolve) => { release.push(resolve); })) };
+    const recorded: ShadowRoutingObservation[] = [];
+    const live = { ingest: vi.fn().mockResolvedValue("created" as const) };
+    const store = new ShadowWorkspaceInboundStore(live, probe, (item) => { recorded.push(item); });
+    for (let i = 0; i < 5; i++) {
+      expect(await store.ingest(event, identity, "hash")).toBe("created");
+    }
+    expect(probe.inspect).toHaveBeenCalledTimes(4);
+    expect(release).toHaveLength(4);
+    expect(recorded).toContainEqual({
+      provider:"meta",channel:"instagram",decision:"capacity_skipped"
+    });
+    expect(live.ingest).toHaveBeenCalledTimes(5);
+    release[0]?.("unclaimed");
+    await vi.waitFor(() => expect(recorded).toContainEqual({
+      provider:"meta",channel:"instagram",decision:"unclaimed"
+    }));
+    // Drain the finalizer before allocating another background comparison.
+    await Promise.resolve();
+    expect(await store.ingest(event, identity, "hash")).toBe("created");
+    expect(probe.inspect).toHaveBeenCalledTimes(5);
+    for (const resolve of release.slice(1)) resolve("unclaimed");
+  });
+
+  it("releases shadow budget after query failure so subsequent events are inspected", async () => {
+    const probe = { inspect: vi.fn().mockRejectedValueOnce(new Error("read-only lookup failed"))
+      .mockResolvedValue("unclaimed" as const) };
+    const recorded: ShadowRoutingObservation[] = [];
+    const store = new ShadowWorkspaceInboundStore(
+      {ingest: vi.fn().mockResolvedValue("created" as const)},
+      probe,
+      (item) => { recorded.push(item); }
+    );
+    expect(await store.ingest(event,identity,"hash")).toBe("created");
+    await vi.waitFor(() => expect(recorded).toContainEqual({
+      provider:"meta",channel:"instagram",decision:"lookup_unavailable"
+    }));
+    await Promise.resolve();
+    expect(await store.ingest(event,identity,"hash")).toBe("created");
+    await vi.waitFor(() => expect(recorded).toContainEqual({
+      provider:"meta",channel:"instagram",decision:"unclaimed"
+    }));
+    expect(probe.inspect).toHaveBeenCalledTimes(2);
+  });
+
   it("reports unavailable without rejecting live webhook delivery", async () => {
     const live = { ingest: vi.fn().mockResolvedValue("created" as const) };
     const probe = { inspect: vi.fn().mockRejectedValue(new Error("sensitive db details")) };

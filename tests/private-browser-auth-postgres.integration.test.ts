@@ -780,7 +780,7 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     expect(otpClient.revoke).toHaveBeenCalledWith("mfa_access_"+"x".repeat(60));
   });
 
-  it("recovers with backup factor after a new AAL1 login without exposing workspaces",async()=>{
+  it("recovers with backup when primary is unavailable after logout and fresh AAL1 login",async()=>{
     const initial=await service!.verify(
       await service!.begin("invited@example.com","backup-setup-ip"),
       "123456","backup-setup-ip"
@@ -795,6 +795,14 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       "SELECT id,status FROM auth.mfa_factors ORDER BY id"
     );
     expect(factors.rows.filter(f=>f.status==="verified")).toHaveLength(2);
+    // Simulate a lost-primary recovery without deleting the owner's factors.
+    // The disposable fixture reuses one auth.session ID, so downgrade that
+    // isolated row to mimic the new AAL1 session issued after email sign-in.
+    await service!.logout(protectedSession.cookieValue);
+    await expect(service!.sessionStatus(protectedSession.cookieValue))
+      .rejects.toThrow(/session/i);
+    await db!.query("UPDATE auth.sessions SET aal='aal1',factor_id=NULL WHERE id=$1",
+      [authSessionId]);
     const fresh=await service!.verify(
       await service!.begin("invited@example.com","recover-backup-ip"),
       "123456","recover-backup-ip"
@@ -802,6 +810,13 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     const emailOnly=await service!.sessionStatus(fresh.cookieValue);
     expect(emailOnly.status).toBe("mfa_required");
     expect(emailOnly).not.toHaveProperty("workspaces");
+    await expect(service!.listWorkspaces(fresh.cookieValue)).rejects.toThrow(/multi-factor/i);
+    // The primary device cannot generate a usable code. A failed attempt
+    // must not grant workspaces or invalidate the enrolled backup factor.
+    mfa.challengeAndVerify.mockRejectedValueOnce(new Error("Primary device unavailable"));
+    await expect(service!.verifyTotp(fresh.cookieValue,factorId,"000000"))
+      .rejects.toThrow("Primary device unavailable");
+    expect((await service!.sessionStatus(fresh.cookieValue)).status).toBe("mfa_required");
     await expect(service!.listWorkspaces(fresh.cookieValue)).rejects.toThrow(/multi-factor/i);
     const recovered=await service!.verifyTotp(fresh.cookieValue,backup.factorId,"345678");
     expect((await service!.sessionStatus(recovered.cookieValue)).status)
@@ -812,6 +827,13 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
       [backup.factorId,authSessionId]
     );
     expect(binding.rows[0]?.matches).toBe(true);
+    expect(mfa.challengeAndVerify).toHaveBeenLastCalledWith(
+      expect.any(String),backup.factorId,"345678"
+    );
+    const preserved=await db!.query<{n:number}>(
+      "SELECT count(*)::integer AS n FROM auth.mfa_factors WHERE status='verified'"
+    );
+    expect(preserved.rows[0]?.n).toBe(2);
   });
 
   it("makes logout locally final even when remote provider revocation is unavailable",async()=>{

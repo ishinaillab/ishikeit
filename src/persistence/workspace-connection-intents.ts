@@ -137,7 +137,19 @@ export class PostgresWorkspaceConnectionIntents {
   async consume(input: z.infer<typeof consumeSchema>): Promise<ConnectionIntentCompletion | undefined> {
     const p = consumeSchema.parse(input);
     const redirectUri = verifiedRedirectUri(p.redirectUri);
-    const result = await this.db.transaction(async (tx) => tx.query<IntentRow>(
+    const result = await this.db.transaction(async (tx) => {
+      // Lock membership and workspace until the callback consumption commits.
+      // A non-locking EXISTS subquery does not fence concurrent revocation.
+      const permitted = await tx.query(
+        `SELECT 1 FROM public.ishikeit_workspace_memberships m
+         JOIN public.ishikeit_workspaces w ON w.workspace_id=m.workspace_id
+         WHERE m.workspace_id=$1 AND m.auth_issuer=$2 AND m.auth_subject=$3
+           AND m.role IN ('owner','admin') AND m.state='active'
+           AND w.state='active' FOR SHARE OF m,w`,
+        [p.workspaceId,p.actor.issuer,p.actor.subject]
+      );
+      if (permitted.rowCount !== 1) return undefined;
+      return tx.query<IntentRow>(
       `UPDATE public.ishikeit_connection_intents i SET consumed_at=now()
        WHERE i.workspace_id=$1 AND i.actor_issuer=$2 AND i.actor_subject=$3
          AND i.provider=$4 AND i.provider_application_key=$5 AND i.redirect_uri=$6
@@ -155,8 +167,9 @@ export class PostgresWorkspaceConnectionIntents {
                  provider,provider_application_key,redirect_uri`,
       [p.workspaceId,p.actor.issuer,p.actor.subject,p.provider,
         p.providerApplicationKey,redirectUri,digest(p.state),digest(p.browserNonce),p.sessionId ?? null]
-    ));
-    const row = result.rows[0];
+      );
+    });
+    const row = result?.rows[0];
     if (row === undefined) return undefined;
     return {
       intentId: row.intent_id, workspaceId: row.workspace_id,

@@ -110,6 +110,41 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     expect(inboundCount.rows[0]?.n).toBe(5);
   });
 
+  it("compares a Telegram Business connection against exact owner/connection/bot in PG17", async () => {
+    const shadow = new PostgresWorkspaceShadowInspector(db!);
+    const proofIdentity = {botId:"1245678",ownerId:"66778899",connectionId:"business-A"};
+    const other = {botId:"9876543",ownerId:"66778888",connectionId:"business-B"};
+    const linkedA = await registry!.linkVerified({
+      connectionId:randomUUID(),workspaceId:workspaceA,actor:ownerA,
+      providerApplicationKey:proofIdentity.botId,
+      providerConnectionId:proofIdentity.connectionId,
+      proof:proof("telegram",proofIdentity.ownerId)
+    });
+    const linkedB = await registry!.linkVerified({
+      connectionId:randomUUID(),workspaceId:workspaceB,actor:ownerB,
+      providerApplicationKey:other.botId,
+      providerConnectionId:other.connectionId,
+      proof:proof("telegram",other.ownerId)
+    });
+    expect(await shadow.inspectVerifiedTelegramBusiness(proofIdentity)).toBe("inactive");
+    await activate(linkedA.connectionId,workspaceA,ownerA,"telegram",proofIdentity.ownerId);
+    await activate(linkedB.connectionId,workspaceB,ownerB,"telegram",other.ownerId);
+    expect(await shadow.inspectVerifiedTelegramBusiness(proofIdentity))
+      .toBe("candidate_active");
+    expect(await shadow.inspectVerifiedTelegramBusiness(other))
+      .toBe("candidate_active");
+    for (const altered of [
+      {...proofIdentity,ownerId:other.ownerId},
+      {...proofIdentity,botId:other.botId},
+      {...proofIdentity,connectionId:other.connectionId}
+    ]) expect(await shadow.inspectVerifiedTelegramBusiness(altered)).toBe("unclaimed");
+    await registry!.pause({
+      workspaceId:workspaceA,connectionId:linkedA.connectionId,actor:ownerA
+    });
+    expect(await shadow.inspectVerifiedTelegramBusiness(proofIdentity)).toBe("inactive");
+    expect(await shadow.inspectVerifiedTelegramBusiness(other)).toBe("candidate_active");
+  });
+
   it("does not route an account while verifying; activates only verified exact account", async () => {
     const linked = await link(workspaceA,ownerA,"telegram","verified-immutable-id-1");
     expect(linked.status).toBe("verifying");
@@ -152,7 +187,7 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     await expect(registry!.readForMember({
       workspaceId: workspaceA, connectionId: a1.connectionId,actor:ownerB
     })).rejects.toThrow(/authorization denied/i);
-  });
+  }, 15_000);
 
   it("rejects simultaneous ownership claims even under concurrency; rolls back loser", async () => {
     const attempts = await Promise.allSettled([

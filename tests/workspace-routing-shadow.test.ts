@@ -3,6 +3,7 @@ import type { CanonicalEvent } from "../src/domain/events.js";
 import {
   PostgresWorkspaceShadowInspector,
   ShadowWorkspaceInboundStore,
+  TelegramBusinessShadowObserver,
   shadowAccountCandidate,
   type ShadowRoutingObservation
 } from "../src/persistence/workspace-routing-shadow.js";
@@ -44,6 +45,66 @@ describe("workspace shadow comparison (no tenant cutover)", () => {
     expect(await probe.inspect({ provider:"latepoint",channel:"bookings",accountId:"1" }))
       .toBe("identity_unresolved");
     expect(query).not.toHaveBeenCalled();
+  });
+
+  it("looks up Telegram Business ONLY from verified owner, exact connection and bot", async () => {
+    const { probe, query } = inspector([{status:"connected",workspace_state:"active"}]);
+    const proof = {botId:"123456789",ownerId:"9988776655",connectionId:"biz-connection-01"};
+    expect(await probe.inspectVerifiedTelegramBusiness(proof)).toBe("candidate_active");
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("c.provider_application_key=$3"),
+      [proof.ownerId,proof.connectionId,proof.botId]
+    );
+    expect(await probe.inspectVerifiedTelegramBusiness({...proof,ownerId:"@username"}))
+      .toBe("identity_unresolved");
+    expect(query).toHaveBeenCalledTimes(1);
+    // The normal Telegram canonical accountId still refers to the BOT.
+    expect(await probe.inspect({provider:"telegram",channel:"bot",accountId:proof.botId}))
+      .toBe("identity_unresolved");
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it("Telegram Business never selects a missing, paused or ambiguous claim", async () => {
+    const proof = {botId:"123456",ownerId:"998877",connectionId:"business-42"};
+    expect(await inspector([]).probe.inspectVerifiedTelegramBusiness(proof))
+      .toBe("unclaimed");
+    expect(await inspector([{status:"paused",workspace_state:"active"}])
+      .probe.inspectVerifiedTelegramBusiness(proof)).toBe("inactive");
+    expect(await inspector([
+      {status:"connected",workspace_state:"active"},
+      {status:"connected",workspace_state:"active"}
+    ]).probe.inspectVerifiedTelegramBusiness(proof)).toBe("ambiguous");
+  });
+
+  it("caps asynchronous Telegram Business identity comparisons and releases slots", async () => {
+    const resolvers: ((value: "unclaimed") => void)[] = [];
+    const inspectVerifiedTelegramBusiness=vi.fn().mockImplementation(() =>
+      new Promise<"unclaimed">((resolve) => { resolvers.push(resolve); }));
+    const record=vi.fn();
+    const probe=new TelegramBusinessShadowObserver({inspectVerifiedTelegramBusiness},record);
+    const proof={botId:"123",ownerId:"234",connectionId:"business"};
+    for (let i=0;i<5;i++) probe.observe(proof);
+    await Promise.resolve();
+    expect(inspectVerifiedTelegramBusiness).toHaveBeenCalledTimes(4);
+    expect(record).toHaveBeenCalledWith("capacity_skipped");
+    expect(record).not.toHaveBeenCalledWith(expect.objectContaining({ownerId:proof.ownerId}));
+    for (const resolve of resolvers) resolve("unclaimed");
+    await new Promise<void>((resolve)=>setImmediate(resolve));
+    probe.observe(proof);
+    await Promise.resolve();
+    expect(inspectVerifiedTelegramBusiness).toHaveBeenCalledTimes(5);
+    resolvers[4]!("unclaimed");
+    await new Promise<void>((resolve)=>setImmediate(resolve));
+    expect(record).toHaveBeenCalledWith("unclaimed");
+  });
+
+  it("absorbs failed Telegram Business readbacks and logging errors", async () => {
+    const observe=new TelegramBusinessShadowObserver({
+      inspectVerifiedTelegramBusiness:vi.fn().mockRejectedValue(new Error("private query error"))
+    },()=>{throw new Error("private logging error");});
+    expect(()=>observe.observe({botId:"123",ownerId:"234",connectionId:"business"}))
+      .not.toThrow();
+    await new Promise<void>((resolve)=>setImmediate(resolve));
   });
 
   it("reports candidate_active only for a unique connected account in active workspace", async () => {

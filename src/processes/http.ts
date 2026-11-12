@@ -32,7 +32,7 @@ import {
   MessengerPageSubscriptionError
 } from "../auth/messenger-page-subscription.js";
 import { PostgresInboundEventRepository, PostgresInboundStore } from "../persistence/inbound.js";
-import { PostgresWorkspaceShadowInspector, ShadowWorkspaceInboundStore } from "../persistence/workspace-routing-shadow.js";
+import { PostgresWorkspaceShadowInspector, ShadowWorkspaceInboundStore, TelegramBusinessShadowObserver } from "../persistence/workspace-routing-shadow.js";
 import { PostgresMetaHandoffStore } from "../persistence/meta-handoff.js";
 import { PostgresMetaDisclosureReader } from "../persistence/meta-disclosure.js";
 import { PostgresWhatsAppConsentStore } from "../persistence/whatsapp-consent.js";
@@ -103,6 +103,17 @@ const db = new PostgresDatabase(env.DATABASE_URL, (sqlState) => {
   logger.warn({ sqlState }, "PostgreSQL idle connection lost; pool will reconnect on next request");
 });
 const capabilityFacts = new PostgresAccountCapabilityFacts(db);
+const shadowInspector = env.WORKSPACE_SHADOW_ROUTING_ENABLED
+  ? new PostgresWorkspaceShadowInspector(db) : undefined;
+const telegramShadow = shadowInspector === undefined ? undefined
+  : new TelegramBusinessShadowObserver(shadowInspector, (decision) => {
+      // Only fixed result categories; no bot, owner, connection or customer IDs.
+      logger.info({ provider: "telegram", channel: "business", decision },
+        "Workspace shadow routing comparison");
+    });
+const observeTelegramBusinessShadow = telegramShadow === undefined ? undefined
+  : (proof: { botId: string; ownerId: string; connectionId: string }) =>
+      telegramShadow.observe(proof);
 function latestObservedProof(provider: string, accountId: string, keys: readonly string[], source: "provider_api" | "provider_connection_readback", reference: string) {
   const observedAt = new Date();
   const validUntil = new Date(observedAt.getTime() + 5 * 60 * 1000);
@@ -164,6 +175,8 @@ const telegram = telegramSender === undefined || env.TELEGRAM_WEBHOOK_SECRET ===
   : {
       botId: telegramSender.botId,
       webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
+      ...(observeTelegramBusinessShadow === undefined ? {}
+        : { observeVerifiedBusinessShadow: observeTelegramBusinessShadow }),
       verifyBusinessConnection: async (id: string) => telegramSender.verifyBusiness(id),
       observeBusinessConnection: async (id: string) => {
         await telegramSender.observeBusinessConnection(id);
@@ -638,7 +651,7 @@ const server = buildServer({
   inbound: env.WORKSPACE_SHADOW_ROUTING_ENABLED
     ? new ShadowWorkspaceInboundStore(
         new PostgresInboundStore(db, whatsappConsents, latePointReminderPlans),
-        new PostgresWorkspaceShadowInspector(db),
+        shadowInspector!,
         (observation) => logger.info(observation, "Workspace shadow routing comparison")
       )
     : new PostgresInboundStore(db, whatsappConsents, latePointReminderPlans),

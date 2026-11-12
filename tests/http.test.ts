@@ -1622,6 +1622,74 @@ describe("webhook routes", () => {
     await server.close();
   });
 
+  it("observes only verified Telegram Business owner proof after durable signed ingest", async () => {
+    const ingest = vi.fn<InboundStore["ingest"]>().mockResolvedValueOnce("created")
+      .mockResolvedValueOnce("duplicate");
+    const proofSink = vi.fn();
+    const verifyBusinessConnection = vi.fn().mockResolvedValue({ownerId:"999000111",connectionId:"business-42"});
+    const server = buildServer({
+      logger:pino({level:"silent"}),ready:()=>Promise.resolve(true),
+      inbound:{ingest},appSecret:"secret",verifyToken:"verify-token-1234",
+      telegram:{
+        botId:"123456789",webhookSecret:"s".repeat(32),
+        verifyBusinessConnection,observeVerifiedBusinessShadow:proofSink
+      }
+    });
+    const raw = JSON.stringify({
+      update_id:9001,
+      business_message:{
+        business_connection_id:"business-42",message_id:88,date:1790000000,
+        chat:{id:111222333,type:"private"},
+        from:{id:111222333,is_bot:false},text:"private message"
+      }
+    });
+    const inject = (secret:string) => server.inject({
+      method:"POST",url:"/ishikeit/webhooks/telegram",
+      headers:{"content-type":"application/json","x-telegram-bot-api-secret-token":secret},
+      payload:raw
+    });
+    expect((await inject("invalid")).statusCode).toBe(401);
+    expect(verifyBusinessConnection).not.toHaveBeenCalled();
+    expect(proofSink).not.toHaveBeenCalled();
+    const accepted=await inject("s".repeat(32));
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.json()).toEqual({status:"accepted"});
+    expect(verifyBusinessConnection).toHaveBeenCalledWith("business-42");
+    expect(proofSink).toHaveBeenCalledExactlyOnceWith({
+      botId:"123456789",ownerId:"999000111",connectionId:"business-42"
+    });
+    expect(ingest.mock.calls[0]?.[0].data).toMatchObject({
+      businessConnectionId:"business-42"
+    });
+    expect(ingest.mock.calls[0]?.[0].data).not.toHaveProperty("ownerId");
+    expect((await inject("s".repeat(32))).json()).toEqual({status:"duplicate"});
+    expect(proofSink).toHaveBeenCalledTimes(1);
+    await server.close();
+  });
+
+  it("never observes business owner without accepted durable event or valid provider proof", async () => {
+    const ingest=vi.fn<InboundStore["ingest"]>().mockRejectedValue(new Error("database error"));
+    const proofSink=vi.fn();
+    const verifyBusinessConnection=vi.fn().mockResolvedValue({ownerId:"999000111"});
+    const server=buildServer({
+      logger:pino({level:"silent"}),ready:()=>Promise.resolve(true),
+      inbound:{ingest},appSecret:"secret",verifyToken:"verify-token-1234",
+      telegram:{botId:"123456789",webhookSecret:"s".repeat(32),
+        verifyBusinessConnection,observeVerifiedBusinessShadow:proofSink}
+    });
+    const raw=JSON.stringify({
+      update_id:9002,business_message:{business_connection_id:"business-42",
+        message_id:88,date:1790000000,chat:{id:111222333,type:"private"},
+        from:{id:111222333,is_bot:false},text:"sensitive"}
+    });
+    const res=await server.inject({method:"POST",url:"/ishikeit/webhooks/telegram",
+      headers:{"content-type":"application/json",
+        "x-telegram-bot-api-secret-token":"s".repeat(32)},payload:raw});
+    expect(res.statusCode).toBe(500);
+    expect(proofSink).not.toHaveBeenCalled();
+    await server.close();
+  });
+
   it("authenticates and durably accepts a TikTok Business Messaging webhook", async () => {
     const ingest = vi.fn<InboundStore["ingest"]>().mockResolvedValue("created");
     const clientSecret = "tiktok-client-secret-123456789";

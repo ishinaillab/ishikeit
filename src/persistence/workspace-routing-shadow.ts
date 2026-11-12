@@ -31,6 +31,21 @@ interface ShadowRow extends pg.QueryResultRow {
   workspace_state: string;
 }
 
+/** From authenticated Telegram getBusinessConnection for this bot, NOT the webhook body. */
+export interface VerifiedTelegramBusinessReadback {
+  botId: string;
+  ownerId: string;
+  connectionId: string;
+}
+
+function decisionForClaims(rows: readonly ShadowRow[]): ShadowRoutingDecision {
+  if (rows.length > 1) return "ambiguous";
+  const claim = rows[0];
+  if (claim === undefined) return "unclaimed";
+  return claim.status === "connected" && claim.workspace_state === "active"
+    ? "candidate_active" : "inactive";
+}
+
 /**
  * Meta's canonical provider is "meta", whereas verified registry ownership
  * is scoped to each actual product/account namespace. No handle/username
@@ -74,12 +89,61 @@ export class PostgresWorkspaceShadowInspector {
        LIMIT 2`,
       [candidate.provider, candidate.accountId]
     );
-    if (result.rows.length > 1) return "ambiguous";
-    const claim = result.rows[0];
-    if (claim === undefined) return "unclaimed";
-    return claim.status === "connected" && claim.workspace_state === "active"
-      ? "candidate_active"
-      : "inactive";
+    return decisionForClaims(result.rows);
+  }
+
+  /** Compare VERIFIED Telegram Business owner against exact connection AND
+   * current bot application. This never authorizes inbound/outbound routing. */
+  async inspectVerifiedTelegramBusiness(proof: VerifiedTelegramBusinessReadback):
+    Promise<ShadowRoutingDecision> {
+    if (!/^[0-9]{1,20}$/u.test(proof.botId)
+      || !/^[0-9]{1,20}$/u.test(proof.ownerId)
+      || proof.connectionId.length < 1 || proof.connectionId.length > 256) {
+      return "identity_unresolved";
+    }
+    const result = await this.db.query<ShadowRow>(
+      `SELECT c.status,w.state AS workspace_state
+         FROM public.ishikeit_account_connections c
+         JOIN public.ishikeit_workspaces w ON w.workspace_id=c.workspace_id
+        WHERE c.provider='telegram' AND c.provider_account_id=$1
+          AND c.provider_connection_id=$2 AND c.provider_application_key=$3
+          AND c.status <> 'disconnected'
+        LIMIT 2`,
+      [proof.ownerId, proof.connectionId, proof.botId]
+    );
+    return decisionForClaims(result.rows);
+  }
+}
+
+/**
+ * Telegram Business readback is an ADDITIONAL provider-authenticated SQL
+ * comparison, not a replacement for normal Telegram bot identity shadowing.
+ * Bound it independently so a burst of customer messages cannot spawn
+ * unbounded reads against the shared production PostgreSQL connection pool.
+ */
+export class TelegramBusinessShadowObserver {
+  private readonly maxInFlight = 4;
+  private inFlight = 0;
+
+  constructor(
+    private readonly inspector:
+      Pick<PostgresWorkspaceShadowInspector, "inspectVerifiedTelegramBusiness">,
+    private readonly record: (decision: ShadowRoutingDecision) => void
+  ) {}
+
+  observe(proof: VerifiedTelegramBusinessReadback): void {
+    const emit = (decision: ShadowRoutingDecision): void => {
+      try { this.record(decision); } catch { /* telemetry never affects live ingress */ }
+    };
+    if (this.inFlight >= this.maxInFlight) {
+      emit("capacity_skipped");
+      return;
+    }
+    this.inFlight++;
+    void Promise.resolve()
+      .then(() => this.inspector.inspectVerifiedTelegramBusiness(proof))
+      .then(emit, () => emit("lookup_unavailable"))
+      .finally(() => { this.inFlight--; });
   }
 }
 

@@ -63,7 +63,11 @@ export interface ServerDeps {
     botId: string;
     webhookSecret: string;
     verifyBusinessConnection?: (connectionId: string) => Promise<{ ownerId: string }>;
-  observeBusinessConnection?: (connectionId: string) => Promise<void>;
+    observeBusinessConnection?: (connectionId: string) => Promise<void>;
+    /** Readback-only telemetry; receives ONLY the ID from verified Telegram API response. */
+    observeVerifiedBusinessShadow?: (proof: {
+      botId: string; ownerId: string; connectionId: string;
+    }) => void;
   };
   tiktok?: {
     appId: string;
@@ -1308,6 +1312,7 @@ export function buildServer(deps: ServerDeps) {
         }
 
         let events;
+        let verifiedBusiness: { ownerId: string; connectionId: string } | undefined;
         try {
           const update = JSON.parse(req.body.toString("utf8")) as unknown;
           // A Telegram Business account is not the bot itself. Validate the
@@ -1373,6 +1378,7 @@ export function buildServer(deps: ServerDeps) {
                 || message.sender_business_bot !== undefined) {
                 return reply.code(200).send({ status: "business_message_ignored" });
               }
+              verifiedBusiness = { ownerId: owner.ownerId, connectionId };
             }
           }
           events = normalizeTelegramUpdate(update, telegram.botId);
@@ -1385,6 +1391,17 @@ export function buildServer(deps: ServerDeps) {
         for (const event of events) {
           if (await deps.inbound.ingest(event, telegramIngressIdentity(event), rawHash) === "created") {
             created++;
+            if (verifiedBusiness !== undefined && event.eventType === "message.received") {
+              try {
+                // The owner ID was authenticated with getBusinessConnection, not
+                // parsed from the signed webhook. Never block the normal ACK.
+                telegram.observeVerifiedBusinessShadow?.({
+                  botId: telegram.botId, ...verifiedBusiness
+                });
+              } catch {
+                // Observation cannot affect customer delivery.
+              }
+            }
           }
         }
 

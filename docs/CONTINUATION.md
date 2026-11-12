@@ -3763,3 +3763,40 @@ Read-only WordPress plugin inventory on 2026-10-29 shows **LatePoint 5.7.5**, **
 - **Verified release QA:** Node 24 `npm run check` **711 passed, 98 skipped** DB-only tests, ESLint/TypeScript/build all passed. Separately, disposable **PostgreSQL 17** MFA integration **34/34 passed**, including legacy false preference not bypassing MFA; browser/HTTP focus **48/48 passed**; visual/contrast **4/4 passed**. Parallel PG integration suites share destructive table fixtures and must run independently, as the project's GitHub CI correctly does. Real owner-origin MFA add/rename/remove remains a separate authorized acceptance step; **never** perform irreversible deletion of the owner's verified factors as a synthetic test.
 - **Publication:** remote `ishinaillab/ishikeit` branch `fix/mfa-qwery-nails-ux-20261112`, GitHub PR **#274** https://github.com/ishinaillab/ishikeit/pull/274. Previous PR #273 migration `migrations/0021_provider_totp_factor_lifecycle.sql` must have been applied before deploying. CI and exact Hostinger deployment SHA must be verified before marking this as production-complete. Original seven unpublished local changes were not reset, and existing owner factors remain untouched.
 - **Standards:** official Supabase TOTP https://supabase.com/docs/guides/auth/auth-mfa/totp ; OWASP MFA https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html ; W3C WCAG https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html ; WAI-ARIA dialog https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/ .
+
+
+## Quiet branded sign-in bootstrap (2026-11-12; PR #276)
+
+- **User-observed problem:** `/app/login` rendered an unconditional full-screen
+  “Checking your session…” status on every visit while determining whether to
+  display public email login, the MFA challenge, or an authorized workspace.
+  This unnecessarily exposed an internal operation and flickered on fast loads.
+- **Updated first frame:** Keep a stable centered ISHIKEIT brand on the Qwery
+  Nails cream background; do not visibly animate or show technical text during
+  fast requests. After **900 ms** of unresolved bootstrap, reveal a small
+  pink indeterminate progress line without shifting the brand; after **4 s**
+  show the plain-language “Opening Ishikeit…”. Both are suppressed once the
+  server response selects an authorized view. An invisible polite status
+  announces the load to assistive technology; reduced-motion preferences use
+  a static line. No misleading public login card is exposed before the
+  server confirms the initial session state.
+- **Authorization invariants:** The existing `/app/auth/session`, CSRF,
+  refresh, email OTP and provider AAL2/TOTP flow are unchanged. No new
+  endpoints, identity shortcuts, token storage or dependencies. Boot timers
+  clear on public login, MFA gate, and authorized workspace. Security remains
+  server-enforced and all existing factors/sessions are preserved.
+- **Coverage:** Shipped-browser-JS synthetic DOM regression tests now simulate
+  fast anonymous navigation, an intentionally delayed initial request,
+  deferred indicator and text display, a protected workspace transition,
+  and the MFA-required gate. Visual CSS asserts reserved absolute layout
+  and reduced-motion behavior. Follow Node24 lint, typecheck, focused and
+  full test suites, protected CI and exact Hostinger SHA/anonymous-route
+  checks before claiming production completion.
+- **Rationale:** `docs/LOGIN_BOOTSTRAP_UX_2026-11-12.md`.
+  Official references: Microsoft Fluent Wait UX
+  https://fluent2.microsoft.design/wait-ux/ ; NN/g
+  https://www.nngroup.com/articles/skeleton-screens/ ;
+  Apple HIG
+  https://developer.apple.com/design/human-interface-guidelines/progress-indicators ;
+  W3C https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html ;
+  Google https://web.dev/articles/optimize-cls .

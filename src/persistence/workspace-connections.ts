@@ -33,6 +33,10 @@ const workspaceSchema = z.object({
 }).strict();
 const linkSchema = z.object({
   connectionId: uuid,
+  // Exactly-once proof that this owner/admin completed the correct browser
+  // session-bound authorization intent. Does NOT by itself attest provider API.
+  intentId: uuid,
+  sessionId: uuid,
   workspaceId: uuid,
   actor: principalSchema,
   providerApplicationKey: shortRef,
@@ -78,6 +82,7 @@ interface ConnectionRow extends pg.QueryResultRow {
   generation: string | number;
 }
 interface MemberRow extends pg.QueryResultRow { role: "owner" | "admin" | "agent" | "viewer" }
+interface ClaimIntentRow extends pg.QueryResultRow { intent_id: string }
 interface BindingRow extends pg.QueryResultRow {
   provider_application_key: string;
   provider_connection_id: string | null;
@@ -192,6 +197,23 @@ export class PostgresWorkspaceConnectionRegistry {
     const proof = validatedProof(p.proof);
     return this.db.transaction(async (tx) => {
       await authorize(tx, { workspaceId: p.workspaceId, ...p.actor }, "admin");
+      // PostgreSQL locks this private intent row for the entire transaction.
+      // A consumed state is necessary, not sufficient: exact app, tenant,
+      // principal, session and unexpired unclaimed state must all match.
+      const eligible = await tx.query<ClaimIntentRow>(
+        `SELECT intent_id FROM public.ishikeit_connection_intents
+          WHERE intent_id=$1 AND workspace_id=$2
+            AND actor_issuer=$3 AND actor_subject=$4
+            AND auth_session_id=$5 AND provider=$6 AND provider_application_key=$7
+            AND consumed_at IS NOT NULL AND consumed_at <= now()
+            AND expires_at > now() AND claimed_connection_id IS NULL
+          FOR UPDATE`,
+        [p.intentId,p.workspaceId,p.actor.issuer,p.actor.subject,p.sessionId,
+          proof.provider,p.providerApplicationKey]
+      );
+      if (eligible.rowCount !== 1) {
+        throw new Error("Connection claim requires an unused session-bound authorization intent");
+      }
       await tx.query(
         `INSERT INTO public.ishikeit_provider_accounts
            (provider,provider_account_id,verification_source,verification_reference,verified_at)
@@ -212,6 +234,16 @@ export class PostgresWorkspaceConnectionRegistry {
       const row = result.rows[0];
       if (row === undefined) throw new Error("Connection registry rejected verified link");
       const connection = present(row);
+      const claimed = await tx.query(
+        `UPDATE public.ishikeit_connection_intents
+            SET claimed_connection_id=$2,claimed_at=now()
+          WHERE intent_id=$1 AND claimed_connection_id IS NULL
+          RETURNING intent_id`,
+        [p.intentId,p.connectionId]
+      );
+      if (claimed.rowCount !== 1) {
+        throw new Error("Connection authorization intent was already claimed");
+      }
       await audit(tx, connection, "link_verified", p.actor);
       return connection;
     });

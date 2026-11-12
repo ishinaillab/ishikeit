@@ -7,7 +7,7 @@ import { PostgresWorkspaceConnectionIntents } from "../src/persistence/workspace
 import { PostgresWorkspaceShadowInspector } from "../src/persistence/workspace-routing-shadow.js";
 import {
   PostgresWorkspaceConnectionRegistry, type WorkspacePrincipal,
-  type VerifiedAccountProof
+  type VerifiedAccountProof, type WorkspaceConnection
 } from "../src/persistence/workspace-connections.js";
 
 /** DDL and ownership tests MUST run only on disposable CI PostgreSQL 17. */
@@ -37,12 +37,26 @@ function proof(provider: string, accountId: string): VerifiedAccountProof {
     verifiedAt: new Date().toISOString()
   };
 }
+async function authorizedIntent(
+  workspaceId: string, actor: WorkspacePrincipal, provider: string,
+  providerApplicationKey = "ishikeit-test-app"
+): Promise<{intentId:string;sessionId:string}> {
+  const sessionId=randomUUID();
+  const input={workspaceId,actor,provider,providerApplicationKey,sessionId,
+    redirectUri:"https://apps.example.test/verified/callback"};
+  const started=await intents!.begin(input);
+  const consumed=await intents!.consume({...input,
+    state:started.state,browserNonce:started.browserNonce});
+  if(consumed===undefined) throw new Error("Fixture intent not consumed");
+  return {intentId:consumed.intentId,sessionId};
+}
 async function link(
   workspaceId: string, actor: WorkspacePrincipal, provider: string, accountId: string
 ) {
+  const gate=await authorizedIntent(workspaceId,actor,provider);
   return registry!.linkVerified({
     connectionId: randomUUID(), workspaceId, actor, providerApplicationKey: "ishikeit-test-app",
-    proof: proof(provider, accountId)
+    ...gate,proof: proof(provider, accountId)
   });
 }
 async function activate(
@@ -63,6 +77,7 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     const authMigration = await readFile("migrations/0011_ishikeit_connection_intents.sql", "utf8");
     await db!.query(authMigration);
     await db!.query(await readFile("migrations/0013_ishikeit_intent_auth_session.sql","utf8"));
+    await db!.query(await readFile("migrations/0022_workspace_connection_intent_claims.sql","utf8"));
   });
 
   beforeEach(async () => {
@@ -117,12 +132,14 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     const proofIdentity = {botId:"1245678",ownerId:"66778899",connectionId:"business-A"};
     const other = {botId:"9876543",ownerId:"66778888",connectionId:"business-B"};
     const linkedA = await registry!.linkVerified({
+      ...await authorizedIntent(workspaceA,ownerA,"telegram",proofIdentity.botId),
       connectionId:randomUUID(),workspaceId:workspaceA,actor:ownerA,
       providerApplicationKey:proofIdentity.botId,
       providerConnectionId:proofIdentity.connectionId,
       proof:proof("telegram",proofIdentity.ownerId)
     });
     const linkedB = await registry!.linkVerified({
+      ...await authorizedIntent(workspaceB,ownerB,"telegram",other.botId),
       connectionId:randomUUID(),workspaceId:workspaceB,actor:ownerB,
       providerApplicationKey:other.botId,
       providerConnectionId:other.connectionId,
@@ -153,6 +170,7 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
 
   it("refuses app/connection/credential substitution despite a matching provider account", async () => {
     const connected = await registry!.linkVerified({
+      ...await authorizedIntent(workspaceA,ownerA,"telegram","app-A"),
       connectionId:randomUUID(),workspaceId:workspaceA,actor:ownerA,
       providerApplicationKey:"app-A",providerConnectionId:"business-A",
       credentialAccountId:"credential-A",proof:proof("telegram","owner-id-1")
@@ -205,6 +223,101 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     }))?.status).toBe("verifying");
     expect((await activate(pending.connectionId,workspaceB,ownerB,"instagram","ig-account-B"))
       .status).toBe("connected");
+  });
+
+  it("links only a consumed, unexpired intent for exact workspace, actor, app and session", async () => {
+    const sessionId=randomUUID();
+    const start={workspaceId:workspaceA,actor:ownerA,provider:"instagram",
+      providerApplicationKey:"app-A",sessionId,
+      redirectUri:"https://apps.example.test/instagram/callback"};
+    const minted=await intents!.begin(start);
+    const row=await db!.query<{intent_id:string}>(
+      "SELECT intent_id FROM public.ishikeit_connection_intents");
+    const intentId=row.rows[0]!.intent_id;
+    const input={intentId,sessionId,workspaceId:workspaceA,actor:ownerA,
+      connectionId:randomUUID(),providerApplicationKey:"app-A",
+      proof:proof("instagram","verified-account-A")};
+    await expect(registry!.linkVerified(input)).rejects.toThrow(/unused session-bound/i);
+    const completion=await intents!.consume({...start,state:minted.state,
+      browserNonce:minted.browserNonce});
+    expect(completion?.intentId).toBe(intentId);
+    for (const altered of [
+      {...input,sessionId:randomUUID()},
+      {...input,providerApplicationKey:"another-app"},
+      {...input,actor:ownerB},
+      {...input,workspaceId:workspaceB,actor:ownerB},
+      {...input,proof:proof("telegram","verified-account-A")}
+    ]) await expect(registry!.linkVerified(altered))
+      .rejects.toThrow(/(authorization denied|unused session-bound)/i);
+    expect((await db!.query("SELECT 1 FROM public.ishikeit_account_connections")).rowCount)
+      .toBe(0);
+    const linked=await registry!.linkVerified(input);
+    expect(linked.status).toBe("verifying");
+    const claimed=await db!.query<{claimed_connection_id:string;claimed_at:Date}>(
+      "SELECT claimed_connection_id,claimed_at FROM public.ishikeit_connection_intents WHERE intent_id=$1",
+      [intentId]);
+    expect(claimed.rows[0]?.claimed_connection_id).toBe(linked.connectionId);
+    expect(claimed.rows[0]?.claimed_at).toBeInstanceOf(Date);
+    await expect(registry!.linkVerified({...input,connectionId:randomUUID(),
+      proof:proof("instagram","another-account")})).rejects.toThrow(/unused session-bound/i);
+    expect((await db!.query("SELECT 1 FROM public.ishikeit_account_connections")).rowCount)
+      .toBe(1);
+  });
+
+  it("fences concurrent claims of one consumed session-bound intent", async () => {
+    const gate=await authorizedIntent(workspaceA,ownerA,"instagram","app-concurrent");
+    const base={...gate,workspaceId:workspaceA,actor:ownerA,
+      providerApplicationKey:"app-concurrent",proof:proof("instagram","one-account")};
+    const results=await Promise.allSettled([
+      registry!.linkVerified({...base,connectionId:randomUUID()}),
+      registry!.linkVerified({...base,connectionId:randomUUID(),
+        proof:proof("instagram","different-account")})
+    ]);
+    expect(results.filter(x=>x.status==="fulfilled")).toHaveLength(1);
+    expect(results.filter(x=>x.status==="rejected")).toHaveLength(1);
+    const row=await db!.query<{claimed_connection_id:string}>(
+      "SELECT claimed_connection_id FROM public.ishikeit_connection_intents WHERE intent_id=$1",
+      [gate.intentId]);
+    expect(row.rows[0]?.claimed_connection_id).toBe(
+      (results.find(x=>x.status==="fulfilled") as PromiseFulfilledResult<WorkspaceConnection>)
+        .value.connectionId
+    );
+    expect((await db!.query("SELECT 1 FROM public.ishikeit_account_connections")).rowCount)
+      .toBe(1);
+  });
+
+  it("does not consume ownership intent on a conflicting provider account", async () => {
+    await link(workspaceA,ownerA,"instagram","claimed-id");
+    const gate=await authorizedIntent(workspaceB,ownerB,"instagram");
+    const base={...gate,workspaceId:workspaceB,actor:ownerB,
+      providerApplicationKey:"ishikeit-test-app",connectionId:randomUUID()};
+    await expect(registry!.linkVerified({...base,proof:proof("instagram","claimed-id")}))
+      .rejects.toThrow();
+    const stillAvailable=await db!.query<{claimed_connection_id:string|null}>(
+      "SELECT claimed_connection_id FROM public.ishikeit_connection_intents WHERE intent_id=$1",
+      [gate.intentId]);
+    expect(stillAvailable.rows[0]?.claimed_connection_id).toBeNull();
+    const allowed=await registry!.linkVerified({...base,proof:proof("instagram","new-id")});
+    expect(allowed.workspaceId).toBe(workspaceB);
+  });
+
+  it("rejects expired, unbound and absent-session claims even after callback", async () => {
+    const gate=await authorizedIntent(workspaceA,ownerA,"instagram");
+    const input={...gate,workspaceId:workspaceA,actor:ownerA,
+      providerApplicationKey:"ishikeit-test-app",connectionId:randomUUID(),
+      proof:proof("instagram","account-A")};
+    await expect(registry!.linkVerified({...input,intentId:randomUUID()}))
+      .rejects.toThrow(/unused session-bound/i);
+    await expect(registry!.linkVerified({...input,sessionId:undefined as never})).rejects.toThrow();
+    await db!.query(`UPDATE public.ishikeit_connection_intents
+      SET expires_at=now()-interval '1 second',
+          created_at=now()-interval '2 minutes'
+      WHERE intent_id=$1`,[gate.intentId]);
+    await expect(registry!.linkVerified(input)).rejects.toThrow(/unused session-bound/i);
+    const row=await db!.query<{claimed_connection_id:string|null}>(
+      "SELECT claimed_connection_id FROM public.ishikeit_connection_intents WHERE intent_id=$1",
+      [gate.intentId]);
+    expect(row.rows[0]?.claimed_connection_id).toBeNull();
   });
 
   it("does not route an account while verifying; activates only verified exact account", async () => {
@@ -323,7 +436,8 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
   it("refuses old, future or malformed provider proof and preserves empty registry", async () => {
     const base = {
       connectionId:randomUUID(),workspaceId:workspaceA,actor:ownerA,
-      providerApplicationKey:"ishikeit-test-app"
+      providerApplicationKey:"ishikeit-test-app",
+      intentId:randomUUID(),sessionId:randomUUID()
     };
     await expect(registry!.linkVerified({
       ...base,proof:{...proof("telegram","old"),verifiedAt:"2024-01-01T00:00:00Z"}
@@ -368,7 +482,7 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
   });
   it("binds one-use OAuth state to workspace, authenticated actor, provider app and secure browser", async () => {
     const begin = {
-      workspaceId:workspaceA,actor:ownerA,provider:"instagram",
+      workspaceId:workspaceA,actor:ownerA,sessionId:randomUUID(),provider:"instagram",
       providerApplicationKey:"app-test",redirectUri:"https://apps.example.test/oauth/instagram/callback"
     };
     const created = await intents!.begin(begin);
@@ -404,7 +518,7 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
 
   it("prevents OAuth callback replay even with concurrent requests", async () => {
     const begin = {
-      workspaceId:workspaceA,actor:ownerA,provider:"tiktok",
+      workspaceId:workspaceA,actor:ownerA,sessionId:randomUUID(),provider:"tiktok",
       providerApplicationKey:"tiktok-app",redirectUri:"https://apps.example.test/callback"
     };
     const minted = await intents!.begin(begin);
@@ -415,7 +529,7 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
 
   it("rechecks workspace membership and grant role at the callback", async () => {
     const begin = {
-      workspaceId:workspaceA,actor:ownerA,provider:"instagram",
+      workspaceId:workspaceA,actor:ownerA,sessionId:randomUUID(),provider:"instagram",
       providerApplicationKey:"app-test",redirectUri:"https://apps.example.test/callback"
     };
     const mint = await intents!.begin(begin);
@@ -441,7 +555,7 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
 
   it("fences an OAuth callback against concurrent membership revocation", async () => {
     const begin = {
-      workspaceId:workspaceA,actor:ownerA,provider:"instagram",
+      workspaceId:workspaceA,actor:ownerA,sessionId:randomUUID(),provider:"instagram",
       providerApplicationKey:"app-test",redirectUri:"https://apps.example.test/callback"
     };
     const minted = await intents!.begin(begin);
@@ -479,7 +593,7 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
 
   it("rejects expired, malicious, or non-HTTPS redirect attempts without cross-tenant side effects", async () => {
     const begin = {
-      workspaceId:workspaceA,actor:ownerA,provider:"instagram",
+      workspaceId:workspaceA,actor:ownerA,sessionId:randomUUID(),provider:"instagram",
       providerApplicationKey:"app-test",redirectUri:"https://apps.example.test/callback"
     };
     await expect(intents!.begin({
@@ -530,7 +644,7 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     const mint=await intents!.begin(request);
     const callback = {...request,state:mint.state,browserNonce:mint.browserNonce};
     expect(await intents!.consume({...callback,sessionId:sessionTwo})).toBeUndefined();
-    expect(await intents!.consume({...callback,sessionId:undefined})).toBeUndefined();
+    await expect(intents!.consume({...callback,sessionId:undefined as never})).rejects.toThrow();
     const consumed=await intents!.consume(callback);
     expect(consumed?.workspaceId).toBe(workspaceA);
     expect(await intents!.consume(callback)).toBeUndefined();

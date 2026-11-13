@@ -1,0 +1,56 @@
+name: Ishikeit continuity observer
+
+# This workflow observes only a public, non-secret coordination ledger. It
+# NEVER starts ChatGPT, transfers ownership, deploys or mutates application data.
+on:
+  schedule:
+    # GitHub may delay/drop scheduled runs. Choose off-peak minutes, not :00.
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Read only, never open a manual review issue'
+        type: boolean
+        required: true
+        default: true
+  push:
+    branches: ['main']
+    paths:
+      - '.github/workflows/ishikeit-continuity-observer.yml'
+      - 'scripts/continuity-observer.mjs'
+      - 'scripts/test-continuity-observer.mjs'
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: ishikeit-continuity-observer
+  cancel-in-progress: false
+
+jobs:
+  observe:
+    # A manually dispatched feature-branch copy must not obtain issue writes.
+    if: github.repository == 'ishinaillab/ishikeit' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Verify monitor behavior with synthetic GitHub responses
+        run: node --test scripts/test-continuity-observer.mjs
+      - name: Observe GitHub coordination ledger (never take over)
+        run: node scripts/continuity-observer.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CONTINUITY_ISSUE: '284'
+          # A push validates the real API read path without writing. A scheduled
+          # event may ONLY create an issue requesting human review.
+          DRY_RUN: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}

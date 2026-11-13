@@ -5,7 +5,12 @@ name: Ishikeit continuity observer
 on:
   schedule:
     # GitHub may delay/drop scheduled runs. Choose off-peak minutes, not :00.
-    - cron: '17,47 * * * *'
+    - cron: '23,53 * * * *'
+  # Off-hour schedule can be delayed or missed. Independently observe each
+  # successful protected-main CI push, WITHOUT running PR/fork artifacts.
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -32,12 +37,22 @@ concurrency:
 jobs:
   observe:
     # A manually dispatched feature-branch copy must not obtain issue writes.
-    if: github.repository == 'ishinaillab/ishikeit' && github.ref == 'refs/heads/main'
+    if: >-
+      github.repository == 'ishinaillab/ishikeit' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_run' ||
+        (github.event.workflow_run.event == 'push' &&
+         github.event.workflow_run.head_branch == 'main' &&
+         github.event.workflow_run.head_repository.full_name == github.repository &&
+         github.event.workflow_run.conclusion == 'success'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # workflow_run may be caused by untrusted PR CI. ALWAYS check out
+      # trusted protected main only; never the upstream CI head or artifacts.
       - uses: actions/checkout@v7
         with:
+          ref: main
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
@@ -51,6 +66,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           CONTINUITY_ISSUE: '284'
-          # A push validates the real API read path without writing. A scheduled
-          # event may ONLY create an issue requesting human review.
+          # Push validates API dry-run. Schedule + successful protected-main CI
+          # completion may ONLY open a deduplicated human-review issue.
           DRY_RUN: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}

@@ -7,6 +7,7 @@ const IDENTIFIER = /^[a-z0-9][a-z0-9_.-]{0,79}$/;
 const MAX_LEASE_SECONDS = 7200;
 const MIN_LEASE_SECONDS = 60;
 const GRACE_SECONDS = 1800;
+const RECENT_PROTECTED_CI_MS = 30 * 60_000; // Activity evidence, NOT an ownership lease
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const timestamp = (value) => {
@@ -60,7 +61,7 @@ export function latestTrustedEvent(comments, trustedActor) {
   return null;
 }
 
-export function assessContinuity(event, nowMs, running = false) {
+export function assessContinuity(event, nowMs, running = false, recentProtectedCi = false) {
   if (!Number.isFinite(nowMs)) throw new Error('Invalid reference clock');
   if (!event) return { status: 'unconfigured', action: 'none' };
   if (event.kind === 'invalid') return { status: 'invalid_event', action: 'review' };
@@ -75,6 +76,7 @@ export function assessContinuity(event, nowMs, running = false) {
   if (ageSeconds <= expires) return { status: 'progress_recent', action: 'none' };
   if (value.busy_until && timestamp(value.busy_until) > nowMs) return { status: 'possible_long_running_operation', action: 'none' };
   if (running) return { status: 'active_ci_possible', action: 'none' };
+  if (recentProtectedCi) return { status: 'recent_protected_ci', action: 'none' };
   return { status: 'stale_progress_needs_review', action: 'review' };
 }
 
@@ -104,11 +106,22 @@ export async function runObserver({ repo, issueNumber, token, nowMs = Date.now()
   const event = latestTrustedEvent(comments, repo.split('/')[0]);
   let result = assessContinuity(event, nowMs);
   if (result.status === 'stale_progress_needs_review') {
-    const runs = await githubApi(prefix + '/actions/runs?status=in_progress&per_page=30', token, {}, fetchImpl);
+    // Unfiltered API read also includes queued/waiting and recently finished
+    // protected-main CI; status=in_progress would hide all of those.
+    const runs = await githubApi(prefix + '/actions/runs?per_page=30', token, {}, fetchImpl);
     if (!Array.isArray(runs.workflow_runs)) throw new Error('Invalid workflow runs response');
     const otherRun = runs.workflow_runs.some((run) => run.name !== 'Ishikeit continuity observer' &&
-      (run.status === 'in_progress' || run.status === 'queued' || run.status === 'waiting'));
-    result = assessContinuity(event, nowMs, otherRun);
+      ['in_progress', 'queued', 'waiting', 'pending', 'requested'].includes(run.status));
+    const recentProtectedCi = runs.workflow_runs.some((run) => {
+      if (run.name !== 'CI' || run.event !== 'push' ||
+          run.head_branch !== 'main' || run.status !== 'completed' ||
+          run.conclusion !== 'success') return false;
+      const completedMs = timestamp(run.updated_at);
+      // Use Github server timestamps, not a user-submitted claim.
+      return completedMs !== null && completedMs <= nowMs + 300_000 &&
+        completedMs >= nowMs - RECENT_PROTECTED_CI_MS;
+    });
+    result = assessContinuity(event, nowMs, otherRun, recentProtectedCi);
   }
   if (result.action !== 'review') return { ...result, review_created: false };
   if (dryRun) return { ...result, review_created: false, dry_run: true };
@@ -121,7 +134,7 @@ export async function runObserver({ repo, issueNumber, token, nowMs = Date.now()
   // Review issue is NOT an automatic authority or handoff. Intentionally no
   // secrets, account identifiers, provider payloads or raw issue comments.
   const body = [
-    'A scheduled observer detected an ambiguous or stale Ishikeit coordination signal in #' + issueNumber + '.',
+    'An external observer detected an ambiguous or stale Ishikeit coordination signal in #' + issueNumber + '.',
     '',
     '**Observed category:** \' ' + result.status + '\' (not proof that a ChatGPT conversation failed).',
     '**Required action:** human review of GitHub/CI/deploy/local state before any ownership transfer.',

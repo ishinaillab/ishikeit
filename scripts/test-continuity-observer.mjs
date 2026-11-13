@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { inspectComment, latestTrustedEvent, assessContinuity, runObserver, REVIEW_TITLE } from './continuity-observer.mjs';
 
@@ -90,6 +91,53 @@ test('stale primary with active CI remains ambiguous and makes no writes', async
   assert.equal(result.status, 'active_ci_possible');
   assert.deepEqual(api.calls.map(c => c.method), ['GET', 'GET']);
 });
+test('stale owner with queued CI remains ambiguous and does not write', async () => {
+  const api = mockGitHub([comment({ ageSec: 5000 })], { runs: [{ name: 'CI', status: 'queued' }] });
+  const result = await runObserver({ ...config, fetchImpl: api.fetchImpl });
+  assert.equal(result.status, 'active_ci_possible');
+  assert.ok(api.calls.every(call => call.method === 'GET'));
+});
+test('recent successful protected-main CI is evidence of progress, not automatic ownership transfer', async () => {
+  const completed = new Date(NOW - 90_000).toISOString();
+  const api = mockGitHub([comment({ ageSec: 5000 })], { runs: [
+    { name: 'CI', event: 'push', head_branch: 'main', status: 'completed',
+      conclusion: 'success', updated_at: completed }
+  ] });
+  const result = await runObserver({ ...config, fetchImpl: api.fetchImpl });
+  assert.deepEqual(result, { status: 'recent_protected_ci', action: 'none', review_created: false });
+  assert.ok(api.calls.every(call => call.method === 'GET'));
+});
+test('an old, failed, PR-origin or foreign branch CI does not bypass stale review', async () => {
+  const examples = [
+    { event: 'push', head_branch: 'main', conclusion: 'success', updated_at: new Date(NOW - 31*60_000).toISOString() },
+    { event: 'push', head_branch: 'main', conclusion: 'failure', updated_at: new Date(NOW - 90_000).toISOString() },
+    { event: 'pull_request', head_branch: 'main', conclusion: 'success', updated_at: new Date(NOW - 90_000).toISOString() },
+    { event: 'push', head_branch: 'dev', conclusion: 'success', updated_at: new Date(NOW - 90_000).toISOString() },
+    { event: 'push', head_branch: 'main', conclusion: 'success', updated_at: 'not-a-date' }
+  ];
+  for (const example of examples) {
+    const api = mockGitHub([comment({ ageSec: 5000 })], { runs: [
+      { name: 'CI', status: 'completed', ...example }
+    ] });
+    const result = await runObserver({ ...config, fetchImpl: api.fetchImpl, dryRun: true });
+    assert.equal(result.status, 'stale_progress_needs_review');
+    assert.equal(result.dry_run, true);
+    assert.ok(api.calls.every(call => call.method === 'GET'));
+  }
+});
+test('observer workflow uses a protected main-only CI trigger, off-peak cron and no PR code checkout', () => {
+  const yaml = readFileSync(new URL('../.github/workflows/ishikeit-continuity-observer.yml', import.meta.url), 'utf8');
+  assert.match(yaml, /cron: ['"]23,53 \* \* \* \*['"]/);
+  assert.match(yaml, /workflow_run:[\s\S]*workflows: \['CI'\][\s\S]*types: \[completed\]/);
+  assert.match(yaml, /github\.event\.workflow_run\.event == 'push'/);
+  assert.match(yaml, /github\.event\.workflow_run\.head_branch == 'main'/);
+  assert.match(yaml, /github\.event\.workflow_run\.conclusion == 'success'/);
+  assert.match(yaml, /head_repository\.full_name == github\.repository/);
+  assert.match(yaml, /ref: main/);
+  assert.match(yaml, /persist-credentials: false/);
+  assert.doesNotMatch(yaml, /download-artifact|pull_request_target|\.head\.sha/);
+});
+
 test('dry-run stale progress does not create an issue', async () => {
   const api = mockGitHub([comment({ ageSec: 5000 })]);
   const result = await runObserver({ ...config, fetchImpl: api.fetchImpl, dryRun: true });

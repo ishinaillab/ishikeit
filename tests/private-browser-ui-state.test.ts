@@ -37,7 +37,17 @@ class FakeElement {
   focus():void{/* DOM focus does not change state in synthetic test */}
   addEventListener(name:string,handler:EventHandler):void{this.listeners.set(name,handler);}
 }
+interface ChannelRowFixture {
+  connectionId:string;
+  workspaceId:string;
+  provider:string;
+  accountId:string;
+  status:string;
+  generation:number;
+}
 interface UiFixtureOptions {
+  channelItems?:ChannelRowFixture[];
+  channelReadStatus?:number;
   state?:"authenticated"|"mfa_required"|"unauthenticated";
   deferInitialSession?:boolean;
   pendingEmailCookie?:boolean;
@@ -100,6 +110,8 @@ function setup(options:UiFixtureOptions={}){
   let restoredEmail="";
   let securityChanges=0;
   let resetRequests=0;
+  let channelReads=0;
+  const channelPaths:string[]=[];
   let signIn2faEnabled=true;
   const disabled=new Set<string>();
   const factorLabels=new Map<string,string>();
@@ -140,6 +152,24 @@ function setup(options:UiFixtureOptions={}){
     }
     if(path==="/app/auth/csrf")
       return Promise.resolve(response({status:"unauthenticated"},401));
+    if(path.startsWith("/app/auth/workspaces/") && path.includes("/connections")){
+      channelReads++;
+      channelPaths.push(path);
+      const workspaceId=path.split("/")[4];
+      if(options.channelReadStatus!==undefined && options.channelReadStatus!==200)
+        return Promise.resolve(response({status:"connections_unavailable"},options.channelReadStatus));
+      if(workspaceId!==workspace1.workspaceId)
+        return Promise.resolve(response({status:"connections_unavailable"},403));
+      const records=options.channelItems??[];
+      const cursor=path.includes("?after=")
+        ?decodeURIComponent(path.split("?after=")[1]??""):"";
+      const start=cursor
+        ?Math.max(0,records.findIndex(x=>x.connectionId===cursor)+1):0;
+      const page=records.slice(start,start+20);
+      const next=records.length>start+20?page[page.length-1]?.connectionId:undefined;
+      return Promise.resolve(response({items:page,
+        ...(next===undefined?{}:{nextCursor:next})}));
+    }
     if(path==="/app/auth/pending-otp"){
       pendingChecks++;
       return Promise.resolve(
@@ -277,7 +307,7 @@ function setup(options:UiFixtureOptions={}){
     },
     stats:()=>({enrollRequests,refreshRequests,logoutRequests,
       factorReads,restoreCalls,pendingChecks,restoredEmail,securityChanges,resetRequests,
-      signIn2faEnabled,disabledCount:disabled.size,deletedByProvider,copiedKey,factors})};
+      channelReads,channelPaths,signIn2faEnabled,disabledCount:disabled.size,deletedByProvider,copiedKey,factors})};
 }
 
 describe("secure workspace UX and real static frontend lifecycle",()=>{
@@ -473,6 +503,106 @@ describe("secure workspace UX and real static frontend lifecycle",()=>{
     expect(privateLoginCss).toContain("[hidden]{display:none!important}");
     expect(privateLoginJs).not.toContain("innerHTML");
     expect(privateLoginJs).not.toContain("localStorage");
+  });
+
+
+  it("shows a truthful empty Channels registry without claiming provider access",async()=>{
+    const ui=setup();await ui.flush();
+    expect(ui.dom.getElementById("nav-channels").hidden).toBe(false);
+    await ui.click("nav-channels");
+    expect(ui.dom.getElementById("channels-view").hidden).toBe(false);
+    expect(ui.dom.getElementById("channels-status").textContent)
+      .toBe("No accounts have been linked to this workspace yet.");
+    expect(privateLoginHtml).toContain("not a live provider permission check");
+    expect(ui.dom.getElementById("channels-list").children).toHaveLength(0);
+    expect(ui.dom.getElementById("channels-more").hidden).toBe(true);
+    expect(ui.stats().channelReads).toBe(1);
+    await ui.click("channels-refresh");
+    expect(ui.stats().channelReads).toBe(2);
+    expect(privateLoginHtml).not.toContain('id="channels-connect"');
+  });
+
+  it("renders verified tenant rows as text and fixed internal status without XSS",async()=>{
+    const row:ChannelRowFixture={
+      connectionId:"123e4567-e89b-42d3-a456-426614174001",
+      workspaceId:workspace1.workspaceId,
+      provider:"instagram",
+      accountId:'<img src=x onerror="alert(1)">',
+      status:"verifying",generation:2
+    };
+    const ui=setup({channelItems:[row]});await ui.flush();
+    await ui.click("nav-channels");
+    const list=ui.dom.getElementById("channels-list");
+    expect(list.children).toHaveLength(1);
+    const card=list.children[0]!;
+    expect(card.getAttribute("role")).toBe("listitem");
+    expect(card.children[0]!.children[0]!.textContent).toBe("instagram");
+    expect(card.children[0]!.children[1]!.textContent)
+      .toBe("Provider account ID: "+row.accountId);
+    expect(card.children[1]!.textContent).toBe("Verification pending");
+    expect(ui.dom.getElementById("channels-status").textContent)
+      .toContain("Showing 1 account registry");
+    expect(privateLoginJs).not.toContain("innerHTML");
+    expect(ui.stats().channelPaths).toEqual([
+      "/app/auth/workspaces/"+workspace1.workspaceId+"/connections"
+    ]);
+  });
+
+  it("paginates the account registry in bounded pages with no duplicate first page",async()=>{
+    const rows:ChannelRowFixture[]=Array.from({length:21},(_,i)=>({
+      connectionId:"123e4567-e89b-42d3-a456-"+(426614174001+i).toString().padStart(12,"0"),
+      workspaceId:workspace1.workspaceId,
+      provider:i%2?"telegram":"instagram",
+      accountId:"provider-"+i,status:"connected",generation:1
+    }));
+    const ui=setup({channelItems:rows});await ui.flush();
+    await ui.click("nav-channels");
+    expect(ui.dom.getElementById("channels-list").children).toHaveLength(20);
+    expect(ui.dom.getElementById("channels-more").hidden).toBe(false);
+    await ui.click("channels-more");
+    expect(ui.dom.getElementById("channels-list").children).toHaveLength(21);
+    expect(ui.dom.getElementById("channels-more").hidden).toBe(true);
+    expect(ui.stats().channelPaths[1]).toContain("?after="+rows[19]!.connectionId);
+    expect(ui.dom.getElementById("channels-status").textContent)
+      .toContain("Showing 21");
+  });
+
+  it("keeps viewer workspaces out of Channels and clears records on account switching/sign-out",async()=>{
+    const rows:ChannelRowFixture[]=[{
+      connectionId:"123e4567-e89b-42d3-a456-426614174001",
+      workspaceId:workspace1.workspaceId,
+      provider:"telegram",accountId:"private-owner-id",
+      status:"connected",generation:3
+    }];
+    const ui=setup({multiWorkspace:true,channelItems:rows});await ui.flush();
+    await ui.click("nav-channels");
+    expect(ui.dom.getElementById("channels-list").children).toHaveLength(1);
+    await ui.click("nav-overview");
+    expect(ui.dom.getElementById("channels-list").children).toHaveLength(0);
+    ui.dom.getElementById("workspace-select").value=workspace2.workspaceId;
+    const onChange=ui.dom.getElementById("workspace-select").listeners.get("change");
+    if(!onChange)throw Error("No workspace switch");
+    await onChange();await ui.flush();
+    expect(ui.dom.getElementById("nav-channels").hidden).toBe(true);
+    expect(ui.stats().channelReads).toBe(1);
+    ui.dom.getElementById("workspace-select").value=workspace1.workspaceId;
+    await onChange();await ui.flush();
+    expect(ui.dom.getElementById("nav-channels").hidden).toBe(false);
+    await ui.click("nav-channels");
+    expect(ui.dom.getElementById("channels-list").children).toHaveLength(1);
+    await ui.click("sign-out");
+    expect(ui.dom.getElementById("dashboard-shell").hidden).toBe(true);
+    expect(ui.dom.getElementById("channels-list").children).toHaveLength(0);
+  });
+
+  it("denies fake or unavailable registry responses with a safe retry message",async()=>{
+    const ui=setup({channelReadStatus:403});await ui.flush();
+    await ui.click("nav-channels");
+    expect(ui.dom.getElementById("channels-list").children).toHaveLength(0);
+    expect(ui.dom.getElementById("channels-status").textContent)
+      .toContain("Couldn't load accounts");
+    expect(ui.dom.getElementById("channels-more").hidden).toBe(true);
+    expect(ui.dom.getElementById("channels-refresh").disabled).toBe(false);
   });
 
   it("shows the workspace overview without any sign-in text, code form or MFA controls",async()=>{

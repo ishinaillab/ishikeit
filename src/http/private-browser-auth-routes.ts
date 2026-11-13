@@ -19,6 +19,9 @@ export interface BrowserAuthController {
   clearIncompleteTotp(cookie:string):ReturnType<PrivateBrowserAuthService["clearIncompleteTotp"]>;
   listWorkspaces(cookie:string,after?:string):
     ReturnType<PrivateBrowserAuthService["listWorkspaces"]>;
+  listWorkspaceConnections?:(
+    cookie:string,workspaceId:string,after?:string
+  )=>ReturnType<PrivateBrowserAuthService["listWorkspaceConnections"]>;
   refresh(cookie:string):ReturnType<PrivateBrowserAuthService["refresh"]>;
   csrf(cookie:string):Promise<string>;
   listTotpFactors(cookie:string):ReturnType<PrivateBrowserAuthService["listTotpFactors"]>;
@@ -78,7 +81,8 @@ function clearCookie(name:string):string {
 
 export function registerPrivateBrowserAuthRoutes(
   server:FastifyInstance,
-  deps:{origin:string;controller:BrowserAuthController;allowWorkspaceInvitations?:boolean}
+  deps:{origin:string;controller:BrowserAuthController;allowWorkspaceInvitations?:boolean;
+    allowWorkspaceConnections?:boolean}
 ):void {
   const url=new URL(deps.origin);
   if(url.protocol!=="https:" || url.pathname!=="/" || url.search || url.hash
@@ -259,6 +263,34 @@ export function registerPrivateBrowserAuthRoutes(
       return reply.code(200).send(await deps.controller.listWorkspaces(value,parsed.data.after));
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
+  // Private, bounded, owner/admin-only status inventory. This read-only
+  // route is never an account-linking or provider authorization endpoint.
+  if(deps.allowWorkspaceConnections===true
+    && deps.controller.listWorkspaceConnections!==undefined){
+    server.get<{Params:{workspaceId:string};Querystring:{after?:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections",async(req,reply)=>{
+        privateResponse(reply);
+        if(!sameOrigin(req,false))
+          return deny(reply,403).send({status:"forbidden"});
+        const value=session(req,reply);
+        if(value===undefined)
+          return deny(reply).send({status:"unauthenticated"});
+        const params=z.object({workspaceId:z.string().uuid()}).strict().safeParse(req.params);
+        const cursor=cursorSchema.safeParse(req.query);
+        if(!params.success||!cursor.success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const page=await deps.controller.listWorkspaceConnections!(
+            value,params.data.workspaceId,cursor.data.after
+          );
+          return reply.code(200).send(page);
+        }catch{
+          return deny(reply,403).send({status:"connections_unavailable"});
+        }
+      }
+    );
+  }
+
   server.post("/app/auth/refresh",{bodyLimit:256},async(req,reply)=>{
     privateResponse(reply);
     if(!mutation(req,reply))return reply;

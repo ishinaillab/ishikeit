@@ -14,7 +14,7 @@ const host="apps.ishinaillab.com";
 const token="A".repeat(43);
 const login="B".repeat(43);
 const csrf="C".repeat(43);
-function testServer(enabled=true,invitesEnabled=false){
+function testServer(enabled=true,invitesEnabled=false,connectionsEnabled=false){
   const controller={
     begin:vi.fn((_email:string,_ip:string)=>{void _email;void _ip;return Promise.resolve(login);}),
     hasPendingEmailOtp:vi.fn((_cookie:string)=>{void _cookie;return Promise.resolve(true);}),
@@ -40,6 +40,15 @@ function testServer(enabled=true,invitesEnabled=false){
       }]}
     });}),
     listWorkspaces:vi.fn((_cookie:string,_after?:string)=>{void _cookie;void _after;return Promise.resolve({items:[]});}),
+    listWorkspaceConnections:vi.fn((_cookie:string,_workspaceId:string,_after?:string)=>{
+      void _cookie;void _workspaceId;void _after;
+      return Promise.resolve({items:[{
+        connectionId:"123e4567-e89b-42d3-a456-426614174001",
+        workspaceId:"123e4567-e89b-42d3-a456-426614174000",
+        provider:"instagram",accountId:"verified-account",status:"connected" as const,
+        generation:2
+      }]});
+    }),
     refresh:vi.fn<BrowserAuthController["refresh"]>((_cookie:string)=>{void _cookie;return Promise.resolve({
       status:"authenticated" as const,
       sessionId:"session",expiresAt:"2027-01-01T00:00:00Z",
@@ -88,7 +97,7 @@ function testServer(enabled=true,invitesEnabled=false){
     logger:pino({level:"silent"}),
     inbound:{ingest:vi.fn<InboundStore["ingest"]>()},
     ready:()=>Promise.resolve(true),appSecret:"secret",verifyToken:"test-verify",
-    ...(enabled?{browserAuth:{origin,controller,allowWorkspaceInvitations:invitesEnabled}}:{})
+    ...(enabled?{browserAuth:{origin,controller,allowWorkspaceInvitations:invitesEnabled,allowWorkspaceConnections:connectionsEnabled}}:{})
   });
   return {server,controller};
 }
@@ -100,6 +109,57 @@ function authCookie(){return "__Host-ishikeit-session="+token;}
 function loginCookie(){return "__Host-ishikeit-login="+login;}
 
 describe("private cookie-only browser auth routes",()=>{
+  it("does not register read-only account inventory until explicitly provided",async()=>{
+    const {server}=testServer(true,false,false);
+    const response=await server.inject({method:"GET",
+      url:"/app/auth/workspaces/123e4567-e89b-42d3-a456-426614174000/connections",
+      headers:{...headers,cookie:authCookie()}});
+    expect(response.statusCode).toBe(404);
+    await server.close();
+  });
+  it("enforces exact host/same-site, opaque session, bounded cursor and no-store on inventory",async()=>{
+    const {server,controller}=testServer(true,false,true);
+    const ws="123e4567-e89b-42d3-a456-426614174000";
+    const path="/app/auth/workspaces/"+ws+"/connections";
+    for(const h of [
+      {...headers,cookie:authCookie(),host:"untrusted.example"},
+      {...headers,cookie:authCookie(),"sec-fetch-site":"cross-site"},
+      {...headers,cookie:""},
+      {...headers,cookie:authCookie()+"; __Host-ishikeit-session="+token}
+    ]){
+      const result=await server.inject({method:"GET",url:path,headers:h});
+      expect(result.statusCode).toBeGreaterThanOrEqual(400);
+    }
+    expect((await server.inject({method:"GET",url:path+"?after=bad",
+      headers:{...headers,cookie:authCookie()}})).statusCode).toBe(400);
+    expect((await server.inject({method:"GET",url:"/app/auth/workspaces/other/connections",
+      headers:{...headers,cookie:authCookie()}})).statusCode).toBe(400);
+    expect(controller.listWorkspaceConnections).not.toHaveBeenCalled();
+    const ok=await server.inject({method:"GET",url:path,
+      headers:{...headers,cookie:authCookie()}});
+    expect(ok.statusCode).toBe(200);
+    expect(ok.headers["cache-control"]).toContain("no-store");
+    expect(ok.headers["content-security-policy"]).toContain("default-src 'none'");
+    expect(ok.json()).toEqual({items:[{
+      connectionId:"123e4567-e89b-42d3-a456-426614174001",workspaceId:ws,
+      provider:"instagram",accountId:"verified-account",status:"connected",generation:2
+    }]});
+    expect(ok.body).not.toContain(token);
+    expect(ok.body).not.toContain("access_token");
+    const cursor="123e4567-e89b-42d3-a456-426614174001";
+    const page=await server.inject({method:"GET",url:path+"?after="+cursor,
+      headers:{...headers,cookie:authCookie()}});
+    expect(page.statusCode).toBe(200);
+    expect(controller.listWorkspaceConnections).toHaveBeenLastCalledWith(token,ws,cursor);
+    controller.listWorkspaceConnections.mockRejectedValueOnce(new Error("Unauthorized"));
+    const denied=await server.inject({method:"GET",url:path,
+      headers:{...headers,cookie:authCookie()}});
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toEqual({status:"connections_unavailable"});
+    expect(denied.body).not.toContain("Unauthorized");
+    await server.close();
+  });
+
   it("does not expose invitations without the separate explicit feature enable",async()=>{
     const {server}=testServer();
     const r=await server.inject({

@@ -8,6 +8,7 @@ import type { SupabaseTotpMfaClient, TotpEnrollment } from "./supabase-totp-mfa.
 import type { AuthenticatedWorkspacePortfolio, WorkspacePage } from "./authenticated-workspace-portfolio.js";
 import type { PostgresDatabase, SqlExecutor } from "../persistence/postgres.js";
 import type { PostgresWorkspaceInvitations, InviteSummary } from "./workspace-member-invitations.js";
+import type { PostgresWorkspaceConnectionRegistry, WorkspaceConnectionPage } from "../persistence/workspace-connections.js";
 
 const bearer = z.string().min(20).max(4096).regex(/^[A-Za-z0-9_-]+$/u);
 const normalizedEmail = z.email().min(3).max(320).transform(x=>x.trim().toLowerCase());
@@ -158,6 +159,7 @@ export class PrivateBrowserAuthService {
     otp:Pick<SupabaseEmailOtpClient,"sendOtp"|"verifyOtp"|"refresh"|"revoke">;
     portfolio:Pick<AuthenticatedWorkspacePortfolio,"list">;
     memberInvites?:Pick<PostgresWorkspaceInvitations,"invite">;
+    connections?:Pick<PostgresWorkspaceConnectionRegistry,"listForAdministrator">;
     csrfKeyBase64:string;
     onOtpFailure?: (diagnostic:BrowserOtpFailureDiagnostic)=>void;
     /** Fixed enums only. Never log raw provider errors or any TOTP secret. */
@@ -491,6 +493,26 @@ export class PrivateBrowserAuthService {
     const {access}=await this.#bearer(cookie);
     return this.deps.portfolio.list(access,{
       pageSize:20,...(after===undefined?{}:{after})
+    });
+  }
+
+  /** Private account inventory. Supabase bearer never leaves the server.
+   * Reverify this exact live browser session at AAL2 before the DB independently
+   * checks current owner/admin rights for the requested workspace. No mutation.
+   */
+  async listWorkspaceConnections(cookie:string,workspaceId:string,after?:string):
+    Promise<WorkspaceConnectionPage>{
+    if(this.deps.connections===undefined)
+      throw new Error("Workspace connection inventory unavailable");
+    const {access,verified}=await this.#bearer(cookie);
+    const privileged=await this.deps.auth.verifyPrivilegedAccessToken(access);
+    if(privileged.principal.subject!==verified.principal.subject
+      || privileged.principal.issuer!==verified.principal.issuer
+      || privileged.sessionId!==verified.sessionId)
+      throw new Error("Browser privilege session mismatch");
+    return this.deps.connections.listForAdministrator({
+      workspaceId,actor:privileged.principal,pageSize:20,
+      ...(after===undefined?{}:{after})
     });
   }
 

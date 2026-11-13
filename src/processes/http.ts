@@ -54,6 +54,7 @@ import { TikTokBusinessSender } from "../channels/tiktok-send.js";
 import { CredentialCipher } from "../auth/credential-cipher.js";
 import { SupabaseAuthPrincipalVerifier } from "../auth/supabase-workspace-principal.js";
 import { AuthenticatedWorkspacePortfolio } from "../auth/authenticated-workspace-portfolio.js";
+import { PostgresWorkspaceConnectionRegistry } from "../persistence/workspace-connections.js";
 import { SupabaseEmailOtpClient } from "../auth/supabase-email-otp.js";
 import { SupabaseTotpMfaClient } from "../auth/supabase-totp-mfa.js";
 import { SupabaseAdminInviteClient } from "../auth/supabase-admin-invite.js";
@@ -614,6 +615,8 @@ const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
     +diagnostic.stage+" reason="+diagnostic.reason
   ),
   ...(workspaceInvites===undefined?{}:{memberInvites:workspaceInvites}),
+  // Private read-only inventory; no provider connections can be created here.
+  connections:new PostgresWorkspaceConnectionRegistry(db),
   auth: new SupabaseAuthPrincipalVerifier({
     projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
     publishableKey: env.SUPABASE_AUTH_PUBLISHABLE_KEY!,
@@ -640,7 +643,8 @@ const server = buildServer({
   logger,
   ...(browserAuth === undefined ? {} : {
     browserAuth: {origin: env.BROWSER_AUTH_ORIGIN!,controller: browserAuth,
-      allowWorkspaceInvitations:workspaceInvites!==undefined}
+      allowWorkspaceInvitations:workspaceInvites!==undefined,
+      allowWorkspaceConnections:true}
   }),
   buildIdentity: runtimeBuildIdentity(),
   ready: async () =>

@@ -121,6 +121,44 @@ describe.skipIf(db === undefined)("nullable tenant provenance across inbox/outbo
     );
   });
 
+  it("validates all six previously-NOT-VALID tenant constraints without changing legacy ownership", async () => {
+    const names=[
+      "ishikeit_inbound_tenant_shape_ck","ishikeit_inbound_workspace_fk",
+      "ishikeit_inbound_connection_fk","ishikeit_outbox_tenant_shape_ck",
+      "ishikeit_outbox_workspace_fk","ishikeit_outbox_connection_fk"
+    ];
+    const sql=`SELECT conname,convalidated FROM pg_constraint
+      WHERE conrelid IN ('public.inbound_events'::regclass,'public.outbox'::regclass)
+        AND conname=ANY($1::text[]) ORDER BY conname`;
+    const before=await db!.query<{conname:string;convalidated:boolean}>(sql,[names]);
+    expect(before.rows.map(r=>r.conname)).toEqual([...names].sort());
+    expect(before.rows.every(r=>r.convalidated===false)).toBe(true);
+
+    const countsBefore=await db!.query<{inbound:string;outbox:string}>(
+      `SELECT (SELECT count(*) FROM public.inbound_events)::text AS inbound,
+              (SELECT count(*) FROM public.outbox)::text AS outbox`
+    );
+    await db!.query(await readFile(
+      "migrations/0023_ishikeit_validate_event_tenant_provenance.sql","utf8"
+    ));
+    const after=await db!.query<{conname:string;convalidated:boolean}>(sql,[names]);
+    expect(after.rows.map(r=>r.conname)).toEqual([...names].sort());
+    expect(after.rows.every(r=>r.convalidated===true)).toBe(true);
+    const countsAfter=await db!.query<{inbound:string;outbox:string}>(
+      `SELECT (SELECT count(*) FROM public.inbound_events)::text AS inbound,
+              (SELECT count(*) FROM public.outbox)::text AS outbox`
+    );
+    expect(countsAfter.rows).toEqual(countsBefore.rows);
+
+    // PostgreSQL documents repeated VALIDATE CONSTRAINT on a validated
+    // constraint as a no-op. Re-running does not backfill or remove rows.
+    await db!.query(await readFile(
+      "migrations/0023_ishikeit_validate_event_tenant_provenance.sql","utf8"
+    ));
+    expect((await db!.query<{convalidated:boolean}>(sql,[names])).rows
+      .every(r=>r.convalidated)).toBe(true);
+  });
+
   it("retains RLS and no public/client roles on both durable queues", async () => {
     const rows = await db!.query<{relname:string;relrowsecurity:boolean;public_select:boolean}>(
       `SELECT c.relname,c.relrowsecurity,

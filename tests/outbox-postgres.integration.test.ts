@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresDatabase } from "../src/persistence/postgres.js";
-import { ACTION_DISPATCH_TOPIC, PostgresOutboxStore, type OutboxJob } from "../src/persistence/outbox.js";
+import { ACTION_DISPATCH_TOPIC, INBOUND_ACCEPTED_TOPIC, PostgresOutboxStore, type OutboxJob } from "../src/persistence/outbox.js";
 import { PostgresMetaUnknownReconciler } from "../src/persistence/meta-unknown-reconciliation.js";
 import type { ActionEnvelope } from "../src/domain/actions.js";
 
@@ -54,6 +55,9 @@ describe.skipIf(database === undefined)("Meta durable outbox fence on isolated P
         topic text NOT NULL,
         partition_key text NOT NULL,
         payload jsonb NOT NULL,
+        workspace_id uuid,
+        connection_id uuid,
+        connection_generation bigint,
         created_at timestamptz NOT NULL DEFAULT now(),
         published_at timestamptz,
         attempt_count integer NOT NULL DEFAULT 0,
@@ -103,6 +107,92 @@ describe.skipIf(database === undefined)("Meta durable outbox fence on isolated P
     } finally {
       await database!.close();
     }
+  });
+
+  it("keeps tenant-stamped action jobs durable but unclaimable, without starving legacy actions", async () => {
+    const first = await store!.enqueueAction(action("tenant-staged-first", "shared-partition"));
+    const tenant = randomUUID();
+    const connection = randomUUID();
+    await database!.query(
+      `UPDATE public.outbox
+       SET workspace_id=$2::uuid,connection_id=$3::uuid,connection_generation=2
+       WHERE id=$1::uuid`,[first.id,tenant,connection]
+    );
+
+    // The legacy dispatcher must never acquire, arm or send a tenant job.
+    expect(await store!.claimNext(ACTION_DISPATCH_TOPIC,30000)).toBeUndefined();
+    const parked = await database!.query<{
+      published_at:Date|null;lease_token:string|null;workspace_id:string;
+    }>(`SELECT published_at,lease_token,workspace_id FROM public.outbox WHERE id=$1::uuid`,[first.id]);
+    expect(parked.rows[0]).toMatchObject({
+      published_at:null,lease_token:null,workspace_id:tenant
+    });
+
+    // A parked new-tenant event must not block pre-cutover legacy delivery
+    // even if a provider partition key collides.
+    const second = await store!.enqueueAction(action("legacy-after-tenant", "shared-partition"));
+    const next = await store!.claimNext(ACTION_DISPATCH_TOPIC,30000);
+    expect(next?.id).toBe(second.id);
+    expect(await store!.prepareMetaSend(next!)).toBe(true);
+    expect(await store!.complete(next!,"legacy-provider-ack")).toBe(true);
+    expect(await store!.claimNext(ACTION_DISPATCH_TOPIC,30000)).toBeUndefined();
+  });
+
+  it("refuses to arm a tenant-stamped message even if another process somehow holds a valid lease", async () => {
+    const meta = await store!.enqueueAction(action("tenant-meta-unsafe-lease"));
+    const lease = randomUUID();
+    await database!.query(
+      `UPDATE public.outbox
+       SET workspace_id=$2::uuid,connection_id=$3::uuid,connection_generation=1,
+           lease_token=$4::uuid,lease_expires_at=now()+interval '5 minutes'
+       WHERE id=$1::uuid`,
+      [meta.id,randomUUID(),randomUUID(),lease]
+    );
+    expect(await store!.prepareMetaSend({
+      id:meta.id,topic:ACTION_DISPATCH_TOPIC,partitionKey:"synthetic-partition",
+      payload:action("tenant-meta-unsafe-lease"),attemptCount:0,leaseToken:lease
+    })).toBe(false);
+    const record = await database!.query<{meta_send_started_at:Date|null}>(
+      "SELECT meta_send_started_at FROM public.outbox WHERE id=$1",[meta.id]);
+    expect(record.rows[0]?.meta_send_started_at).toBeNull();
+
+    const telegram = await store!.enqueueAction({
+      ...action("tenant-telegram-unsafe-lease"),
+      provider:"telegram",
+      target:{channel:"bot",accountId:"test-bot",recipientId:"test-recipient"}
+    });
+    const telegramLease=randomUUID();
+    await database!.query(
+      `UPDATE public.outbox
+       SET workspace_id=$2::uuid,connection_id=$3::uuid,connection_generation=1,
+           lease_token=$4::uuid,lease_expires_at=now()+interval '5 minutes'
+       WHERE id=$1::uuid`,
+      [telegram.id,randomUUID(),randomUUID(),telegramLease]
+    );
+    expect(await store!.prepareTelegramSend({
+      id:telegram.id,topic:ACTION_DISPATCH_TOPIC,partitionKey:"synthetic-partition",
+      payload:{},attemptCount:0,leaseToken:telegramLease
+    })).toBe(false);
+  });
+
+  it("parks tenant inbound-accepted work until a tenant-isolated inbound worker exists", async () => {
+    const workspace=randomUUID();
+    const connection=randomUUID();
+    const inboundId=randomUUID();
+    const legacyId=randomUUID();
+    await database!.query(
+      `INSERT INTO public.outbox(id,topic,partition_key,payload,
+         workspace_id,connection_id,connection_generation)
+       VALUES($1,$3,'shared-event-partition','{}'::jsonb,$4,$5,1),
+             ($2,$3,'shared-event-partition','{}'::jsonb,NULL,NULL,NULL)`,
+      [inboundId,legacyId,INBOUND_ACCEPTED_TOPIC,workspace,connection]
+    );
+    const next=await store!.claimNext(INBOUND_ACCEPTED_TOPIC,30000);
+    expect(next?.id).toBe(legacyId);
+    expect(await store!.claimNext(INBOUND_ACCEPTED_TOPIC,30000)).toBeUndefined();
+    const parked=await database!.query<{lease_token:string|null}>(
+      "SELECT lease_token FROM public.outbox WHERE id=$1::uuid",[inboundId]);
+    expect(parked.rows[0]?.lease_token).toBeNull();
   });
 
   it("atomically fences Telegram and quarantines abandoned sends without duplicating them", async () => {

@@ -94,6 +94,13 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
          SELECT o.id
          FROM outbox AS o
          WHERE o.topic = $1
+           -- No multitenant dispatch or processor is activated yet. Tenant-
+           -- stamped jobs must remain durable but unclaimable by legacy
+           -- workers until authenticated ingress, per-send generation fences,
+           -- and controlled provider cutover have passed acceptance.
+           AND o.workspace_id IS NULL
+           AND o.connection_id IS NULL
+           AND o.connection_generation IS NULL
            AND o.published_at IS NULL
            AND o.dead_lettered_at IS NULL
            AND o.meta_send_started_at IS NULL
@@ -104,6 +111,11 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
              FROM outbox AS earlier
              WHERE earlier.topic = o.topic
                AND earlier.partition_key = o.partition_key
+               -- Parked tenant jobs cannot starve an unrelated legacy
+               -- conversation with the same provider partition key.
+               AND earlier.workspace_id IS NULL
+               AND earlier.connection_id IS NULL
+               AND earlier.connection_generation IS NULL
                AND earlier.published_at IS NULL
                AND earlier.dead_lettered_at IS NULL
                AND (earlier.created_at, earlier.id) < (o.created_at, o.id)
@@ -113,6 +125,9 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
              FROM outbox AS leased
              WHERE leased.topic = o.topic
                AND leased.partition_key = o.partition_key
+               AND leased.workspace_id IS NULL
+               AND leased.connection_id IS NULL
+               AND leased.connection_generation IS NULL
                AND leased.id <> o.id
                AND leased.published_at IS NULL
                AND leased.dead_lettered_at IS NULL
@@ -154,6 +169,9 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
          SELECT o.id
          FROM outbox AS o
          WHERE o.topic = 'action.dispatch'
+           AND o.workspace_id IS NULL
+           AND o.connection_id IS NULL
+           AND o.connection_generation IS NULL
            AND o.meta_send_started_at IS NOT NULL
            AND o.published_at IS NULL
            AND o.dead_lettered_at IS NULL
@@ -190,6 +208,11 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
          AND payload->>'provider' = 'meta'
          AND payload->>'capability' = 'messaging'
          AND payload->>'operation' IN ('message.send','message.template.send')
+         -- Even a preexisting lease must not arm a tenant-stamped send
+         -- through the legacy Meta/Telegram provider adapters.
+         AND workspace_id IS NULL
+         AND connection_id IS NULL
+         AND connection_generation IS NULL
          AND lease_token = $2::uuid
          AND lease_expires_at > now()
          AND published_at IS NULL
@@ -211,6 +234,11 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
          AND payload->>'provider' = 'telegram'
          AND payload->>'capability' = 'messaging'
          AND payload->>'operation' = 'message.send'
+         -- Even a preexisting lease must not arm a tenant-stamped send
+         -- through the legacy Meta/Telegram provider adapters.
+         AND workspace_id IS NULL
+         AND connection_id IS NULL
+         AND connection_generation IS NULL
          AND lease_token = $2::uuid
          AND lease_expires_at > now()
          AND published_at IS NULL

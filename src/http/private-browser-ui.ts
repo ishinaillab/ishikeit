@@ -101,6 +101,7 @@ export const privateLoginHtml = `<!doctype html>
     <nav class="sidebar" aria-label="Workspace navigation">
       <span class="sidebar-label">WORKSPACE</span>
       <button type="button" class="nav-item" id="nav-overview" aria-current="page">Overview</button>
+      <button type="button" class="nav-item" id="nav-channels" hidden>Channels</button>
       <button type="button" class="nav-item" id="nav-team" hidden>Team</button>
       <span class="sidebar-label sidebar-label-secondary">ACCOUNT</span>
       <button type="button" class="nav-item" id="nav-security">Security</button>
@@ -126,6 +127,20 @@ export const privateLoginHtml = `<!doctype html>
           <h2 id="next-heading">Your workspace is ready</h2>
           <p>Messaging and automation tools will become available here as they are enabled. Your workspace access is secured with two-step verification.</p>
         </section>
+      </section>
+
+      <section id="channels-view" aria-labelledby="channels-heading" hidden>
+        <p class="eyebrow">WORKSPACE CHANNELS</p>
+        <h1 id="channels-heading">Connected accounts</h1>
+        <p class="page-description">Review the accounts recorded for your current workspace.</p>
+        <div class="channels-toolbar">
+          <p id="channels-context" class="muted">Current workspace</p>
+          <button type="button" id="channels-refresh" class="secondary">Refresh status</button>
+        </div>
+        <p id="channels-note" class="muted channels-note">This list shows Ishikeit's internal connection status, not a live provider permission check. Account linking and sending remain unavailable until verified provider authorization is implemented.</p>
+        <p id="channels-status" role="status" aria-live="polite" aria-atomic="true"></p>
+        <div id="channels-list" class="channels-list" role="list" aria-label="Workspace accounts"></div>
+        <button type="button" id="channels-more" class="secondary" hidden>Show more accounts</button>
       </section>
 
       <section id="security-view" aria-labelledby="security-heading" hidden>
@@ -373,6 +388,17 @@ p{margin-bottom:0}
 #mfa-cancel{justify-self:stretch}
 
 .workspace-switcher{max-width:420px;margin-bottom:22px;display:grid;gap:8px}
+.channels-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;margin:22px 0 12px}
+.channels-toolbar .muted{margin:0}
+.channels-note{line-height:1.55;max-width:76ch}
+#channels-status{min-height:1.5em;margin:18px 0;color:var(--ishi-muted)}
+.channels-list{display:grid;gap:12px;margin-bottom:18px}
+.channel-row{padding:18px 20px;border:1px solid var(--ishi-border);border-radius:12px;background:#fff;display:flex;align-items:flex-start;justify-content:space-between;gap:15px}
+.channel-info{min-width:0;display:grid;gap:6px}
+.channel-info strong{font-size:1rem;overflow-wrap:anywhere}
+.channel-info p{margin:0;overflow-wrap:anywhere}
+.channel-state{flex-shrink:0;max-width:45%;text-align:right;border:1px solid var(--ishi-border);border-radius:999px;padding:6px 11px;font-size:.82rem;font-weight:650;line-height:1.4;overflow-wrap:anywhere;background:var(--ishi-blush)}
+@media(max-width:460px){.channel-row{flex-direction:column}.channel-state{max-width:100%;text-align:left}}
 .toast{position:fixed;bottom:20px;right:20px;z-index:90;max-width:min(420px,calc(100vw - 40px));
   color:#fff;background:var(--ishi-ink);padding:13px 18px;border-radius:9px;
   box-shadow:0 12px 36px rgba(36,37,48,.25);font-size:.9rem;overflow-wrap:anywhere}
@@ -461,6 +487,10 @@ const mfaQr=get("mfa-qr");
 const mfaQrFallback=get("mfa-qr-fallback");
 const memberInviteForm=get("member-invite-form");
 const inviteWorkspace=get("member-invite-workspace");
+const channelsList=get("channels-list");
+const channelsStatus=get("channels-status");
+const channelsMore=get("channels-more");
+const channelsRefresh=get("channels-refresh");
 const status=get("status");
 const accountMenu=get("account-menu");
 const accountButton=get("account-button");
@@ -476,6 +506,9 @@ let refreshInFlight=null;
 let workspaceRows=[];
 let currentWorkspaceId="";
 let invitingEnabled=false;
+let connectionsEpoch=0;
+let connectionsLoading=false;
+let connectionsNext=null;
 let mfaState=null;
 let securityChange=null;
 let lastPendingCount=0;
@@ -542,6 +575,107 @@ function clearMfa(){
   mfaLastDeviceHelp.hidden=true;
   mfaAccountToggle.disabled=true;
 }
+function resetConnections(){
+  connectionsEpoch++;
+  connectionsLoading=false;
+  connectionsNext=null;
+  channelsList.replaceChildren();
+  channelsStatus.textContent="";
+  channelsMore.hidden=true;
+  channelsMore.disabled=false;
+  channelsRefresh.disabled=false;
+}
+function channelsAllowed(){
+  const workspace=workspaceRows.find(item=>item.workspaceId===currentWorkspaceId);
+  return workspace && (workspace.role==="owner" || workspace.role==="admin");
+}
+function channelStatusLabel(value){
+  const labels={
+    verifying:"Verification pending",
+    connected:"Connected in Ishikeit",
+    attention_required:"Needs attention",
+    paused:"Paused",
+    disconnecting:"Disconnect requested",
+    disconnected:"Disconnected",
+    revoked:"Access revoked"
+  };
+  return Object.hasOwn(labels,value)?labels[value]:"Status unavailable";
+}
+async function loadConnections(more){
+  if(mode!=="dashboard" || selectedPanel!=="channels"
+     || !channelsAllowed() || connectionsLoading)return;
+  if(!more)resetConnections();
+  else if(!connectionsNext)return;
+  const generation=connectionsEpoch;
+  const session=authEpoch;
+  const workspaceId=currentWorkspaceId;
+  const cursor=more?connectionsNext:null;
+  const stillCurrent=()=>generation===connectionsEpoch && session===authEpoch
+    && mode==="dashboard" && selectedPanel==="channels"
+    && workspaceId===currentWorkspaceId;
+  connectionsLoading=true;
+  channelsRefresh.disabled=true;
+  channelsMore.disabled=true;
+  channelsStatus.textContent=more?"Loading more accounts…":"Loading accounts…";
+  try{
+    const path="/app/auth/workspaces/"+encodeURIComponent(workspaceId)
+      +"/connections"+(cursor?"?after="+encodeURIComponent(cursor):"");
+    const response=await fetch(path,{credentials:"same-origin",
+      cache:"no-store",redirect:"error"});
+    if(!stillCurrent())return;
+    if(response.status===401){showLogin("Your session ended. Sign in to continue.");return;}
+    if(!response.ok)throw Error("Account inventory unavailable");
+    const data=await response.json();
+    if(!stillCurrent())return;
+    const allowedStatuses=new Set(["verifying","connected","attention_required",
+      "paused","disconnecting","disconnected","revoked"]);
+    const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if(!data || !Array.isArray(data.items) || data.items.length>20
+      || (data.nextCursor!==undefined &&
+        (typeof data.nextCursor!=="string" || !uuid.test(data.nextCursor)
+         || data.nextCursor===cursor))
+      || data.items.some(row=>!row || row.workspaceId!==workspaceId
+        || typeof row.provider!=="string" || row.provider.length>128
+        || typeof row.accountId!=="string" || row.accountId.length>256
+        || typeof row.connectionId!=="string" || !uuid.test(row.connectionId)
+        || !allowedStatuses.has(row.status) || !Number.isSafeInteger(row.generation)
+        || row.generation<1))
+      throw Error("Invalid account inventory");
+    for(const record of data.items){
+      const card=document.createElement("article");
+      card.className="channel-row";card.setAttribute("role","listitem");
+      const info=document.createElement("div");info.className="channel-info";
+      const title=document.createElement("strong");title.textContent=record.provider;
+      const id=document.createElement("p");id.className="muted";
+      id.textContent="Provider account ID: "+record.accountId;
+      const generationText=document.createElement("p");
+      generationText.className="muted";
+      generationText.textContent="Registry generation "+record.generation;
+      info.append(title,id,generationText);
+      const state=document.createElement("span");state.className="channel-state";
+      state.textContent=channelStatusLabel(record.status);
+      card.append(info,state);
+      channelsList.append(card);
+    }
+    connectionsNext=data.nextCursor===undefined?null:data.nextCursor;
+    channelsMore.hidden=connectionsNext===null;
+    channelsStatus.textContent=channelsList.children.length===0
+      ?"No accounts have been linked to this workspace yet."
+      :"Showing "+channelsList.children.length+" account registry record(s).";
+  }catch{
+    if(!stillCurrent())return;
+    channelsList.replaceChildren();
+    connectionsNext=null;
+    channelsMore.hidden=true;
+    channelsStatus.textContent="Couldn't load accounts. Try refreshing this page.";
+  }finally{
+    if(stillCurrent()){
+      connectionsLoading=false;
+      channelsRefresh.disabled=false;
+      channelsMore.disabled=false;
+    }
+  }
+}
 function closeAccountMenu(){
   accountMenu.hidden=true;
   accountButton.setAttribute("aria-expanded","false");
@@ -602,6 +736,7 @@ function showLogin(notice){
   workspaceRows=[];
   currentWorkspaceId="";
   invitingEnabled=false;
+  resetConnections();
   clearMfa();
   closeAccountMenu();
   mfaGateSlot.append(mfaPanel);
@@ -640,6 +775,7 @@ function showGate(data,preserve){
   workspaceRows=[];
   currentWorkspaceId="";
   invitingEnabled=false;
+  resetConnections();
   mfaGateSlot.append(mfaPanel);
   mfaPanel.hidden=false;
   if(!preserve && previousMode!=="gate")clearMfa();
@@ -671,15 +807,20 @@ function renderWorkspace(){
   }
   selector.value=currentWorkspaceId;
   get("workspace-switcher").hidden=workspaceRows.length<=1;
+  get("nav-channels").hidden=!channelsAllowed();
+  get("channels-context").textContent="Workspace: "+name;
 }
 function showPanel(panel){
   if(mode!=="dashboard")return;
   if(panel==="team" && !invitingEnabled)panel="overview";
+  if(panel==="channels" && !channelsAllowed())panel="overview";
+  if(selectedPanel==="channels" && panel!=="channels")resetConnections();
   selectedPanel=panel;
   get("overview-view").hidden=panel!=="overview";
+  get("channels-view").hidden=panel!=="channels";
   get("team-view").hidden=panel!=="team";
   get("security-view").hidden=panel!=="security";
-  for(const item of ["overview","team","security"]){
+  for(const item of ["overview","channels","team","security"]){
     const button=get("nav-"+item);
     if(item===panel)button.setAttribute("aria-current","page");
     else button.removeAttribute("aria-current");
@@ -689,6 +830,7 @@ function showPanel(panel){
   // Security settings and verified device switches are visible upon entering
   // the page; no "Set up" or hidden accordion is needed to list them.
   if(panel==="security")void loadMfaFactors();
+  if(panel==="channels")void loadConnections(false);
 }
 function showDashboard(data,preserve){
   if(data.status!=="authenticated" || !data.workspaces || !Array.isArray(data.workspaces.items)
@@ -717,6 +859,10 @@ function showDashboard(data,preserve){
     teamNav.hidden=inviteWorkspace.options.length===0;
   }
   if(teamNav.hidden && selectedPanel==="team")selectedPanel="overview";
+  if(!channelsAllowed() && selectedPanel==="channels"){
+    resetConnections();
+    selectedPanel="overview";
+  }
   authShell.hidden=true;
   dashboardShell.hidden=false;
   finishBoot();
@@ -1008,14 +1154,22 @@ function openSecurity(){
   showPanel("security");
 }
 get("nav-overview").addEventListener("click",()=>showPanel("overview"));
+get("nav-channels").addEventListener("click",()=>showPanel("channels"));
 get("nav-security").addEventListener("click",openSecurity);
 get("nav-team").addEventListener("click",()=>showPanel("team"));
 get("workspace-select").addEventListener("change",()=>{
   const value=get("workspace-select").value;
   if(workspaceRows.some(item=>item.workspaceId===value)){
     currentWorkspaceId=value;renderWorkspace();
+    if(selectedPanel==="channels"){
+      resetConnections();
+      if(channelsAllowed())void loadConnections(false);
+      else showPanel("overview");
+    }
   }
 });
+channelsRefresh.addEventListener("click",()=>{void loadConnections(false);});
+channelsMore.addEventListener("click",()=>{void loadConnections(true);});
 accountButton.addEventListener("click",()=>{
   const next=accountMenu.hidden;
   accountMenu.hidden=!next;

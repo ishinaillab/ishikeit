@@ -114,7 +114,7 @@ export interface ServerDeps {
   metaGraphPreflight?: MetaGraphPreflightReader;
   metaHandoffs?: MetaHandoffControl;
   opsMetricsToken?: string;
-  browserAuth?: { origin: string; controller: BrowserAuthController; allowWorkspaceInvitations?:boolean };
+  browserAuth?: { origin: string; controller: BrowserAuthController; allowWorkspaceInvitations?:boolean; allowWorkspaceConnections?:boolean };
   runtimeState?: {
     processorEnabled: boolean;
     actionDispatchEnabled: boolean;

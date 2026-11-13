@@ -655,6 +655,66 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     expect(row.rows[0]?.auth_session_id).toBe(sessionOne);
   });
 
+  it("lists a bounded admin-only inventory without cross-workspace IDs, token references or revoked-member access",async()=>{
+    const one=await link(workspaceA,ownerA,"instagram","account-A-1");
+    await activate(one.connectionId,workspaceA,ownerA,"instagram","account-A-1");
+    const two=await link(workspaceA,ownerA,"telegram","account-A-2");
+    const foreign=await link(workspaceB,ownerB,"instagram","account-B-secret");
+    await activate(foreign.connectionId,workspaceB,ownerB,"instagram","account-B-secret");
+    await registry!.addMember({workspaceId:workspaceA,actor:ownerA,member:adminA,role:"admin"});
+    await registry!.addMember({workspaceId:workspaceA,actor:ownerA,member:agentA,role:"viewer"});
+
+    const first=await registry!.listForAdministrator({
+      workspaceId:workspaceA,actor:ownerA,pageSize:1
+    });
+    expect(first.items).toHaveLength(1);
+    expect(first.nextCursor).toBe(first.items[0]!.connectionId);
+    const nextCursor=first.nextCursor;
+    if(nextCursor===undefined) throw new Error("Missing inventory pagination cursor");
+    const second=await registry!.listForAdministrator({
+      workspaceId:workspaceA,actor:adminA,pageSize:1,after:nextCursor
+    });
+    expect(second.items).toHaveLength(1);
+    expect(second.nextCursor).toBeUndefined();
+    const results=[...first.items,...second.items];
+    expect(new Set(results.map(row=>row.connectionId)))
+      .toEqual(new Set([one.connectionId,two.connectionId]));
+    expect(results.every(row=>row.workspaceId===workspaceA)).toBe(true);
+    expect(results.some(row=>row.accountId==="account-B-secret")).toBe(false);
+    expect(results.some(row=>row.status==="connected")).toBe(true);
+    expect(results.some(row=>row.status==="verifying")).toBe(true);
+    expect(Object.keys(results[0]!)).toEqual([
+      "connectionId","workspaceId","provider","accountId","status","generation"
+    ]);
+    await expect(registry!.listForAdministrator({
+      workspaceId:workspaceA,actor:agentA
+    })).rejects.toThrow(/authorization denied/i);
+    await expect(registry!.listForAdministrator({
+      workspaceId:workspaceA,actor:ownerB
+    })).rejects.toThrow(/authorization denied/i);
+    await expect(registry!.listForAdministrator({
+      workspaceId:workspaceB,actor:ownerA
+    })).rejects.toThrow(/authorization denied/i);
+    await expect(registry!.listForAdministrator({
+      workspaceId:workspaceA,actor:ownerA,pageSize:51
+    })).rejects.toThrow();
+    await expect(registry!.listForAdministrator({
+      workspaceId:workspaceA,actor:ownerA,after:"not-a-uuid"
+    })).rejects.toThrow();
+    await db!.query("UPDATE public.ishikeit_workspace_memberships SET state='revoked' WHERE workspace_id=$1 AND auth_subject=$2",
+      [workspaceA,adminA.subject]);
+    await expect(registry!.listForAdministrator({
+      workspaceId:workspaceA,actor:adminA
+    })).rejects.toThrow(/authorization denied/i);
+    await db!.query("UPDATE public.ishikeit_workspaces SET state='suspended' WHERE workspace_id=$1",
+      [workspaceA]);
+    await expect(registry!.listForAdministrator({
+      workspaceId:workspaceA,actor:ownerA
+    })).rejects.toThrow(/authorization denied/i);
+    expect((await db!.query("SELECT 1 FROM public.ishikeit_account_connections")).rowCount)
+      .toBe(3);
+  });
+
   it("lists only the verified user's ACTIVE workspaces with exact roles and account totals",async()=>{
     const verifyAccessToken=vi.fn((token:string)=>{
       if(token!=="test-signed-session") return Promise.reject(new Error("Invalid login"));

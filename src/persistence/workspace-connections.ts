@@ -73,6 +73,12 @@ export interface WorkspaceConnection {
   status: WorkspaceConnectionStatus;
   generation: number;
 }
+/** Browser-facing account inventory: no token, app secret, credential reference,
+ * provider proof internals or tenant-unrelated rows ever leave the BFF. */
+export interface WorkspaceConnectionPage {
+  items: readonly WorkspaceConnection[];
+  nextCursor?: string;
+}
 interface ConnectionRow extends pg.QueryResultRow {
   connection_id: string;
   workspace_id: string;
@@ -349,6 +355,41 @@ export class PostgresWorkspaceConnectionRegistry {
       [provider,providerAccountId]
     );
     return found.rows[0] === undefined ? undefined : present(found.rows[0]);
+  }
+
+  /** Read-only Channels inventory for an authenticated workspace owner/admin.
+   * Revalidates the ACTIVE membership and workspace in the SAME transaction
+   * as its bounded tenant-scoped query. No trust in a caller-supplied role.
+   * This is an inventory only, never a proof of account/grant rights or
+   * authorization to dispatch a message.
+   */
+  async listForAdministrator(input: {
+    workspaceId: string;
+    actor: WorkspacePrincipal;
+    after?: string;
+    pageSize?: number;
+  }): Promise<WorkspaceConnectionPage> {
+    const p = z.object({
+      workspaceId: uuid, actor: principalSchema,
+      after: uuid.optional(),
+      pageSize: z.number().int().min(1).max(50).default(20)
+    }).strict().parse(input);
+    return this.db.transaction(async (tx) => {
+      await authorize(tx, { workspaceId: p.workspaceId, ...p.actor }, "admin");
+      const result = await tx.query<ConnectionRow>(
+        `SELECT connection_id,workspace_id,provider,provider_account_id,status,generation
+           FROM public.ishikeit_account_connections
+          WHERE workspace_id=$1
+            AND ($2::uuid IS NULL OR connection_id > $2::uuid)
+          ORDER BY connection_id ASC
+          LIMIT $3`,
+        [p.workspaceId, p.after ?? null, p.pageSize + 1]
+      );
+      const items = result.rows.slice(0, p.pageSize).map(present);
+      return result.rows.length > p.pageSize
+        ? { items, nextCursor: items[items.length - 1]!.connectionId }
+        : { items };
+    });
   }
 
   async readForMember(input: z.infer<typeof idAction>): Promise<WorkspaceConnection | undefined> {

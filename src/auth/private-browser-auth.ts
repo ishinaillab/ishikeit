@@ -10,6 +10,7 @@ import type { PostgresDatabase, SqlExecutor } from "../persistence/postgres.js";
 import type { PostgresWorkspaceInvitations, InviteSummary } from "./workspace-member-invitations.js";
 import type { PostgresWorkspaceConnectionRegistry, WorkspaceConnectionPage } from "../persistence/workspace-connections.js";
 import type { WorkspaceInstagramConnectionCoordinator } from "./workspace-instagram-connect.js";
+import type { WorkspaceMessengerPageConnections } from "./workspace-messenger-connect.js";
 import type { WorkspaceTelegramOIDCConnections } from "./workspace-telegram-oidc.js";
 
 const bearer = z.string().min(20).max(4096).regex(/^[A-Za-z0-9_-]+$/u);
@@ -163,6 +164,7 @@ export class PrivateBrowserAuthService {
     memberInvites?:Pick<PostgresWorkspaceInvitations,"invite">;
     connections?:Pick<PostgresWorkspaceConnectionRegistry,"listForAdministrator">;
     instagramConnections?:Pick<WorkspaceInstagramConnectionCoordinator,"begin"|"complete"|"confirm">;
+    messengerConnections?:Pick<WorkspaceMessengerPageConnections,"begin"|"complete"|"confirm">;
     telegramConnections?:Pick<WorkspaceTelegramOIDCConnections,"begin"|"complete"|"confirm">;
     csrfKeyBase64:string;
     onOtpFailure?: (diagnostic:BrowserOtpFailureDiagnostic)=>void;
@@ -560,6 +562,33 @@ export class PrivateBrowserAuthService {
       throw new Error("Provider onboarding unavailable");
     const verified=await this.#privilegedForProvider(cookie);
     return this.deps.instagramConnections.confirm({
+      workspaceId,connectionId,actor:verified.principal
+    });
+  }
+
+  async beginMessengerConnection(cookie:string,workspaceId:string){
+    if(this.deps.messengerConnections===undefined)
+      throw Error("Messenger provider onboarding unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.messengerConnections.begin(verified.accessToken,workspaceId);
+  }
+  async completeMessengerConnection(cookie:string,input:{
+    workspaceId:string;state:string;browserNonce:string;
+    authorizationCode:string;pageId:string
+  }){
+    if(this.deps.messengerConnections===undefined)
+      throw Error("Messenger provider onboarding unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.messengerConnections.complete({
+      ...input,accessToken:verified.accessToken
+    });
+  }
+  async confirmMessengerConnection(cookie:string,workspaceId:string,
+    connectionId:string){
+    if(this.deps.messengerConnections===undefined)
+      throw Error("Messenger provider onboarding unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.messengerConnections.confirm({
       workspaceId,connectionId,actor:verified.principal
     });
   }

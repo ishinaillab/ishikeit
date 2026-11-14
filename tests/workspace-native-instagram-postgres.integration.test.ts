@@ -184,6 +184,61 @@ describe.skipIf(db===undefined)("native Instagram grant custody under disposable
       .toMatchObject({accountId:linked.connectionId});
   });
 
+  it("keeps Messenger Page grant encrypted and unique across foreign workspaces",async()=>{
+    const accountId="987654321098765",applicationKey="meta-messenger-1042452472116584";
+    const redirectUri="https://apps.ishinaillab.com/app/auth/connect/messenger/callback";
+    async function messengerIntent(workspaceId:string,actor:WorkspacePrincipal){
+      const sessionId=randomUUID();
+      const request={workspaceId,actor,sessionId,provider:"messenger",
+        providerApplicationKey:applicationKey,redirectUri};
+      const started=await intents!.begin(request);
+      const consumed=await intents!.consume({...request,
+        state:started.state,browserNonce:started.browserNonce});
+      if(!consumed)throw Error("Expected owner Page claim intent");
+      return {intentId:consumed.intentId,sessionId};
+    }
+    const sessionA=await messengerIntent(workspaceA,ownerA);
+    const connectionA=randomUUID();
+    const metaCredential={provider:"workspace-messenger",accountId:connectionA,
+      accessToken:"confidential-messenger-page-"+connectionA,
+      scopes:["pages_show_list","pages_manage_metadata","pages_messaging",
+        "pages_read_engagement","business_management"],accessExpiresAt:expiry()};
+    const claim={
+      ...sessionA,connectionId:connectionA,workspaceId:workspaceA,actor:ownerA,
+      credentialAccountId:connectionA,providerApplicationKey:applicationKey,
+      proof:{provider:"messenger",accountId,source:"oauth_grant" as const,
+        sourceReference:applicationKey,verifiedAt:new Date().toISOString()}
+    };
+    const linked=await registry!.linkVerified(claim,tx=>
+      vault!.putInTransaction(tx,metaCredential));
+    expect(linked.status).toBe("verifying");
+    const rows=await db!.query<{provider:string;encoded:string}>(
+      "SELECT provider,encode(access_token_ciphertext,'hex') AS encoded FROM public.oauth_credentials");
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0]?.provider).toBe("workspace-messenger");
+    expect(rows.rows[0]?.encoded).not.toContain("confidential-messenger-page");
+    expect((await vault!.get("workspace-messenger",connectionA))?.accessToken)
+      .toBe(metaCredential.accessToken);
+    await expect(vault!.list("workspace-messenger"))
+      .rejects.toThrow(/exact authorized connection scope/);
+    await expect(vault!.put(metaCredential))
+      .rejects.toThrow(/exact authorized connection scope/);
+    expect(await registry!.findForAdministrator({
+      workspaceId:workspaceB,connectionId:connectionA,actor:ownerB
+    })).toBeUndefined();
+    const sessionB=await messengerIntent(workspaceB,ownerB);
+    const otherId=randomUUID();
+    await expect(registry!.linkVerified({
+      ...sessionB,connectionId:otherId,workspaceId:workspaceB,actor:ownerB,
+      credentialAccountId:otherId,providerApplicationKey:applicationKey,
+      proof:{...claim.proof,verifiedAt:new Date().toISOString()}
+    },tx=>vault!.putInTransaction(tx,{
+      ...metaCredential,accountId:otherId
+    }))).rejects.toThrow();
+    expect(await vault!.get("workspace-messenger",otherId)).toBeUndefined();
+    expect((await db!.query("SELECT 1 FROM public.ishikeit_account_connections")).rowCount).toBe(1);
+  });
+
   it("rejects any writer attempt to store credentials in existing legacy provider namespace",async()=>{
     await expect(db!.transaction(tx=>vault!.putInTransaction(tx,{
       ...credential(randomUUID()),provider:"instagram"

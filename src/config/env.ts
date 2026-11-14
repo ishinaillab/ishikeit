@@ -23,6 +23,9 @@ const schema = z.object({
   // Explicit owner opt-in after registering the new, exact Meta callback.
   // Never silently reuse the existing legacy Instagram OAuth redirect.
   BROWSER_INSTAGRAM_CONNECT_ENABLED: booleanFromEnv.default(false),
+  // Messenger Page ownership via private Facebook Login for Business only.
+  BROWSER_MESSENGER_CONNECT_ENABLED: booleanFromEnv.default(false),
+  META_FACEBOOK_LOGIN_CONFIG_ID: z.string().regex(/^[1-9][0-9]{4,31}$/u).optional(),
   BROWSER_TELEGRAM_OIDC_ENABLED: booleanFromEnv.default(false),
   TELEGRAM_OIDC_CLIENT_ID: z.string().regex(/^[1-9][0-9]{4,15}$/u).optional(),
   TELEGRAM_OIDC_CLIENT_SECRET: z.string().min(16).max(1024).optional(),
@@ -101,6 +104,22 @@ const schema = z.object({
   TIKTOK_MARKETING_OAUTH_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
 }).superRefine((value, ctx) => {
+  if(value.BROWSER_MESSENGER_CONNECT_ENABLED){
+    if(!value.BROWSER_AUTH_ENABLED)ctx.addIssue({
+      code:"custom",path:["BROWSER_AUTH_ENABLED"],
+      message:"Private Messenger Page linking requires AAL2 browser auth"
+    });
+    for(const key of [
+      "BROWSER_AUTH_ORIGIN","META_APP_SECRET",
+      "META_FACEBOOK_LOGIN_CONFIG_ID","OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64"
+    ] as const)if(value[key]===undefined)ctx.addIssue({
+      code:"custom",path:[key],
+      message:"Messenger Page linking requires owner-approved Meta configuration"
+    });
+    if(value.META_APP_SECRET!==undefined&&value.META_APP_SECRET.length<16)
+      ctx.addIssue({code:"custom",path:["META_APP_SECRET"],
+        message:"Meta app secret must be a confidential server-side credential"});
+  }
   if(value.BROWSER_TELEGRAM_OIDC_ENABLED){
     if(!value.BROWSER_AUTH_ENABLED)ctx.addIssue({
       code:"custom",path:["BROWSER_AUTH_ENABLED"],

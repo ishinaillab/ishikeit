@@ -136,6 +136,7 @@ export const privateLoginHtml = `<!doctype html>
         <div class="channels-toolbar">
           <p id="channels-context" class="muted">Current workspace</p>
           <button type="button" id="channels-connect-instagram" class="secondary" hidden>Connect Instagram</button>
+          <button type="button" id="channels-connect-messenger" class="secondary" hidden>Connect Messenger</button>
           <button type="button" id="channels-connect-telegram" class="secondary" hidden>Connect Telegram</button>
           <button type="button" id="channels-refresh" class="secondary">Refresh status</button>
         </div>
@@ -494,6 +495,7 @@ const channelsStatus=get("channels-status");
 const channelsMore=get("channels-more");
 const channelsRefresh=get("channels-refresh");
 const channelsConnectInstagram=get("channels-connect-instagram");
+const channelsConnectMessenger=get("channels-connect-messenger");
 const channelsConnectTelegram=get("channels-connect-telegram");
 const channelsNote=get("channels-note");
 const status=get("status");
@@ -512,6 +514,7 @@ let workspaceRows=[];
 let currentWorkspaceId="";
 let invitingEnabled=false;
 let instagramConnectEnabled=false;
+let messengerConnectEnabled=false;
 let telegramConnectEnabled=false;
 let connectionsEpoch=0;
 let connectionsLoading=false;
@@ -685,6 +688,33 @@ async function loadConnections(more){
           }catch{
             activate.disabled=false;
             channelsStatus.textContent="Activation could not be verified. Try again after checking your account permission.";
+          }
+        });
+        card.append(activate);
+      }
+      if(messengerConnectEnabled && record.provider==="messenger" &&
+         record.status==="verifying"){
+        const activate=document.createElement("button");
+        activate.type="button";activate.className="secondary";
+        activate.textContent="Confirm Messenger Page";
+        activate.setAttribute("aria-label","Confirm Messenger Page "+record.accountId);
+        activate.addEventListener("click",async()=>{
+          if(!messengerConnectEnabled||!channelsAllowed()||
+            record.workspaceId!==currentWorkspaceId||
+            mode!=="dashboard"||!csrfToken)return;
+          activate.disabled=true;
+          channelsStatus.textContent="Verifying your Page with Meta…";
+          try{
+            const response=await request(
+              "/app/auth/workspaces/"+encodeURIComponent(record.workspaceId)+
+              "/connections/"+encodeURIComponent(record.connectionId)+
+              "/messenger-activate",{},csrfToken);
+            if(!response.ok)throw Error("Page activation denied");
+            channelsStatus.textContent="Page verified. Automation remains disabled until tenant routing is approved.";
+            void loadConnections(false);
+          }catch{
+            activate.disabled=false;
+            channelsStatus.textContent="Messenger Page verification unavailable. Check current Page permissions and try again.";
           }
         });
         card.append(activate);
@@ -890,8 +920,10 @@ function renderWorkspace(){
   get("nav-channels").hidden=!channelsAllowed();
   get("channels-context").textContent="Workspace: "+name;
   channelsConnectInstagram.hidden=!(instagramConnectEnabled && channelsAllowed());
+  channelsConnectMessenger.hidden=!(messengerConnectEnabled && channelsAllowed());
   channelsConnectTelegram.hidden=!(telegramConnectEnabled && channelsAllowed());
-  channelsNote.textContent=(instagramConnectEnabled||telegramConnectEnabled)
+  channelsNote.textContent=(instagramConnectEnabled||messengerConnectEnabled||
+    telegramConnectEnabled)
     ?"Provider account authentication is separate from messaging permission. Confirm any provider Business connection separately. The registry does not activate messaging or automation."
     :"This is a private registry inventory, not a live provider permission check. Account onboarding and sending are currently unavailable.";
 }
@@ -929,6 +961,7 @@ function showDashboard(data,preserve){
   workspaceRows=data.workspaces.items;
   invitingEnabled=data.memberInvitationsEnabled===true;
   instagramConnectEnabled=data.instagramConnectEnabled===true;
+  messengerConnectEnabled=data.messengerConnectEnabled===true;
   telegramConnectEnabled=data.telegramConnectEnabled===true;
   if(!workspaceRows.some(item=>item.workspaceId===currentWorkspaceId))
     currentWorkspaceId=workspaceRows[0].workspaceId;
@@ -1275,6 +1308,30 @@ channelsConnectInstagram.addEventListener("click",async()=>{
     if(workspaceId===currentWorkspaceId && mode==="dashboard"){
       channelsConnectInstagram.disabled=false;
       channelsStatus.textContent="Instagram authorization could not be started. Check your permissions and try again.";
+    }
+  }
+});
+channelsConnectMessenger.addEventListener("click",async()=>{
+  if(!messengerConnectEnabled||!channelsAllowed()||mode!=="dashboard"||
+    !csrfToken||!currentWorkspaceId)return;
+  const workspaceId=currentWorkspaceId;
+  channelsConnectMessenger.disabled=true;
+  channelsStatus.textContent="Opening authorized Facebook Page login…";
+  try{
+    const response=await request("/app/auth/workspaces/"+
+      encodeURIComponent(workspaceId)+"/connections/messenger/start",{},csrfToken);
+    if(workspaceId!==currentWorkspaceId||mode!=="dashboard")return;
+    if(!response.ok)throw Error("Messenger Page authorization unavailable");
+    const data=await response.json();
+    const url=new URL(data.authorizationUrl);
+    if(url.origin!=="https://www.facebook.com"||
+      !new RegExp("^/v[0-9]{1,2}[.][0-9]{1,2}/dialog/oauth$","u").test(url.pathname))
+      throw Error("Unrecognized Meta login host");
+    window.location.assign(url.toString());
+  }catch{
+    if(workspaceId===currentWorkspaceId&&mode==="dashboard"){
+      channelsConnectMessenger.disabled=false;
+      channelsStatus.textContent="Messenger authorization could not start. Verify workspace access and Meta setup.";
     }
   }
 });

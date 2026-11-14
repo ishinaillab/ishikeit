@@ -60,6 +60,9 @@ import { AuthenticatedWorkspaceConnectionIntents } from "../auth/authenticated-w
 import { ProviderNativeInstagramConsent } from "../auth/workspace-provider-consent.js";
 import { WorkspaceInstagramConnectionCoordinator } from "../auth/workspace-instagram-connect.js";
 import {
+  WorkspaceMessengerPageConnections, MetaMessengerPageClient
+} from "../auth/workspace-messenger-connect.js";
+import {
   WorkspaceTelegramOIDCConnections,TelegramOIDCClient,TelegramNativeBusinessReader
 } from "../auth/workspace-telegram-oidc.js";
 import { SupabaseEmailOtpClient } from "../auth/supabase-email-otp.js";
@@ -216,11 +219,13 @@ const instagramOAuthConfigured = (
   && env.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined
 );
 const instagramNativeConfigured=env.BROWSER_INSTAGRAM_CONNECT_ENABLED;
+const messengerNativeConfigured=env.BROWSER_MESSENGER_CONNECT_ENABLED;
 const oauthStore = !(
   tiktokOAuthConfigured
   || tiktokMarketingOAuthConfigured
   || instagramOAuthConfigured
   || instagramNativeConfigured
+  || messengerNativeConfigured
 )
   ? undefined
   : new PostgresOAuthCredentialStore(
@@ -629,6 +634,25 @@ const instagramNativeConnector=(!instagramNativeConfigured ||
       client:instagramOAuthClient
     })
   });
+const messengerNativeConnector=(!messengerNativeConfigured||oauthStore===undefined)
+  ?undefined
+  :new WorkspaceMessengerPageConnections({
+    appId:env.META_APP_ID,
+    redirectUri:new URL("/app/auth/connect/messenger/callback",
+      env.BROWSER_AUTH_ORIGIN).toString(),
+    intents:new AuthenticatedWorkspaceConnectionIntents(
+      new SupabaseAuthPrincipalVerifier({
+        projectUrl:env.SUPABASE_AUTH_PROJECT_URL!,
+        publishableKey:env.SUPABASE_AUTH_PUBLISHABLE_KEY!,db
+      }),new PostgresWorkspaceConnectionIntents(db)
+    ),
+    client:new MetaMessengerPageClient({
+      appId:env.META_APP_ID,appSecret:env.META_APP_SECRET,
+      configId:env.META_FACEBOOK_LOGIN_CONFIG_ID!,
+      graphVersion:env.META_GRAPH_API_VERSION
+    }),
+    registry:privateWorkspaceRegistry,vault:oauthStore
+  });
 // The modern Telegram OIDC client ID and secret are independent of the Bot
 // API token. Start only with explicit owner opt-in and BotFather URL allowlist.
 const telegramNativeConnector=!env.BROWSER_TELEGRAM_OIDC_ENABLED?undefined
@@ -675,6 +699,7 @@ const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
   // Private read-only inventory; no provider connections can be created here.
   connections:privateWorkspaceRegistry,
   ...(instagramNativeConnector===undefined?{}:{instagramConnections:instagramNativeConnector}),
+  ...(messengerNativeConnector===undefined?{}:{messengerConnections:messengerNativeConnector}),
   ...(telegramNativeConnector===undefined?{}:{telegramConnections:telegramNativeConnector}),
   auth: new SupabaseAuthPrincipalVerifier({
     projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
@@ -705,6 +730,7 @@ const server = buildServer({
       allowWorkspaceInvitations:workspaceInvites!==undefined,
       allowWorkspaceConnections:true,
       allowInstagramConnect:instagramNativeConnector!==undefined,
+      allowMessengerConnect:messengerNativeConnector!==undefined,
       allowTelegramOIDC:telegramNativeConnector!==undefined}
   }),
   buildIdentity: runtimeBuildIdentity(),

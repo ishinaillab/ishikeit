@@ -11,6 +11,7 @@ import type { PostgresWorkspaceInvitations, InviteSummary } from "./workspace-me
 import type { PostgresWorkspaceConnectionRegistry, WorkspaceConnectionPage } from "../persistence/workspace-connections.js";
 import type { WorkspaceInstagramConnectionCoordinator } from "./workspace-instagram-connect.js";
 import type { WorkspaceTelegramOIDCConnections } from "./workspace-telegram-oidc.js";
+import type { WorkspaceTikTokOwnerConnections } from "./workspace-tiktok-connect.js";
 
 const bearer = z.string().min(20).max(4096).regex(/^[A-Za-z0-9_-]+$/u);
 const normalizedEmail = z.email().min(3).max(320).transform(x=>x.trim().toLowerCase());
@@ -164,6 +165,7 @@ export class PrivateBrowserAuthService {
     connections?:Pick<PostgresWorkspaceConnectionRegistry,"listForAdministrator">;
     instagramConnections?:Pick<WorkspaceInstagramConnectionCoordinator,"begin"|"complete"|"confirm">;
     telegramConnections?:Pick<WorkspaceTelegramOIDCConnections,"begin"|"complete"|"confirm">;
+    tiktokConnections?:Pick<WorkspaceTikTokOwnerConnections,"begin"|"complete"|"confirm">;
     csrfKeyBase64:string;
     onOtpFailure?: (diagnostic:BrowserOtpFailureDiagnostic)=>void;
     /** Fixed enums only. Never log raw provider errors or any TOTP secret. */
@@ -590,6 +592,33 @@ export class PrivateBrowserAuthService {
     const verified=await this.#privilegedForProvider(cookie);
     return this.deps.telegramConnections.confirm({
       ...input,actor:verified.principal
+    });
+  }
+
+  async beginTikTokConnection(cookie:string,workspaceId:string){
+    if(this.deps.tiktokConnections===undefined)
+      throw Error("TikTok account holder connection unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.tiktokConnections.begin(verified.accessToken,workspaceId);
+  }
+
+  async completeTikTokConnection(cookie:string,input:{
+    workspaceId:string;state:string;browserNonce:string;authorizationCode:string
+  }){
+    if(this.deps.tiktokConnections===undefined)
+      throw Error("TikTok account holder connection unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.tiktokConnections.complete({
+      ...input,accessToken:verified.accessToken
+    });
+  }
+
+  async confirmTikTokConnection(cookie:string,workspaceId:string,connectionId:string){
+    if(this.deps.tiktokConnections===undefined)
+      throw Error("TikTok account holder connection unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.tiktokConnections.confirm({
+      workspaceId,connectionId,actor:verified.principal
     });
   }
 

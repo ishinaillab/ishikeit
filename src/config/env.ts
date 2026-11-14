@@ -24,6 +24,8 @@ const schema = z.object({
   // Never silently reuse the existing legacy Instagram OAuth redirect.
   BROWSER_INSTAGRAM_CONNECT_ENABLED: booleanFromEnv.default(false),
   BROWSER_TELEGRAM_OIDC_ENABLED: booleanFromEnv.default(false),
+  BROWSER_TIKTOK_ACCOUNT_CONNECT_ENABLED: booleanFromEnv.default(false),
+  TIKTOK_ACCOUNT_HOLDER_AUTHORIZATION_URL: z.url().optional(),
   TELEGRAM_OIDC_CLIENT_ID: z.string().regex(/^[1-9][0-9]{4,15}$/u).optional(),
   TELEGRAM_OIDC_CLIENT_SECRET: z.string().min(16).max(1024).optional(),
   // Observation-only. Never enables tenant routing, ownership claims or sends.
@@ -101,6 +103,20 @@ const schema = z.object({
   TIKTOK_MARKETING_OAUTH_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
 }).superRefine((value, ctx) => {
+  if(value.BROWSER_TIKTOK_ACCOUNT_CONNECT_ENABLED){
+    if(!value.BROWSER_AUTH_ENABLED)ctx.addIssue({
+      code:"custom",path:["BROWSER_AUTH_ENABLED"],
+      message:"TikTok owner linking requires AAL2 browser authentication"
+    });
+    for(const key of ["BROWSER_AUTH_ORIGIN","TIKTOK_BUSINESS_APP_ID",
+      "TIKTOK_BUSINESS_APP_SECRET","OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64",
+      "TIKTOK_ACCOUNT_HOLDER_AUTHORIZATION_URL"] as const){
+      if(value[key]===undefined)ctx.addIssue({
+        code:"custom",path:[key],
+        message:"TikTok account holder connection requires registered developer configuration"
+      });
+    }
+  }
   if(value.BROWSER_TELEGRAM_OIDC_ENABLED){
     if(!value.BROWSER_AUTH_ENABLED)ctx.addIssue({
       code:"custom",path:["BROWSER_AUTH_ENABLED"],

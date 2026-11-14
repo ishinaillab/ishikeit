@@ -3,6 +3,7 @@ import { z } from "zod";
 import {privateLoginHtml,privateLoginCss,privateLoginJs} from "./private-browser-ui.js";
 import {instagramConnectionReturnHtml,instagramConnectionReturnJs} from "./private-workspace-connect.js";
 import {telegramOIDCReturnHtml,telegramOIDCReturnJs} from "./private-telegram-connect.js";
+import {tiktokAccountReturnHtml,tiktokAccountReturnJs} from "./private-tiktok-connect.js";
 import {
   BrowserLoginSessionSetupError, BrowserMfaEnrollmentRateLimited,
   BrowserMfaPendingEnrollment, BrowserMfaLastAuthenticatorError,
@@ -30,6 +31,9 @@ export interface BrowserAuthController {
   beginTelegramConnection?:PrivateBrowserAuthService["beginTelegramConnection"];
   completeTelegramConnection?:PrivateBrowserAuthService["completeTelegramConnection"];
   confirmTelegramBusiness?:PrivateBrowserAuthService["confirmTelegramBusiness"];
+  beginTikTokConnection?:PrivateBrowserAuthService["beginTikTokConnection"];
+  completeTikTokConnection?:PrivateBrowserAuthService["completeTikTokConnection"];
+  confirmTikTokConnection?:PrivateBrowserAuthService["confirmTikTokConnection"];
   refresh(cookie:string):ReturnType<PrivateBrowserAuthService["refresh"]>;
   csrf(cookie:string):Promise<string>;
   listTotpFactors(cookie:string):ReturnType<PrivateBrowserAuthService["listTotpFactors"]>;
@@ -91,6 +95,7 @@ const connectCookieSchema=z.string().regex(
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{43}$/iu
 );
 const telegramConnectCookieName="__Host-ishikeit-tg-connect";
+const tiktokConnectCookieName="__Host-ishikeit-tiktok-connect";
 function readConnectCookie(req:FastifyRequest,name:string=connectCookieName):{
   workspaceId:string;browserNonce:string
 }|undefined {
@@ -120,7 +125,7 @@ export function registerPrivateBrowserAuthRoutes(
   server:FastifyInstance,
   deps:{origin:string;controller:BrowserAuthController;allowWorkspaceInvitations?:boolean;
     allowWorkspaceConnections?:boolean;allowInstagramConnect?:boolean;
-    allowTelegramOIDC?:boolean}
+    allowTelegramOIDC?:boolean;allowTikTokHolder?:boolean}
 ):void {
   const url=new URL(deps.origin);
   if(url.protocol!=="https:" || url.pathname!=="/" || url.search || url.hash
@@ -174,6 +179,9 @@ export function registerPrivateBrowserAuthRoutes(
   }
   function telegramConnectCapability():boolean {
     return deps.allowTelegramOIDC===true;
+  }
+  function tiktokConnectCapability():boolean {
+    return deps.allowTikTokHolder===true;
   }
 
   function privateUi(req:FastifyRequest,reply:FastifyReply,
@@ -294,7 +302,8 @@ export function registerPrivateBrowserAuthRoutes(
         csrfToken:data.csrfToken,workspaces:data.workspaces,
         memberInvitationsEnabled:invitationCapability(data),
         instagramConnectEnabled:instagramConnectCapability(),
-        telegramConnectEnabled:telegramConnectCapability()
+        telegramConnectEnabled:telegramConnectCapability(),
+        tiktokConnectEnabled:tiktokConnectCapability()
       });
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
@@ -577,6 +586,120 @@ export function registerPrivateBrowserAuthRoutes(
     );
   }
 
+  if(deps.allowTikTokHolder===true &&
+    deps.controller.beginTikTokConnection!==undefined &&
+    deps.controller.completeTikTokConnection!==undefined &&
+    deps.controller.confirmTikTokConnection!==undefined){
+    const uuidSchema=z.string().uuid();
+    const callback=z.object({
+      state:z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+      auth_code:z.string().min(8).max(4096).regex(/^[A-Za-z0-9._~%-]+$/u)
+    }).strict();
+    const finish=z.object({
+      state:z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+      authorizationCode:z.string().min(8).max(4096)
+        .regex(/^[A-Za-z0-9._~%-]+$/u)
+    }).strict();
+    server.post<{Params:{workspaceId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/tiktok/start",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const path=z.object({workspaceId:uuidSchema}).strict().safeParse(req.params);
+        if(!path.success||!z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const started=await deps.controller.beginTikTokConnection!(
+            value,path.data.workspaceId
+          );
+          const target=new URL(started.authorizationUrl);
+          if(target.protocol!=="https:"||
+            !["ads.tiktok.com","business-api.tiktok.com","www.tiktok.com"]
+              .includes(target.hostname)||
+            Boolean(target.username)||Boolean(target.password))throw Error("Unrecognized TikTok account-holder host");
+          return reply.header("set-cookie",connectCookie(
+            path.data.workspaceId+"."+started.browserNonce,600,
+            tiktokConnectCookieName
+          )).code(200).send({
+            status:"provider_authorization_required",
+            authorizationUrl:started.authorizationUrl,expiresAt:started.expiresAt
+          });
+        }catch{return deny(reply,403).send({status:"connection_unavailable"});}
+      }
+    );
+    server.get("/app/auth/connect/tiktok/callback/",async(req,reply)=>{
+      privateResponse(reply);
+      if(req.headers.host!==host)
+        return deny(reply,403).send("Authorization unavailable");
+      const parsed=callback.safeParse(req.query);
+      if(!parsed.success)
+        return deny(reply,400).send("Authorization unavailable");
+      return reply.header("content-security-policy",
+        "default-src 'none'; script-src 'self'; style-src 'self'; "+
+        "img-src 'self'; connect-src 'self'; frame-ancestors 'none'; "+
+        "base-uri 'none'; form-action 'none'")
+        .type("text/html; charset=utf-8")
+        .send(tiktokAccountReturnHtml(parsed.data.state,parsed.data.auth_code));
+    });
+    server.get("/app/auth/tiktok-return.js",(req,reply)=>{
+      privateResponse(reply);
+      if(req.headers.host!==host)
+        return deny(reply,403).send("Authorization unavailable");
+      return reply.type("text/javascript; charset=utf-8")
+        .send(tiktokAccountReturnJs);
+    });
+    server.post("/app/auth/connect/tiktok/complete",
+      {bodyLimit:8192},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const binding=readConnectCookie(req,tiktokConnectCookieName);
+        const parsed=finish.safeParse(req.body);
+        if(binding===undefined||!parsed.success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const result=await deps.controller.completeTikTokConnection!(value,{
+            workspaceId:binding.workspaceId,browserNonce:binding.browserNonce,
+            state:parsed.data.state,authorizationCode:parsed.data.authorizationCode
+          });
+          return reply.header("set-cookie",
+            connectCookie("",0,tiktokConnectCookieName))
+            .code(200).send(result);
+        }catch{
+          return deny(reply,403).header("set-cookie",
+            connectCookie("",0,tiktokConnectCookieName))
+            .send({status:"connection_rejected"});
+        }
+      }
+    );
+    server.post<{Params:{workspaceId:string;connectionId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/:connectionId/tiktok-activate",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const path=z.object({
+          workspaceId:uuidSchema,connectionId:uuidSchema
+        }).strict().safeParse(req.params);
+        if(!path.success||!z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const result=await deps.controller.confirmTikTokConnection!(
+            value,path.data.workspaceId,path.data.connectionId
+          );
+          return reply.code(200).send(result);
+        }catch{return deny(reply,403).send({status:"activation_unavailable"});}
+      }
+    );
+  }
+
   server.post("/app/auth/refresh",{bodyLimit:256},async(req,reply)=>{
     privateResponse(reply);
     if(!mutation(req,reply))return reply;
@@ -592,7 +715,8 @@ export function registerPrivateBrowserAuthRoutes(
         csrfToken:data.csrfToken,workspaces:data.workspaces,
         memberInvitationsEnabled:invitationCapability(data),
         instagramConnectEnabled:instagramConnectCapability(),
-        telegramConnectEnabled:telegramConnectCapability()});
+        telegramConnectEnabled:telegramConnectCapability(),
+        tiktokConnectEnabled:tiktokConnectCapability()});
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
   server.get("/app/auth/mfa/factors",async(req,reply)=>{
@@ -701,7 +825,8 @@ export function registerPrivateBrowserAuthRoutes(
           workspaces:data.workspaces,
           memberInvitationsEnabled:invitationCapability(data),
         instagramConnectEnabled:instagramConnectCapability(),
-        telegramConnectEnabled:telegramConnectCapability()
+        telegramConnectEnabled:telegramConnectCapability(),
+        tiktokConnectEnabled:tiktokConnectCapability()
         });
     }catch{return deny(reply,403).send({status:"mfa_verification_failed"});}
   });

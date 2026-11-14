@@ -3,6 +3,7 @@ import { z } from "zod";
 import {privateLoginHtml,privateLoginCss,privateLoginJs} from "./private-browser-ui.js";
 import {instagramConnectionReturnHtml,instagramConnectionReturnJs} from "./private-workspace-connect.js";
 import {telegramOIDCReturnHtml,telegramOIDCReturnJs} from "./private-telegram-connect.js";
+import {whatsappEmbeddedV4Html,whatsappEmbeddedV4Js} from "./private-whatsapp-embedded-v4.js";
 import {
   BrowserLoginSessionSetupError, BrowserMfaEnrollmentRateLimited,
   BrowserMfaPendingEnrollment, BrowserMfaLastAuthenticatorError,
@@ -25,6 +26,9 @@ export interface BrowserAuthController {
     cookie:string,workspaceId:string,after?:string
   )=>ReturnType<PrivateBrowserAuthService["listWorkspaceConnections"]>;
   beginInstagramConnection?:PrivateBrowserAuthService["beginInstagramConnection"];
+  beginWhatsAppEmbeddedV4?:PrivateBrowserAuthService["beginWhatsAppEmbeddedV4"];
+  completeWhatsAppEmbeddedV4?:PrivateBrowserAuthService["completeWhatsAppEmbeddedV4"];
+  confirmWhatsAppEmbeddedV4?:PrivateBrowserAuthService["confirmWhatsAppEmbeddedV4"];
   completeInstagramConnection?:PrivateBrowserAuthService["completeInstagramConnection"];
   confirmInstagramConnection?:PrivateBrowserAuthService["confirmInstagramConnection"];
   beginTelegramConnection?:PrivateBrowserAuthService["beginTelegramConnection"];
@@ -91,6 +95,7 @@ const connectCookieSchema=z.string().regex(
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{43}$/iu
 );
 const telegramConnectCookieName="__Host-ishikeit-tg-connect";
+const whatsappV4CookieName="__Host-ishikeit-wa-v4-connect";
 function readConnectCookie(req:FastifyRequest,name:string=connectCookieName):{
   workspaceId:string;browserNonce:string
 }|undefined {
@@ -120,7 +125,7 @@ export function registerPrivateBrowserAuthRoutes(
   server:FastifyInstance,
   deps:{origin:string;controller:BrowserAuthController;allowWorkspaceInvitations?:boolean;
     allowWorkspaceConnections?:boolean;allowInstagramConnect?:boolean;
-    allowTelegramOIDC?:boolean}
+    allowWhatsAppEmbeddedV4?:boolean;allowTelegramOIDC?:boolean}
 ):void {
   const url=new URL(deps.origin);
   if(url.protocol!=="https:" || url.pathname!=="/" || url.search || url.hash
@@ -174,6 +179,9 @@ export function registerPrivateBrowserAuthRoutes(
   }
   function telegramConnectCapability():boolean {
     return deps.allowTelegramOIDC===true;
+  }
+  function whatsappV4Capability():boolean {
+    return deps.allowWhatsAppEmbeddedV4===true;
   }
 
   function privateUi(req:FastifyRequest,reply:FastifyReply,
@@ -294,7 +302,8 @@ export function registerPrivateBrowserAuthRoutes(
         csrfToken:data.csrfToken,workspaces:data.workspaces,
         memberInvitationsEnabled:invitationCapability(data),
         instagramConnectEnabled:instagramConnectCapability(),
-        telegramConnectEnabled:telegramConnectCapability()
+        telegramConnectEnabled:telegramConnectCapability(),
+        whatsappEmbeddedV4Enabled:whatsappV4Capability()
       });
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
@@ -457,6 +466,137 @@ export function registerPrivateBrowserAuthRoutes(
     );
   }
 
+  // WhatsApp Embedded Signup v4 is an owner-only JS SDK flow, NOT a
+  // redirect-based OAuth callback. Every browser asset ID is an untrusted
+  // candidate until server token inspection and Graph asset readback.
+  if(deps.allowWhatsAppEmbeddedV4===true &&
+    deps.controller.beginWhatsAppEmbeddedV4!==undefined &&
+    deps.controller.completeWhatsAppEmbeddedV4!==undefined &&
+    deps.controller.confirmWhatsAppEmbeddedV4!==undefined){
+    const uuidSchema=z.string().uuid();
+    const numeric=z.string().regex(/^[1-9][0-9]{4,31}$/u);
+    const finish=z.object({
+      state:z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+      authorizationCode:z.string().min(8).max(4096)
+        .regex(/^[A-Za-z0-9._~%-]+$/u),
+      messagingAccountId:numeric,phoneNumberId:numeric
+    }).strict();
+    server.get<{Params:{workspaceId:string}}>(
+      "/app/auth/workspaces/:workspaceId/whatsapp/signup",
+      async(req,reply)=>{
+        privateResponse(reply);
+        if(!sameOrigin(req,false))return deny(reply,403).send("Forbidden");
+        const parsed=z.object({workspaceId:uuidSchema}).strict().safeParse(req.params);
+        if(!parsed.success)return deny(reply,400).send("Invalid workspace");
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send("Unauthenticated");
+        if(deps.controller.listWorkspaceConnections===undefined)
+          return deny(reply,403).send("Workspace authorization unavailable");
+        try{
+          await deps.controller.get(value);
+          await deps.controller.listWorkspaceConnections(
+            value,parsed.data.workspaceId);
+        }catch{return deny(reply,403).send("Workspace authorization unavailable");}
+        return reply.header("content-security-policy",
+          "default-src 'none'; script-src 'self' https://connect.facebook.net; "+
+          "style-src 'self'; img-src 'self' data: https://www.facebook.com; "+
+          "connect-src 'self' https://www.facebook.com https://web.facebook.com "+
+          "https://graph.facebook.com; "+
+          "frame-src https://www.facebook.com https://web.facebook.com; "+
+          "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; "+
+          "form-action 'none'")
+          .type("text/html; charset=utf-8")
+          .send(whatsappEmbeddedV4Html(parsed.data.workspaceId));
+      }
+    );
+    server.get("/app/auth/whatsapp-v4.js",async(req,reply)=>{
+      privateResponse(reply);
+      if(!sameOrigin(req,false))return deny(reply,403).send("Forbidden");
+      const value=session(req,reply);
+      if(value===undefined)return deny(reply).send("Unauthenticated");
+      try{await deps.controller.get(value);}
+      catch{return deny(reply).send("Unauthenticated");}
+      return reply.type("text/javascript; charset=utf-8")
+        .send(whatsappEmbeddedV4Js);
+    });
+    server.post<{Params:{workspaceId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/whatsapp/start",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const parsed=z.object({workspaceId:uuidSchema}).strict().safeParse(req.params);
+        if(!parsed.success||!z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const started=await deps.controller.beginWhatsAppEmbeddedV4!(
+            value,parsed.data.workspaceId);
+          // Nonce always stays in Secure HttpOnly browser cookie; SDK never
+          // sees it. Opaque state goes only to first-party JS ephemeral RAM.
+          return reply.header("set-cookie",connectCookie(
+            parsed.data.workspaceId+"."+started.browserNonce,
+            600,whatsappV4CookieName
+          )).code(200).send({
+            status:"owner_authorization_required",
+            state:started.state,expiresAt:started.expiresAt,
+            appId:started.appId,configId:started.configId,
+            graphVersion:started.graphVersion
+          });
+        }catch{return deny(reply,403).send({status:"connection_unavailable"});}
+      }
+    );
+    server.post<{Params:{workspaceId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/whatsapp/complete",
+      {bodyLimit:8192},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const parsed=finish.safeParse(req.body);
+        const workspace=z.object({workspaceId:uuidSchema}).strict().safeParse(req.params);
+        const binding=readConnectCookie(req,whatsappV4CookieName);
+        if(!parsed.success||!workspace.success||!binding||
+          binding.workspaceId!==workspace.data.workspaceId)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const result=await deps.controller.completeWhatsAppEmbeddedV4!(value,{
+            workspaceId:binding.workspaceId,browserNonce:binding.browserNonce,
+            ...parsed.data
+          });
+          return reply.header("set-cookie",connectCookie("",0,whatsappV4CookieName))
+            .code(200).send(result);
+        }catch{
+          return deny(reply,403)
+            .header("set-cookie",connectCookie("",0,whatsappV4CookieName))
+            .send({status:"connection_rejected"});
+        }
+      }
+    );
+    server.post<{Params:{workspaceId:string;connectionId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/:connectionId/whatsapp-activate",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const parsed=z.object({workspaceId:uuidSchema,connectionId:uuidSchema})
+          .strict().safeParse(req.params);
+        if(!parsed.success||!z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          return reply.code(200).send(
+            await deps.controller.confirmWhatsAppEmbeddedV4!(
+              value,parsed.data.workspaceId,parsed.data.connectionId
+            ));
+        }catch{return deny(reply,403).send({status:"activation_unavailable"});}
+      }
+    );
+  }
+
   // Telegram's official OIDC flow is a distinct trust domain from
   // Telegram Bot API Business. Only the signed OIDC subject can become
   // workspace owner proof; a supplied Business connection ID is NOT proof.
@@ -592,7 +732,8 @@ export function registerPrivateBrowserAuthRoutes(
         csrfToken:data.csrfToken,workspaces:data.workspaces,
         memberInvitationsEnabled:invitationCapability(data),
         instagramConnectEnabled:instagramConnectCapability(),
-        telegramConnectEnabled:telegramConnectCapability()});
+        telegramConnectEnabled:telegramConnectCapability(),
+        whatsappEmbeddedV4Enabled:whatsappV4Capability()});
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
   server.get("/app/auth/mfa/factors",async(req,reply)=>{
@@ -701,7 +842,8 @@ export function registerPrivateBrowserAuthRoutes(
           workspaces:data.workspaces,
           memberInvitationsEnabled:invitationCapability(data),
         instagramConnectEnabled:instagramConnectCapability(),
-        telegramConnectEnabled:telegramConnectCapability()
+        telegramConnectEnabled:telegramConnectCapability(),
+        whatsappEmbeddedV4Enabled:whatsappV4Capability()
         });
     }catch{return deny(reply,403).send({status:"mfa_verification_failed"});}
   });

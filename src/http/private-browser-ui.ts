@@ -136,6 +136,7 @@ export const privateLoginHtml = `<!doctype html>
         <div class="channels-toolbar">
           <p id="channels-context" class="muted">Current workspace</p>
           <button type="button" id="channels-connect-instagram" class="secondary" hidden>Connect Instagram</button>
+          <button type="button" id="channels-connect-whatsapp" class="secondary" hidden>Connect WhatsApp</button>
           <button type="button" id="channels-connect-telegram" class="secondary" hidden>Connect Telegram</button>
           <button type="button" id="channels-refresh" class="secondary">Refresh status</button>
         </div>
@@ -494,6 +495,7 @@ const channelsStatus=get("channels-status");
 const channelsMore=get("channels-more");
 const channelsRefresh=get("channels-refresh");
 const channelsConnectInstagram=get("channels-connect-instagram");
+const channelsConnectWhatsApp=get("channels-connect-whatsapp");
 const channelsConnectTelegram=get("channels-connect-telegram");
 const channelsNote=get("channels-note");
 const status=get("status");
@@ -512,6 +514,7 @@ let workspaceRows=[];
 let currentWorkspaceId="";
 let invitingEnabled=false;
 let instagramConnectEnabled=false;
+let whatsappEmbeddedV4Enabled=false;
 let telegramConnectEnabled=false;
 let connectionsEpoch=0;
 let connectionsLoading=false;
@@ -685,6 +688,34 @@ async function loadConnections(more){
           }catch{
             activate.disabled=false;
             channelsStatus.textContent="Activation could not be verified. Try again after checking your account permission.";
+          }
+        });
+        card.append(activate);
+      }
+      if(whatsappEmbeddedV4Enabled && record.provider==="whatsapp" &&
+         record.status==="verifying"){
+        const activate=document.createElement("button");
+        activate.type="button";activate.className="secondary";
+        activate.textContent="Confirm WhatsApp number";
+        activate.setAttribute("aria-label","Confirm WhatsApp number "+record.accountId);
+        activate.addEventListener("click",async()=>{
+          if(!whatsappEmbeddedV4Enabled||!channelsAllowed()||
+            record.workspaceId!==currentWorkspaceId||
+            mode!=="dashboard"||!csrfToken)return;
+          activate.disabled=true;
+          channelsStatus.textContent="Rechecking the WhatsApp number with Meta…";
+          try{
+            const response=await request(
+              "/app/auth/workspaces/"+encodeURIComponent(record.workspaceId)+
+              "/connections/"+encodeURIComponent(record.connectionId)+
+              "/whatsapp-activate",{},csrfToken);
+            if(!response.ok)throw Error("Activation denied");
+            channelsStatus.textContent="WhatsApp number confirmed. Messages, number registration and "+
+              "webhook subscriptions remain disabled until separate provider approval.";
+            void loadConnections(false);
+          }catch{
+            activate.disabled=false;
+            channelsStatus.textContent="WhatsApp number could not be verified. Check your provider rights.";
           }
         });
         card.append(activate);
@@ -890,8 +921,10 @@ function renderWorkspace(){
   get("nav-channels").hidden=!channelsAllowed();
   get("channels-context").textContent="Workspace: "+name;
   channelsConnectInstagram.hidden=!(instagramConnectEnabled && channelsAllowed());
+  channelsConnectWhatsApp.hidden=!(whatsappEmbeddedV4Enabled && channelsAllowed());
   channelsConnectTelegram.hidden=!(telegramConnectEnabled && channelsAllowed());
-  channelsNote.textContent=(instagramConnectEnabled||telegramConnectEnabled)
+  channelsNote.textContent=(instagramConnectEnabled||whatsappEmbeddedV4Enabled||
+    telegramConnectEnabled)
     ?"Provider account authentication is separate from messaging permission. Confirm any provider Business connection separately. The registry does not activate messaging or automation."
     :"This is a private registry inventory, not a live provider permission check. Account onboarding and sending are currently unavailable.";
 }
@@ -929,6 +962,7 @@ function showDashboard(data,preserve){
   workspaceRows=data.workspaces.items;
   invitingEnabled=data.memberInvitationsEnabled===true;
   instagramConnectEnabled=data.instagramConnectEnabled===true;
+  whatsappEmbeddedV4Enabled=data.whatsappEmbeddedV4Enabled===true;
   telegramConnectEnabled=data.telegramConnectEnabled===true;
   if(!workspaceRows.some(item=>item.workspaceId===currentWorkspaceId))
     currentWorkspaceId=workspaceRows[0].workspaceId;
@@ -1277,6 +1311,16 @@ channelsConnectInstagram.addEventListener("click",async()=>{
       channelsStatus.textContent="Instagram authorization could not be started. Check your permissions and try again.";
     }
   }
+});
+channelsConnectWhatsApp.addEventListener("click",()=>{
+  if(!whatsappEmbeddedV4Enabled||!channelsAllowed()||mode!=="dashboard"||
+    !csrfToken||!currentWorkspaceId)return;
+  const workspaceId=currentWorkspaceId;
+  channelsConnectWhatsApp.disabled=true;
+  // Meta's official Embedded Signup v4 JS SDK must launch from an actual
+  // user gesture on its dedicated first-party CSP page, not here after fetch.
+  window.location.assign("/app/auth/workspaces/"+
+    encodeURIComponent(workspaceId)+"/whatsapp/signup");
 });
 channelsConnectTelegram.addEventListener("click",async()=>{
   if(!telegramConnectEnabled||!channelsAllowed()||mode!=="dashboard"||

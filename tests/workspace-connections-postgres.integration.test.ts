@@ -761,4 +761,70 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     await expect(portfolio.list("forged-access-token")).rejects.toThrow(/invalid login/i);
   });
 
+  it("binds Telegram Bot API Business to the exact OIDC owner and increments a fenced generation once",async()=>{
+    const accountId="987654321";
+    const pending=await link(workspaceA,ownerA,"telegram",accountId);
+    const request={
+      workspaceId:workspaceA,connectionId:pending.connectionId,actor:ownerA,
+      providerApplicationKey:"ishikeit-test-app",
+      ownerId:accountId,businessConnectionId:"tg-business-user-987654321",
+      verifiedAt:new Date().toISOString()
+    };
+    expect(pending.status).toBe("verifying");
+    const active=await registry!.activateTelegramBusiness(request);
+    expect(active).toMatchObject({
+      connectionId:pending.connectionId,workspaceId:workspaceA,
+      provider:"telegram",accountId,status:"connected",generation:2
+    });
+    const database=await db!.query<{
+      provider_connection_id:string;credential_account_id:string|null;generation:string
+    }>(`SELECT provider_connection_id,credential_account_id,generation
+       FROM public.ishikeit_account_connections WHERE connection_id=$1`,
+      [pending.connectionId]);
+    expect(database.rows[0]).toMatchObject({
+      provider_connection_id:"tg-business-user-987654321",
+      credential_account_id:null
+    });
+    await expect(registry!.activateTelegramBusiness(request)).rejects.toThrow();
+    expect((await db!.query(
+      "SELECT 1 FROM public.ishikeit_connection_audit WHERE connection_id=$1 AND event_type='activated'",
+      [pending.connectionId]
+    )).rowCount).toBe(1);
+    await expect(registry!.activateTelegramBusiness({
+      ...request,businessConnectionId:"different-business"
+    })).rejects.toThrow();
+  });
+
+  it("refuses Telegram Business owner, app, membership and workspace substitutions atomically",async()=>{
+    const pending=await link(workspaceA,ownerA,"telegram","987654321");
+    const request={
+      workspaceId:workspaceA,connectionId:pending.connectionId,actor:ownerA,
+      providerApplicationKey:"ishikeit-test-app",
+      ownerId:"987654321",businessConnectionId:"tg-business-verified-id",
+      verifiedAt:new Date().toISOString()
+    };
+    await expect(registry!.activateTelegramBusiness({
+      ...request,actor:ownerB
+    })).rejects.toThrow(/authorization denied/i);
+    await expect(registry!.activateTelegramBusiness({
+      ...request,workspaceId:workspaceB
+    })).rejects.toThrow(/authorization denied/i);
+    await expect(registry!.activateTelegramBusiness({
+      ...request,ownerId:"88888888"
+    })).rejects.toThrow(/owner verification mismatch/i);
+    await expect(registry!.activateTelegramBusiness({
+      ...request,providerApplicationKey:"different-bot"
+    })).rejects.toThrow(/binding has changed/i);
+    expect((await db!.query(
+      "SELECT provider_connection_id FROM public.ishikeit_account_connections WHERE connection_id=$1",
+      [pending.connectionId]
+    )).rows[0]).toMatchObject({provider_connection_id:null});
+    await db!.query(
+      "UPDATE public.ishikeit_workspace_memberships SET state='revoked' WHERE workspace_id=$1 AND auth_subject=$2",
+      [workspaceA,ownerA.subject]
+    );
+    await expect(registry!.activateTelegramBusiness(request))
+      .rejects.toThrow(/authorization denied/i);
+  });
+
 });

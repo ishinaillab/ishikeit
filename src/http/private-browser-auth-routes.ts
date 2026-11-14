@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {privateLoginHtml,privateLoginCss,privateLoginJs} from "./private-browser-ui.js";
 import {instagramConnectionReturnHtml,instagramConnectionReturnJs} from "./private-workspace-connect.js";
+import {telegramOIDCReturnHtml,telegramOIDCReturnJs} from "./private-telegram-connect.js";
 import {
   BrowserLoginSessionSetupError, BrowserMfaEnrollmentRateLimited,
   BrowserMfaPendingEnrollment, BrowserMfaLastAuthenticatorError,
@@ -26,6 +27,9 @@ export interface BrowserAuthController {
   beginInstagramConnection?:PrivateBrowserAuthService["beginInstagramConnection"];
   completeInstagramConnection?:PrivateBrowserAuthService["completeInstagramConnection"];
   confirmInstagramConnection?:PrivateBrowserAuthService["confirmInstagramConnection"];
+  beginTelegramConnection?:PrivateBrowserAuthService["beginTelegramConnection"];
+  completeTelegramConnection?:PrivateBrowserAuthService["completeTelegramConnection"];
+  confirmTelegramBusiness?:PrivateBrowserAuthService["confirmTelegramBusiness"];
   refresh(cookie:string):ReturnType<PrivateBrowserAuthService["refresh"]>;
   csrf(cookie:string):Promise<string>;
   listTotpFactors(cookie:string):ReturnType<PrivateBrowserAuthService["listTotpFactors"]>;
@@ -43,6 +47,9 @@ export interface BrowserAuthController {
 /** No client Authorization headers, no Supabase tokens returned to JavaScript,
  * no open redirects/CORS, no request-controlled roles, hosts or callback URLs.
  */
+function hasControlCharacter(value:string):boolean{
+  return [...value].some(ch=>ch.charCodeAt(0)<32||ch.charCodeAt(0)===127);
+}
 const sessionName="__Host-ishikeit-session";
 const pendingName="__Host-ishikeit-login";
 const secret=z.string().regex(/^[A-Za-z0-9_-]{43}$/u);
@@ -83,7 +90,8 @@ const connectCookieName="__Host-ishikeit-ig-connect";
 const connectCookieSchema=z.string().regex(
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{43}$/iu
 );
-function readConnectCookie(req:FastifyRequest):{
+const telegramConnectCookieName="__Host-ishikeit-tg-connect";
+function readConnectCookie(req:FastifyRequest,name:string=connectCookieName):{
   workspaceId:string;browserNonce:string
 }|undefined {
   const raw=req.headers.cookie;
@@ -91,7 +99,7 @@ function readConnectCookie(req:FastifyRequest):{
   let value:string|undefined;
   for(const part of raw.split(";")){
     const pos=part.indexOf("=");
-    if(pos<0||part.slice(0,pos).trim()!==connectCookieName)continue;
+    if(pos<0||part.slice(0,pos).trim()!==name)continue;
     if(value!==undefined)return undefined;
     value=part.slice(pos+1).trim();
   }
@@ -100,8 +108,8 @@ function readConnectCookie(req:FastifyRequest):{
   const split=value.indexOf(".");
   return {workspaceId:value.slice(0,split),browserNonce:value.slice(split+1)};
 }
-function connectCookie(value:string,age:number):string {
-  return connectCookieName+"="+value+"; Path=/; Max-Age="+age+
+function connectCookie(value:string,age:number,name:string=connectCookieName):string {
+  return name+"="+value+"; Path=/; Max-Age="+age+
     "; HttpOnly; Secure; SameSite=Lax";
 }
 function clearCookie(name:string):string {
@@ -111,7 +119,8 @@ function clearCookie(name:string):string {
 export function registerPrivateBrowserAuthRoutes(
   server:FastifyInstance,
   deps:{origin:string;controller:BrowserAuthController;allowWorkspaceInvitations?:boolean;
-    allowWorkspaceConnections?:boolean;allowInstagramConnect?:boolean}
+    allowWorkspaceConnections?:boolean;allowInstagramConnect?:boolean;
+    allowTelegramOIDC?:boolean}
 ):void {
   const url=new URL(deps.origin);
   if(url.protocol!=="https:" || url.pathname!=="/" || url.search || url.hash
@@ -162,6 +171,9 @@ export function registerPrivateBrowserAuthRoutes(
   }
   function instagramConnectCapability():boolean {
     return deps.allowInstagramConnect===true;
+  }
+  function telegramConnectCapability():boolean {
+    return deps.allowTelegramOIDC===true;
   }
 
   function privateUi(req:FastifyRequest,reply:FastifyReply,
@@ -281,7 +293,8 @@ export function registerPrivateBrowserAuthRoutes(
         status:"authenticated",expiresAt:data.expiresAt,
         csrfToken:data.csrfToken,workspaces:data.workspaces,
         memberInvitationsEnabled:invitationCapability(data),
-        instagramConnectEnabled:instagramConnectCapability()
+        instagramConnectEnabled:instagramConnectCapability(),
+        telegramConnectEnabled:telegramConnectCapability()
       });
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
@@ -444,6 +457,126 @@ export function registerPrivateBrowserAuthRoutes(
     );
   }
 
+  // Telegram's official OIDC flow is a distinct trust domain from
+  // Telegram Bot API Business. Only the signed OIDC subject can become
+  // workspace owner proof; a supplied Business connection ID is NOT proof.
+  if(deps.allowTelegramOIDC===true &&
+    deps.controller.beginTelegramConnection!==undefined &&
+    deps.controller.completeTelegramConnection!==undefined &&
+    deps.controller.confirmTelegramBusiness!==undefined){
+    const uuidSchema=z.string().uuid();
+    const callback=z.object({
+      state:z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+      code:z.string().min(8).max(4096).regex(/^[A-Za-z0-9._~%-]+$/u)
+    }).strict();
+    const finish=z.object({
+      state:z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+      authorizationCode:z.string().min(8).max(4096)
+        .regex(/^[A-Za-z0-9._~%-]+$/u)
+    }).strict();
+    server.post<{Params:{workspaceId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/telegram/start",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const path=z.object({workspaceId:uuidSchema}).strict().safeParse(req.params);
+        if(!path.success||!z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const started=await deps.controller.beginTelegramConnection!(
+            value,path.data.workspaceId
+          );
+          const target=new URL(started.authorizationUrl);
+          if(target.origin!=="https://oauth.telegram.org"||
+            target.pathname!=="/auth")throw Error("Unrecognized Telegram OIDC host");
+          return reply.header("set-cookie",connectCookie(
+            path.data.workspaceId+"."+started.browserNonce,600,
+            telegramConnectCookieName
+          )).code(200).send({
+            status:"provider_authorization_required",
+            authorizationUrl:started.authorizationUrl,expiresAt:started.expiresAt
+          });
+        }catch{return deny(reply,403).send({status:"connection_unavailable"});}
+      }
+    );
+    server.get("/app/auth/connect/telegram/callback",async(req,reply)=>{
+      privateResponse(reply);
+      if(req.headers.host!==host)
+        return deny(reply,403).send("Authorization unavailable");
+      const parsed=callback.safeParse(req.query);
+      if(!parsed.success)
+        return deny(reply,400).send("Authorization unavailable");
+      return reply.header("content-security-policy",
+        "default-src 'none'; script-src 'self'; style-src 'self'; "+
+        "img-src 'self'; connect-src 'self'; frame-ancestors 'none'; "+
+        "base-uri 'none'; form-action 'none'")
+        .type("text/html; charset=utf-8")
+        .send(telegramOIDCReturnHtml(parsed.data.state,parsed.data.code));
+    });
+    server.get("/app/auth/telegram-return.js",(req,reply)=>{
+      privateResponse(reply);
+      if(req.headers.host!==host)
+        return deny(reply,403).send("Authorization unavailable");
+      return reply.type("text/javascript; charset=utf-8")
+        .send(telegramOIDCReturnJs);
+    });
+    server.post("/app/auth/connect/telegram/complete",
+      {bodyLimit:8192},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const binding=readConnectCookie(req,telegramConnectCookieName);
+        const parsed=finish.safeParse(req.body);
+        if(binding===undefined||!parsed.success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const result=await deps.controller.completeTelegramConnection!(value,{
+            workspaceId:binding.workspaceId,browserNonce:binding.browserNonce,
+            state:parsed.data.state,authorizationCode:parsed.data.authorizationCode
+          });
+          return reply.header("set-cookie",
+            connectCookie("",0,telegramConnectCookieName))
+            .code(200).send(result);
+        }catch{
+          return deny(reply,403).header("set-cookie",
+            connectCookie("",0,telegramConnectCookieName))
+            .send({status:"connection_rejected"});
+        }
+      }
+    );
+    server.post<{Params:{workspaceId:string;connectionId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/:connectionId/telegram-business",
+      {bodyLimit:1024},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const path=z.object({
+          workspaceId:uuidSchema,connectionId:uuidSchema
+        }).strict().safeParse(req.params);
+        const parsed=z.object({
+          businessConnectionId:z.string().min(5).max(256)
+            .refine(v=>!hasControlCharacter(v))
+        }).strict().safeParse(req.body);
+        if(!path.success||!parsed.success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const result=await deps.controller.confirmTelegramBusiness!(value,{
+            workspaceId:path.data.workspaceId,connectionId:path.data.connectionId,
+            businessConnectionId:parsed.data.businessConnectionId
+          });
+          return reply.code(200).send(result);
+        }catch{return deny(reply,403).send({status:"activation_unavailable"});}
+      }
+    );
+  }
+
   server.post("/app/auth/refresh",{bodyLimit:256},async(req,reply)=>{
     privateResponse(reply);
     if(!mutation(req,reply))return reply;
@@ -458,7 +591,8 @@ export function registerPrivateBrowserAuthRoutes(
       return reply.code(200).send({status:"authenticated",expiresAt:data.expiresAt,
         csrfToken:data.csrfToken,workspaces:data.workspaces,
         memberInvitationsEnabled:invitationCapability(data),
-        instagramConnectEnabled:instagramConnectCapability()});
+        instagramConnectEnabled:instagramConnectCapability(),
+        telegramConnectEnabled:telegramConnectCapability()});
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
   server.get("/app/auth/mfa/factors",async(req,reply)=>{
@@ -566,7 +700,8 @@ export function registerPrivateBrowserAuthRoutes(
           status:"authenticated",expiresAt:data.expiresAt,csrfToken:data.csrfToken,
           workspaces:data.workspaces,
           memberInvitationsEnabled:invitationCapability(data),
-        instagramConnectEnabled:instagramConnectCapability()
+        instagramConnectEnabled:instagramConnectCapability(),
+        telegramConnectEnabled:telegramConnectCapability()
         });
     }catch{return deny(reply,403).send({status:"mfa_verification_failed"});}
   });

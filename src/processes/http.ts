@@ -59,6 +59,8 @@ import { PostgresWorkspaceConnectionIntents } from "../persistence/workspace-con
 import { AuthenticatedWorkspaceConnectionIntents } from "../auth/authenticated-workspace-connection.js";
 import { ProviderNativeInstagramConsent } from "../auth/workspace-provider-consent.js";
 import { WorkspaceInstagramConnectionCoordinator } from "../auth/workspace-instagram-connect.js";
+import { WorkspaceWhatsAppEmbeddedV4Connections } from "../auth/workspace-whatsapp-embedded-v4.js";
+import { WhatsAppEmbeddedV4BusinessGrantReader } from "../auth/whatsapp-embedded-v4-proof.js";
 import {
   WorkspaceTelegramOIDCConnections,TelegramOIDCClient,TelegramNativeBusinessReader
 } from "../auth/workspace-telegram-oidc.js";
@@ -216,11 +218,13 @@ const instagramOAuthConfigured = (
   && env.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined
 );
 const instagramNativeConfigured=env.BROWSER_INSTAGRAM_CONNECT_ENABLED;
+const whatsappV4Configured=env.BROWSER_WHATSAPP_EMBEDDED_V4_ENABLED;
 const oauthStore = !(
   tiktokOAuthConfigured
   || tiktokMarketingOAuthConfigured
   || instagramOAuthConfigured
   || instagramNativeConfigured
+  || whatsappV4Configured
 )
   ? undefined
   : new PostgresOAuthCredentialStore(
@@ -629,6 +633,25 @@ const instagramNativeConnector=(!instagramNativeConfigured ||
       client:instagramOAuthClient
     })
   });
+const whatsappV4NativeConnector=(!whatsappV4Configured||oauthStore===undefined)
+  ?undefined
+  :new WorkspaceWhatsAppEmbeddedV4Connections({
+    appId:env.META_APP_ID,
+    configId:env.META_WHATSAPP_EMBEDDED_V4_CONFIG_ID!,
+    graphVersion:env.META_GRAPH_API_VERSION,
+    origin:env.BROWSER_AUTH_ORIGIN!,
+    intents:new AuthenticatedWorkspaceConnectionIntents(
+      new SupabaseAuthPrincipalVerifier({
+        projectUrl:env.SUPABASE_AUTH_PROJECT_URL!,
+        publishableKey:env.SUPABASE_AUTH_PUBLISHABLE_KEY!,db
+      }),new PostgresWorkspaceConnectionIntents(db)
+    ),
+    reader:new WhatsAppEmbeddedV4BusinessGrantReader({
+      appId:env.META_APP_ID,appSecret:env.META_APP_SECRET,
+      graphVersion:env.META_GRAPH_API_VERSION
+    }),
+    registry:privateWorkspaceRegistry,vault:oauthStore
+  });
 // The modern Telegram OIDC client ID and secret are independent of the Bot
 // API token. Start only with explicit owner opt-in and BotFather URL allowlist.
 const telegramNativeConnector=!env.BROWSER_TELEGRAM_OIDC_ENABLED?undefined
@@ -675,6 +698,7 @@ const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
   // Private read-only inventory; no provider connections can be created here.
   connections:privateWorkspaceRegistry,
   ...(instagramNativeConnector===undefined?{}:{instagramConnections:instagramNativeConnector}),
+  ...(whatsappV4NativeConnector===undefined?{}:{whatsappEmbeddedV4:whatsappV4NativeConnector}),
   ...(telegramNativeConnector===undefined?{}:{telegramConnections:telegramNativeConnector}),
   auth: new SupabaseAuthPrincipalVerifier({
     projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
@@ -705,6 +729,7 @@ const server = buildServer({
       allowWorkspaceInvitations:workspaceInvites!==undefined,
       allowWorkspaceConnections:true,
       allowInstagramConnect:instagramNativeConnector!==undefined,
+      allowWhatsAppEmbeddedV4:whatsappV4NativeConnector!==undefined,
       allowTelegramOIDC:telegramNativeConnector!==undefined}
   }),
   buildIdentity: runtimeBuildIdentity(),

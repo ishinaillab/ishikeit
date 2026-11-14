@@ -478,6 +478,41 @@ export class PostgresWorkspaceConnectionRegistry {
     });
   }
 
+  /** Private owner/admin-only binding read for providers where multiple
+   * account identities matter (e.g. WhatsApp Messaging account + phone).
+   * Never serialize this object into the public browser inventory. The
+   * subsequent activateVerified still locks and revalidates it atomically.
+   */
+  async findBindingForAdministrator(input:z.infer<typeof idAction>):Promise<{
+    provider:string;accountId:string;status:WorkspaceConnectionStatus;
+    providerApplicationKey:string;providerConnectionId:string|null;
+    credentialAccountId:string|null
+  }|undefined>{
+    const p=idAction.parse(input);
+    return this.db.transaction(async tx=>{
+      await authorize(tx,{workspaceId:p.workspaceId,...p.actor},"admin");
+      const result=await tx.query<{
+        provider:string;provider_account_id:string;status:WorkspaceConnectionStatus;
+        provider_application_key:string;provider_connection_id:string|null;
+        credential_account_id:string|null
+      }>(
+        `SELECT provider,provider_account_id,status,provider_application_key,
+                provider_connection_id,credential_account_id
+           FROM public.ishikeit_account_connections
+          WHERE connection_id=$1 AND workspace_id=$2`,
+        [p.connectionId,p.workspaceId]
+      );
+      const row=result.rows[0];
+      if(row===undefined)return undefined;
+      return {
+        provider:row.provider,accountId:row.provider_account_id,
+        status:row.status,providerApplicationKey:row.provider_application_key,
+        providerConnectionId:row.provider_connection_id,
+        credentialAccountId:row.credential_account_id
+      };
+    });
+  }
+
   async readForMember(input: z.infer<typeof idAction>): Promise<WorkspaceConnection | undefined> {
     const p = idAction.parse(input);
     return this.db.transaction(async (tx) => {

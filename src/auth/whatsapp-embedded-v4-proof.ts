@@ -175,6 +175,22 @@ export class WhatsAppEmbeddedV4BusinessGrantReader{
     if(p.id!==phoneId)
       throw Error("Meta business phone identity differs");
   }
+  /** Server-only fresh identity check for manual activation. It does not
+   * grant a messaging entitlement or perform any provider mutation.
+   */
+  async verifyExisting(input:{
+    businessToken:string;messagingAccountId:string;phoneNumberId:string
+  }):Promise<{scopes:readonly string[];accessExpiresAt:Date}>{
+    const parsed=z.object({
+      businessToken:bearer,
+      messagingAccountId:numeric,
+      phoneNumberId:numeric
+    }).strict().parse(input);
+    const proof=await this.#inspect(parsed.businessToken);
+    await this.#checkAssets(parsed.businessToken,
+      parsed.messagingAccountId,parsed.phoneNumberId);
+    return proof;
+  }
   /** Code is only accepted after the caller's own browser/owner proof.
    * Returns a dormant candidate grant; no registry ownership claim or send.
    */

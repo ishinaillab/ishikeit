@@ -114,7 +114,7 @@ export interface ServerDeps {
   metaGraphPreflight?: MetaGraphPreflightReader;
   metaHandoffs?: MetaHandoffControl;
   opsMetricsToken?: string;
-  browserAuth?: { origin: string; controller: BrowserAuthController; allowWorkspaceInvitations?:boolean; allowWorkspaceConnections?:boolean; allowInstagramConnect?:boolean; allowTelegramOIDC?:boolean };
+  browserAuth?: { origin: string; controller: BrowserAuthController; allowWorkspaceInvitations?:boolean; allowWorkspaceConnections?:boolean; allowInstagramConnect?:boolean; allowWhatsAppEmbeddedV4?:boolean; allowTelegramOIDC?:boolean };
   runtimeState?: {
     processorEnabled: boolean;
     actionDispatchEnabled: boolean;

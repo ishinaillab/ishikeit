@@ -9,6 +9,7 @@ import type { AuthenticatedWorkspacePortfolio, WorkspacePage } from "./authentic
 import type { PostgresDatabase, SqlExecutor } from "../persistence/postgres.js";
 import type { PostgresWorkspaceInvitations, InviteSummary } from "./workspace-member-invitations.js";
 import type { PostgresWorkspaceConnectionRegistry, WorkspaceConnectionPage } from "../persistence/workspace-connections.js";
+import type { WorkspaceInstagramConnectionCoordinator } from "./workspace-instagram-connect.js";
 
 const bearer = z.string().min(20).max(4096).regex(/^[A-Za-z0-9_-]+$/u);
 const normalizedEmail = z.email().min(3).max(320).transform(x=>x.trim().toLowerCase());
@@ -160,6 +161,7 @@ export class PrivateBrowserAuthService {
     portfolio:Pick<AuthenticatedWorkspacePortfolio,"list">;
     memberInvites?:Pick<PostgresWorkspaceInvitations,"invite">;
     connections?:Pick<PostgresWorkspaceConnectionRegistry,"listForAdministrator">;
+    instagramConnections?:Pick<WorkspaceInstagramConnectionCoordinator,"begin"|"complete"|"confirm">;
     csrfKeyBase64:string;
     onOtpFailure?: (diagnostic:BrowserOtpFailureDiagnostic)=>void;
     /** Fixed enums only. Never log raw provider errors or any TOTP secret. */
@@ -513,6 +515,50 @@ export class PrivateBrowserAuthService {
     return this.deps.connections.listForAdministrator({
       workspaceId,actor:privileged.principal,pageSize:20,
       ...(after===undefined?{}:{after})
+    });
+  }
+
+  /**
+   * Provider linking remains exclusively inside the private opaque-cookie BFF.
+   * Never return the Supabase bearer or provider tokens to client JavaScript.
+   * AAL2 session and exact current factor are reverified on each transition.
+   */
+  async #privilegedForProvider(cookie:string):Promise<{
+    accessToken:string;principal:VerifiedIshikeitSession["principal"]
+  }>{
+    const {access,verified}=await this.#bearer(cookie);
+    const privileged=await this.deps.auth.verifyPrivilegedAccessToken(access);
+    if(privileged.sessionId!==verified.sessionId ||
+      privileged.principal.issuer!==verified.principal.issuer ||
+      privileged.principal.subject!==verified.principal.subject)
+      throw new Error("Browser privilege session mismatch");
+    return {accessToken:access,principal:privileged.principal};
+  }
+
+  async beginInstagramConnection(cookie:string,workspaceId:string){
+    if(this.deps.instagramConnections===undefined)
+      throw new Error("Provider onboarding unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.instagramConnections.begin(verified.accessToken,workspaceId);
+  }
+
+  async completeInstagramConnection(cookie:string,input:{
+    workspaceId:string;state:string;browserNonce:string;authorizationCode:string
+  }){
+    if(this.deps.instagramConnections===undefined)
+      throw new Error("Provider onboarding unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.instagramConnections.complete({
+      ...input,accessToken:verified.accessToken
+    });
+  }
+
+  async confirmInstagramConnection(cookie:string,workspaceId:string,connectionId:string){
+    if(this.deps.instagramConnections===undefined)
+      throw new Error("Provider onboarding unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.instagramConnections.confirm({
+      workspaceId,connectionId,actor:verified.principal
     });
   }
 

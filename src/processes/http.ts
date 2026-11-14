@@ -55,6 +55,10 @@ import { CredentialCipher } from "../auth/credential-cipher.js";
 import { SupabaseAuthPrincipalVerifier } from "../auth/supabase-workspace-principal.js";
 import { AuthenticatedWorkspacePortfolio } from "../auth/authenticated-workspace-portfolio.js";
 import { PostgresWorkspaceConnectionRegistry } from "../persistence/workspace-connections.js";
+import { PostgresWorkspaceConnectionIntents } from "../persistence/workspace-connection-intents.js";
+import { AuthenticatedWorkspaceConnectionIntents } from "../auth/authenticated-workspace-connection.js";
+import { ProviderNativeInstagramConsent } from "../auth/workspace-provider-consent.js";
+import { WorkspaceInstagramConnectionCoordinator } from "../auth/workspace-instagram-connect.js";
 import { SupabaseEmailOtpClient } from "../auth/supabase-email-otp.js";
 import { SupabaseTotpMfaClient } from "../auth/supabase-totp-mfa.js";
 import { SupabaseAdminInviteClient } from "../auth/supabase-admin-invite.js";
@@ -208,10 +212,12 @@ const instagramOAuthConfigured = (
   && env.META_INSTAGRAM_OAUTH_REDIRECT_URI !== undefined
   && env.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined
 );
+const instagramNativeConfigured=env.BROWSER_INSTAGRAM_CONNECT_ENABLED;
 const oauthStore = !(
   tiktokOAuthConfigured
   || tiktokMarketingOAuthConfigured
   || instagramOAuthConfigured
+  || instagramNativeConfigured
 )
   ? undefined
   : new PostgresOAuthCredentialStore(
@@ -273,7 +279,7 @@ const tiktokMarketingAdvertiserService = (
       store: oauthStore,
       client: tiktokMarketingAdvertiserClient
     });
-const instagramOAuthClient = !instagramOAuthConfigured
+const instagramOAuthClient = !(instagramOAuthConfigured || instagramNativeConfigured)
   ? undefined
   : new InstagramOAuthClient({
       appId: env.META_INSTAGRAM_OAUTH_APP_ID!,
@@ -283,7 +289,8 @@ const instagramOAuthClient = !instagramOAuthConfigured
     });
 const instagramSubscriptionGate = new InstagramWebhookSubscriptionDeduplicator();
 const instagramOAuthService = (
-  oauthStore === undefined
+  !instagramOAuthConfigured
+  || oauthStore === undefined
   || instagramOAuthClient === undefined
 )
   ? undefined
@@ -597,6 +604,28 @@ const workspaceInvites = env.BROWSER_WORKSPACE_INVITES_ENABLED
       secretKey:env.SUPABASE_AUTH_SECRET_KEY!
     })
   }):undefined;
+const privateWorkspaceRegistry=new PostgresWorkspaceConnectionRegistry(db);
+const instagramNativeConnector=(!instagramNativeConfigured ||
+  oauthStore===undefined || instagramOAuthClient===undefined)
+  ?undefined
+  :new WorkspaceInstagramConnectionCoordinator({
+    appId:env.META_INSTAGRAM_OAUTH_APP_ID!,
+    registry:privateWorkspaceRegistry,oauth:oauthStore,client:instagramOAuthClient,
+    consent:new ProviderNativeInstagramConsent({
+      appId:env.META_INSTAGRAM_OAUTH_APP_ID!,
+      redirectUri:new URL(
+        "/app/auth/connect/instagram/callback",env.BROWSER_AUTH_ORIGIN
+      ).toString(),
+      intents:new AuthenticatedWorkspaceConnectionIntents(
+        new SupabaseAuthPrincipalVerifier({
+          projectUrl:env.SUPABASE_AUTH_PROJECT_URL!,
+          publishableKey:env.SUPABASE_AUTH_PUBLISHABLE_KEY!,db
+        }),
+        new PostgresWorkspaceConnectionIntents(db)
+      ),
+      client:instagramOAuthClient
+    })
+  });
 const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
   projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
   db,
@@ -616,7 +645,8 @@ const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
   ),
   ...(workspaceInvites===undefined?{}:{memberInvites:workspaceInvites}),
   // Private read-only inventory; no provider connections can be created here.
-  connections:new PostgresWorkspaceConnectionRegistry(db),
+  connections:privateWorkspaceRegistry,
+  ...(instagramNativeConnector===undefined?{}:{instagramConnections:instagramNativeConnector}),
   auth: new SupabaseAuthPrincipalVerifier({
     projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
     publishableKey: env.SUPABASE_AUTH_PUBLISHABLE_KEY!,
@@ -644,7 +674,8 @@ const server = buildServer({
   ...(browserAuth === undefined ? {} : {
     browserAuth: {origin: env.BROWSER_AUTH_ORIGIN!,controller: browserAuth,
       allowWorkspaceInvitations:workspaceInvites!==undefined,
-      allowWorkspaceConnections:true}
+      allowWorkspaceConnections:true,
+      allowInstagramConnect:instagramNativeConnector!==undefined}
   }),
   buildIdentity: runtimeBuildIdentity(),
   ready: async () =>

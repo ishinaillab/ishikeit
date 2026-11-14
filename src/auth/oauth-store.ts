@@ -72,6 +72,14 @@ interface StateRow extends pg.QueryResultRow {
   redirect_uri: string;
 }
 
+function denyGlobalWorkspaceCredentialAccess(provider:string):void{
+  // Cross-workspace enumeration and legacy generic upserts are not a tenant
+  // authorization model. Native workspace grants MUST use the scoped,
+  // exact-connection transaction writer after database membership proof.
+  if(provider.startsWith("workspace-"))
+    throw new Error("Workspace grant requires exact authorized connection scope");
+}
+
 function aad(provider: string, accountId: string, kind: "access" | "refresh"): string {
   return ["ishikeit-oauth-v1", provider, accountId, kind].join("\0");
 }
@@ -128,6 +136,7 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
   }
 
   async latest(provider: string): Promise<OAuthCredential | undefined> {
+    denyGlobalWorkspaceCredentialAccess(provider);
     const result = await this.db.query<CredentialRow>(
       `SELECT provider,account_id,
               access_token_ciphertext,access_token_iv,access_token_tag,
@@ -144,6 +153,7 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
   }
 
   async list(provider: string): Promise<readonly OAuthCredential[]> {
+    denyGlobalWorkspaceCredentialAccess(provider);
     const result = await this.db.query<CredentialRow>(
       `SELECT provider,account_id,
               access_token_ciphertext,access_token_iv,access_token_tag,
@@ -158,7 +168,24 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
   }
 
   async put(credential: Omit<OAuthCredential, "tokenVersion">): Promise<void> {
+    denyGlobalWorkspaceCredentialAccess(credential.provider);
     await this.db.transaction((tx) => this.#writeCredential(tx, credential));
+  }
+
+  /** Server-only atomic workspace grant custody. Caller MUST own this SQL
+   * transaction, having already verified the exact workspace, one-use intent,
+   * connection ownership and OAuth grant. Use a separate internal provider
+   * namespace and per-connection UUID account key; never overwrite legacy
+   * provider-owned credentials during an unapproved cutover.
+   */
+  async putInTransaction(
+    tx: SqlExecutor,
+    credential: Omit<OAuthCredential,"tokenVersion">
+  ): Promise<void> {
+    if(credential.provider!=="workspace-instagram" ||
+       !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/iu.test(credential.accountId))
+      throw new Error("Tenant provider grant custody requires isolated namespace");
+    await this.#writeCredential(tx,credential);
   }
 
   async putWithAlias(
@@ -166,6 +193,7 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
     aliasAccountId: string,
     aliasKind: string
   ): Promise<void> {
+    denyGlobalWorkspaceCredentialAccess(credential.provider);
     await this.db.transaction(async (tx) => {
       // No partial credential, ambiguous alias, or revoked-token gap can commit.
       await this.#writeCredential(tx, credential);

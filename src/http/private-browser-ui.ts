@@ -135,6 +135,7 @@ export const privateLoginHtml = `<!doctype html>
         <p class="page-description">Review the accounts recorded for your current workspace.</p>
         <div class="channels-toolbar">
           <p id="channels-context" class="muted">Current workspace</p>
+          <button type="button" id="channels-connect-instagram" class="secondary" hidden>Connect Instagram</button>
           <button type="button" id="channels-refresh" class="secondary">Refresh status</button>
         </div>
         <p id="channels-note" class="muted channels-note">This list shows Ishikeit's internal connection status, not a live provider permission check. Account linking and sending remain unavailable until verified provider authorization is implemented.</p>
@@ -491,6 +492,8 @@ const channelsList=get("channels-list");
 const channelsStatus=get("channels-status");
 const channelsMore=get("channels-more");
 const channelsRefresh=get("channels-refresh");
+const channelsConnectInstagram=get("channels-connect-instagram");
+const channelsNote=get("channels-note");
 const status=get("status");
 const accountMenu=get("account-menu");
 const accountButton=get("account-button");
@@ -506,6 +509,7 @@ let refreshInFlight=null;
 let workspaceRows=[];
 let currentWorkspaceId="";
 let invitingEnabled=false;
+let instagramConnectEnabled=false;
 let connectionsEpoch=0;
 let connectionsLoading=false;
 let connectionsNext=null;
@@ -584,6 +588,7 @@ function resetConnections(){
   channelsMore.hidden=true;
   channelsMore.disabled=false;
   channelsRefresh.disabled=false;
+  channelsConnectInstagram.disabled=false;
 }
 function channelsAllowed(){
   const workspace=workspaceRows.find(item=>item.workspaceId===currentWorkspaceId);
@@ -655,6 +660,31 @@ async function loadConnections(more){
       const state=document.createElement("span");state.className="channel-state";
       state.textContent=channelStatusLabel(record.status);
       card.append(info,state);
+      if(instagramConnectEnabled && record.provider==="instagram" &&
+         record.status==="verifying"){
+        const activate=document.createElement("button");
+        activate.type="button";activate.className="secondary";
+        activate.textContent="Confirm Instagram activation";
+        activate.setAttribute("aria-label","Confirm activation for Instagram account "+record.accountId);
+        activate.addEventListener("click",async()=>{
+          if(!channelsAllowed() || !instagramConnectEnabled ||
+             record.workspaceId!==currentWorkspaceId || mode!=="dashboard")return;
+          activate.disabled=true;
+          channelsStatus.textContent="Checking this account with Instagram…";
+          try{
+            const result=await request("/app/auth/workspaces/"+
+              encodeURIComponent(record.workspaceId)+"/connections/"+
+              encodeURIComponent(record.connectionId)+"/activate",{},csrfToken);
+            if(!result.ok)throw Error("Activation unavailable");
+            channelsStatus.textContent="Account confirmed. Automation remains disabled until tenant routing is approved.";
+            void loadConnections(false);
+          }catch{
+            activate.disabled=false;
+            channelsStatus.textContent="Activation could not be verified. Try again after checking your account permission.";
+          }
+        });
+        card.append(activate);
+      }
       channelsList.append(card);
     }
     connectionsNext=data.nextCursor===undefined?null:data.nextCursor;
@@ -809,6 +839,10 @@ function renderWorkspace(){
   get("workspace-switcher").hidden=workspaceRows.length<=1;
   get("nav-channels").hidden=!channelsAllowed();
   get("channels-context").textContent="Workspace: "+name;
+  channelsConnectInstagram.hidden=!(instagramConnectEnabled && channelsAllowed());
+  channelsNote.textContent=instagramConnectEnabled
+    ?"Accounts are authorized through Instagram directly. A verified grant remains inactive until you confirm activation. Connecting does not start automation; provider permissions and public eligibility may differ."
+    :"This is a private registry inventory, not a live provider permission check. Account onboarding and sending are currently unavailable.";
 }
 function showPanel(panel){
   if(mode!=="dashboard")return;
@@ -843,6 +877,7 @@ function showDashboard(data,preserve){
   csrfToken=data.csrfToken;
   workspaceRows=data.workspaces.items;
   invitingEnabled=data.memberInvitationsEnabled===true;
+  instagramConnectEnabled=data.instagramConnectEnabled===true;
   if(!workspaceRows.some(item=>item.workspaceId===currentWorkspaceId))
     currentWorkspaceId=workspaceRows[0].workspaceId;
   renderWorkspace();
@@ -1165,6 +1200,29 @@ get("workspace-select").addEventListener("change",()=>{
       resetConnections();
       if(channelsAllowed())void loadConnections(false);
       else showPanel("overview");
+    }
+  }
+});
+channelsConnectInstagram.addEventListener("click",async()=>{
+  if(!instagramConnectEnabled || !channelsAllowed() || mode!=="dashboard" ||
+     !csrfToken || !currentWorkspaceId)return;
+  const workspaceId=currentWorkspaceId;
+  channelsConnectInstagram.disabled=true;
+  channelsStatus.textContent="Opening Instagram authorization…";
+  try{
+    const response=await request("/app/auth/workspaces/"+
+      encodeURIComponent(workspaceId)+"/connections/instagram/start",{},csrfToken);
+    if(workspaceId!==currentWorkspaceId || mode!=="dashboard")return;
+    if(!response.ok)throw Error("Authorization unavailable");
+    const data=await response.json();
+    const url=new URL(data.authorizationUrl);
+    if(url.origin!=="https://www.instagram.com" ||
+      url.pathname!=="/oauth/authorize")throw Error("Invalid provider authorization");
+    window.location.assign(url.toString());
+  }catch{
+    if(workspaceId===currentWorkspaceId && mode==="dashboard"){
+      channelsConnectInstagram.disabled=false;
+      channelsStatus.textContent="Instagram authorization could not be started. Check your permissions and try again.";
     }
   }
 });

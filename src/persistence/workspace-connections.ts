@@ -198,7 +198,14 @@ export class PostgresWorkspaceConnectionRegistry {
     });
   }
 
-  async linkVerified(input: z.infer<typeof linkSchema>): Promise<WorkspaceConnection> {
+  /** Optional server-only writer runs in the SAME registry/intent claim
+   * transaction. If encrypted grant persistence fails, neither ownership
+   * nor its consumed-intent claim can commit. Never call provider HTTP here.
+   */
+  async linkVerified(
+    input: z.infer<typeof linkSchema>,
+    persistEncryptedGrant?: (tx:SqlExecutor)=>Promise<void>
+  ): Promise<WorkspaceConnection> {
     const p = linkSchema.parse(input);
     const proof = validatedProof(p.proof);
     return this.db.transaction(async (tx) => {
@@ -240,6 +247,7 @@ export class PostgresWorkspaceConnectionRegistry {
       const row = result.rows[0];
       if (row === undefined) throw new Error("Connection registry rejected verified link");
       const connection = present(row);
+      if(persistEncryptedGrant!==undefined) await persistEncryptedGrant(tx);
       const claimed = await tx.query(
         `UPDATE public.ishikeit_connection_intents
             SET claimed_connection_id=$2,claimed_at=now()
@@ -389,6 +397,24 @@ export class PostgresWorkspaceConnectionRegistry {
       return result.rows.length > p.pageSize
         ? { items, nextCursor: items[items.length - 1]!.connectionId }
         : { items };
+    });
+  }
+
+  /** Server-only private exact connection lookup. Revalidates owner/admin
+   * membership in the same PostgreSQL transaction; never leaks token refs.
+   */
+  async findForAdministrator(input:z.infer<typeof idAction>):
+    Promise<WorkspaceConnection|undefined>{
+    const p=idAction.parse(input);
+    return this.db.transaction(async tx=>{
+      await authorize(tx,{workspaceId:p.workspaceId,...p.actor},"admin");
+      const result=await tx.query<ConnectionRow>(
+        `SELECT connection_id,workspace_id,provider,provider_account_id,status,generation
+           FROM public.ishikeit_account_connections
+          WHERE connection_id=$1 AND workspace_id=$2`,
+        [p.connectionId,p.workspaceId]
+      );
+      return result.rows[0]===undefined?undefined:present(result.rows[0]);
     });
   }
 

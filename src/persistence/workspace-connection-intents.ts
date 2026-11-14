@@ -73,6 +73,7 @@ export interface ConnectionIntentStart {
 export interface ConnectionIntentCompletion {
   intentId: string;
   workspaceId: string;
+  sessionId: string;
   actor: WorkspacePrincipal;
   provider: string;
   providerApplicationKey: string;
@@ -84,6 +85,7 @@ interface ExpirationRow extends pg.QueryResultRow { expires_at: Date }
 interface IntentRow extends pg.QueryResultRow {
   intent_id: string;
   workspace_id: string;
+  auth_session_id: string;
   actor_issuer: string;
   actor_subject: string;
   provider: string;
@@ -164,7 +166,7 @@ export class PostgresWorkspaceConnectionIntents {
              AND m.auth_subject=i.actor_subject AND m.state='active'
              AND m.role IN ('owner','admin') AND w.state='active'
          )
-       RETURNING intent_id,workspace_id,actor_issuer,actor_subject,
+       RETURNING intent_id,workspace_id,auth_session_id,actor_issuer,actor_subject,
                  provider,provider_application_key,redirect_uri`,
       [p.workspaceId,p.actor.issuer,p.actor.subject,p.provider,
         p.providerApplicationKey,redirectUri,digest(p.state),digest(p.browserNonce),p.sessionId ?? null]
@@ -174,6 +176,7 @@ export class PostgresWorkspaceConnectionIntents {
     if (row === undefined) return undefined;
     return {
       intentId: row.intent_id, workspaceId: row.workspace_id,
+      sessionId: row.auth_session_id,
       actor: { issuer: row.actor_issuer, subject: row.actor_subject },
       provider: row.provider,
       providerApplicationKey: row.provider_application_key,

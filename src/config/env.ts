@@ -27,7 +27,12 @@ const schema = z.object({
   // are mandatory. Default OFF: no client signup, provider send or registration.
   BROWSER_WHATSAPP_EMBEDDED_V4_ENABLED: booleanFromEnv.default(false),
   META_WHATSAPP_EMBEDDED_V4_CONFIG_ID: z.string().regex(/^[1-9][0-9]{4,31}$/u).optional(),
+  // Messenger Page ownership via private Facebook Login for Business only.
+  BROWSER_MESSENGER_CONNECT_ENABLED: booleanFromEnv.default(false),
+  META_FACEBOOK_LOGIN_CONFIG_ID: z.string().regex(/^[1-9][0-9]{4,31}$/u).optional(),
   BROWSER_TELEGRAM_OIDC_ENABLED: booleanFromEnv.default(false),
+  BROWSER_TIKTOK_ACCOUNT_CONNECT_ENABLED: booleanFromEnv.default(false),
+  TIKTOK_ACCOUNT_HOLDER_AUTHORIZATION_URL: z.url().optional(),
   TELEGRAM_OIDC_CLIENT_ID: z.string().regex(/^[1-9][0-9]{4,15}$/u).optional(),
   TELEGRAM_OIDC_CLIENT_SECRET: z.string().min(16).max(1024).optional(),
   // Observation-only. Never enables tenant routing, ownership claims or sends.
@@ -121,6 +126,36 @@ const schema = z.object({
     if(value.META_APP_SECRET!==undefined&&value.META_APP_SECRET.length<16)
       ctx.addIssue({code:"custom",path:["META_APP_SECRET"],
         message:"Meta private app secret does not meet connector length bounds"});
+  }
+  if(value.BROWSER_MESSENGER_CONNECT_ENABLED){
+    if(!value.BROWSER_AUTH_ENABLED)ctx.addIssue({
+      code:"custom",path:["BROWSER_AUTH_ENABLED"],
+      message:"Private Messenger Page linking requires AAL2 browser auth"
+    });
+    for(const key of [
+      "BROWSER_AUTH_ORIGIN","META_APP_SECRET",
+      "META_FACEBOOK_LOGIN_CONFIG_ID","OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64"
+    ] as const)if(value[key]===undefined)ctx.addIssue({
+      code:"custom",path:[key],
+      message:"Messenger Page linking requires owner-approved Meta configuration"
+    });
+    if(value.META_APP_SECRET!==undefined&&value.META_APP_SECRET.length<16)
+      ctx.addIssue({code:"custom",path:["META_APP_SECRET"],
+        message:"Meta app secret must be a confidential server-side credential"});
+  }
+  if(value.BROWSER_TIKTOK_ACCOUNT_CONNECT_ENABLED){
+    if(!value.BROWSER_AUTH_ENABLED)ctx.addIssue({
+      code:"custom",path:["BROWSER_AUTH_ENABLED"],
+      message:"TikTok owner linking requires AAL2 browser authentication"
+    });
+    for(const key of ["BROWSER_AUTH_ORIGIN","TIKTOK_BUSINESS_APP_ID",
+      "TIKTOK_BUSINESS_APP_SECRET","OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64",
+      "TIKTOK_ACCOUNT_HOLDER_AUTHORIZATION_URL"] as const){
+      if(value[key]===undefined)ctx.addIssue({
+        code:"custom",path:[key],
+        message:"TikTok account holder connection requires registered developer configuration"
+      });
+    }
   }
   if(value.BROWSER_TELEGRAM_OIDC_ENABLED){
     if(!value.BROWSER_AUTH_ENABLED)ctx.addIssue({

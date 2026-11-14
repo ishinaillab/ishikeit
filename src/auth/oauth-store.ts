@@ -182,7 +182,7 @@ export class PostgresOAuthCredentialStore implements OAuthCredentialStore {
     tx: SqlExecutor,
     credential: Omit<OAuthCredential,"tokenVersion">
   ): Promise<void> {
-    if(!["workspace-instagram","workspace-whatsapp"].includes(credential.provider) ||
+    if(!["workspace-instagram","workspace-whatsapp","workspace-messenger","workspace-tiktok"].includes(credential.provider) ||
        !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/iu.test(credential.accountId))
       throw new Error("Tenant provider grant custody requires isolated namespace");
     await this.#writeCredential(tx,credential);

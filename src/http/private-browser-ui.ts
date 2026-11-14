@@ -137,7 +137,9 @@ export const privateLoginHtml = `<!doctype html>
           <p id="channels-context" class="muted">Current workspace</p>
           <button type="button" id="channels-connect-instagram" class="secondary" hidden>Connect Instagram</button>
           <button type="button" id="channels-connect-whatsapp" class="secondary" hidden>Connect WhatsApp</button>
+          <button type="button" id="channels-connect-messenger" class="secondary" hidden>Connect Messenger</button>
           <button type="button" id="channels-connect-telegram" class="secondary" hidden>Connect Telegram</button>
+          <button type="button" id="channels-connect-tiktok" class="secondary" hidden>Connect TikTok</button>
           <button type="button" id="channels-refresh" class="secondary">Refresh status</button>
         </div>
         <p id="channels-note" class="muted channels-note">This list shows Ishikeit's internal connection status, not a live provider permission check. Account linking and sending remain unavailable until verified provider authorization is implemented.</p>
@@ -496,7 +498,9 @@ const channelsMore=get("channels-more");
 const channelsRefresh=get("channels-refresh");
 const channelsConnectInstagram=get("channels-connect-instagram");
 const channelsConnectWhatsApp=get("channels-connect-whatsapp");
+const channelsConnectMessenger=get("channels-connect-messenger");
 const channelsConnectTelegram=get("channels-connect-telegram");
+const channelsConnectTikTok=get("channels-connect-tiktok");
 const channelsNote=get("channels-note");
 const status=get("status");
 const accountMenu=get("account-menu");
@@ -515,7 +519,9 @@ let currentWorkspaceId="";
 let invitingEnabled=false;
 let instagramConnectEnabled=false;
 let whatsappEmbeddedV4Enabled=false;
+let messengerConnectEnabled=false;
 let telegramConnectEnabled=false;
+let tiktokConnectEnabled=false;
 let connectionsEpoch=0;
 let connectionsLoading=false;
 let connectionsNext=null;
@@ -596,6 +602,7 @@ function resetConnections(){
   channelsRefresh.disabled=false;
   channelsConnectInstagram.disabled=false;
   channelsConnectTelegram.disabled=false;
+  channelsConnectTikTok.disabled=false;
 }
 function channelsAllowed(){
   const workspace=workspaceRows.find(item=>item.workspaceId===currentWorkspaceId);
@@ -720,6 +727,33 @@ async function loadConnections(more){
         });
         card.append(activate);
       }
+      if(messengerConnectEnabled && record.provider==="messenger" &&
+         record.status==="verifying"){
+        const activate=document.createElement("button");
+        activate.type="button";activate.className="secondary";
+        activate.textContent="Confirm Messenger Page";
+        activate.setAttribute("aria-label","Confirm Messenger Page "+record.accountId);
+        activate.addEventListener("click",async()=>{
+          if(!messengerConnectEnabled||!channelsAllowed()||
+            record.workspaceId!==currentWorkspaceId||
+            mode!=="dashboard"||!csrfToken)return;
+          activate.disabled=true;
+          channelsStatus.textContent="Verifying your Page with Meta…";
+          try{
+            const response=await request(
+              "/app/auth/workspaces/"+encodeURIComponent(record.workspaceId)+
+              "/connections/"+encodeURIComponent(record.connectionId)+
+              "/messenger-activate",{},csrfToken);
+            if(!response.ok)throw Error("Page activation denied");
+            channelsStatus.textContent="Page verified. Automation remains disabled until tenant routing is approved.";
+            void loadConnections(false);
+          }catch{
+            activate.disabled=false;
+            channelsStatus.textContent="Messenger Page verification unavailable. Check current Page permissions and try again.";
+          }
+        });
+        card.append(activate);
+      }
       if(telegramConnectEnabled && record.provider==="telegram" &&
          record.status==="verifying"){
         const form=document.createElement("form");
@@ -765,6 +799,34 @@ async function loadConnections(more){
           }
         });
         card.append(form);
+      }
+      if(tiktokConnectEnabled && record.provider==="tiktok" &&
+         record.status==="verifying"){
+        const activate=document.createElement("button");
+        activate.type="button";activate.className="secondary";
+        activate.textContent="Verify TikTok account";
+        activate.setAttribute("aria-label","Verify TikTok account "+record.accountId);
+        activate.addEventListener("click",async()=>{
+          if(!tiktokConnectEnabled || !channelsAllowed() ||
+             record.workspaceId!==currentWorkspaceId ||
+             mode!=="dashboard" || !csrfToken)return;
+          activate.disabled=true;
+          channelsStatus.textContent="Confirming your TikTok account ownership and eligibility…";
+          try{
+            const response=await request(
+              "/app/auth/workspaces/"+encodeURIComponent(record.workspaceId)+
+              "/connections/"+encodeURIComponent(record.connectionId)+
+              "/tiktok-activate",{},csrfToken
+            );
+            if(!response.ok)throw Error("TikTok account verification unavailable");
+            channelsStatus.textContent="TikTok account readback verified. Messaging automation remains disabled until the app has approved messaging access.";
+            void loadConnections(false);
+          }catch{
+            activate.disabled=false;
+            channelsStatus.textContent="TikTok account could not be verified. Check the provider account authorization and try again.";
+          }
+        });
+        card.append(activate);
       }
       channelsList.append(card);
     }
@@ -922,8 +984,11 @@ function renderWorkspace(){
   get("channels-context").textContent="Workspace: "+name;
   channelsConnectInstagram.hidden=!(instagramConnectEnabled && channelsAllowed());
   channelsConnectWhatsApp.hidden=!(whatsappEmbeddedV4Enabled && channelsAllowed());
+  channelsConnectMessenger.hidden=!(messengerConnectEnabled && channelsAllowed());
+  channelsConnectTikTok.hidden=!(tiktokConnectEnabled && channelsAllowed());
   channelsConnectTelegram.hidden=!(telegramConnectEnabled && channelsAllowed());
   channelsNote.textContent=(instagramConnectEnabled||whatsappEmbeddedV4Enabled||
+    messengerConnectEnabled||tiktokConnectEnabled||
     telegramConnectEnabled)
     ?"Provider account authentication is separate from messaging permission. Confirm any provider Business connection separately. The registry does not activate messaging or automation."
     :"This is a private registry inventory, not a live provider permission check. Account onboarding and sending are currently unavailable.";
@@ -963,7 +1028,9 @@ function showDashboard(data,preserve){
   invitingEnabled=data.memberInvitationsEnabled===true;
   instagramConnectEnabled=data.instagramConnectEnabled===true;
   whatsappEmbeddedV4Enabled=data.whatsappEmbeddedV4Enabled===true;
+  messengerConnectEnabled=data.messengerConnectEnabled===true;
   telegramConnectEnabled=data.telegramConnectEnabled===true;
+  tiktokConnectEnabled=data.tiktokConnectEnabled===true;
   if(!workspaceRows.some(item=>item.workspaceId===currentWorkspaceId))
     currentWorkspaceId=workspaceRows[0].workspaceId;
   renderWorkspace();
@@ -1322,6 +1389,30 @@ channelsConnectWhatsApp.addEventListener("click",()=>{
   window.location.assign("/app/auth/workspaces/"+
     encodeURIComponent(workspaceId)+"/whatsapp/signup");
 });
+channelsConnectMessenger.addEventListener("click",async()=>{
+  if(!messengerConnectEnabled||!channelsAllowed()||mode!=="dashboard"||
+    !csrfToken||!currentWorkspaceId)return;
+  const workspaceId=currentWorkspaceId;
+  channelsConnectMessenger.disabled=true;
+  channelsStatus.textContent="Opening authorized Facebook Page login…";
+  try{
+    const response=await request("/app/auth/workspaces/"+
+      encodeURIComponent(workspaceId)+"/connections/messenger/start",{},csrfToken);
+    if(workspaceId!==currentWorkspaceId||mode!=="dashboard")return;
+    if(!response.ok)throw Error("Messenger Page authorization unavailable");
+    const data=await response.json();
+    const url=new URL(data.authorizationUrl);
+    if(url.origin!=="https://www.facebook.com"||
+      !new RegExp("^/v[0-9]{1,2}[.][0-9]{1,2}/dialog/oauth$","u").test(url.pathname))
+      throw Error("Unrecognized Meta login host");
+    window.location.assign(url.toString());
+  }catch{
+    if(workspaceId===currentWorkspaceId&&mode==="dashboard"){
+      channelsConnectMessenger.disabled=false;
+      channelsStatus.textContent="Messenger authorization could not start. Verify workspace access and Meta setup.";
+    }
+  }
+});
 channelsConnectTelegram.addEventListener("click",async()=>{
   if(!telegramConnectEnabled||!channelsAllowed()||mode!=="dashboard"||
      !csrfToken||!currentWorkspaceId)return;
@@ -1342,6 +1433,31 @@ channelsConnectTelegram.addEventListener("click",async()=>{
     if(workspaceId===currentWorkspaceId&&mode==="dashboard"){
       channelsConnectTelegram.disabled=false;
       channelsStatus.textContent="Telegram authorization could not start. Check your workspace role and try again.";
+    }
+  }
+});
+channelsConnectTikTok.addEventListener("click",async()=>{
+  if(!tiktokConnectEnabled||!channelsAllowed()||mode!=="dashboard"||
+     !csrfToken||!currentWorkspaceId)return;
+  const workspaceId=currentWorkspaceId;
+  channelsConnectTikTok.disabled=true;
+  channelsStatus.textContent="Opening TikTok account holder authorization…";
+  try{
+    const response=await request("/app/auth/workspaces/"+
+      encodeURIComponent(workspaceId)+"/connections/tiktok/start",{},csrfToken);
+    if(workspaceId!==currentWorkspaceId||mode!=="dashboard")return;
+    if(!response.ok)throw Error("TikTok authorization unavailable");
+    const data=await response.json();
+    const url=new URL(data.authorizationUrl);
+    if(url.protocol!=="https:"||
+       !["ads.tiktok.com","business-api.tiktok.com","www.tiktok.com"]
+         .includes(url.hostname)||url.username||url.password)
+      throw Error("Untrusted TikTok account authorization");
+    window.location.assign(url.toString());
+  }catch{
+    if(workspaceId===currentWorkspaceId&&mode==="dashboard"){
+      channelsConnectTikTok.disabled=false;
+      channelsStatus.textContent="TikTok account authorization could not start. Verify your permissions and retry.";
     }
   }
 });

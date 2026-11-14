@@ -59,6 +59,9 @@ import { PostgresWorkspaceConnectionIntents } from "../persistence/workspace-con
 import { AuthenticatedWorkspaceConnectionIntents } from "../auth/authenticated-workspace-connection.js";
 import { ProviderNativeInstagramConsent } from "../auth/workspace-provider-consent.js";
 import { WorkspaceInstagramConnectionCoordinator } from "../auth/workspace-instagram-connect.js";
+import {
+  WorkspaceTelegramOIDCConnections,TelegramOIDCClient,TelegramNativeBusinessReader
+} from "../auth/workspace-telegram-oidc.js";
 import { SupabaseEmailOtpClient } from "../auth/supabase-email-otp.js";
 import { SupabaseTotpMfaClient } from "../auth/supabase-totp-mfa.js";
 import { SupabaseAdminInviteClient } from "../auth/supabase-admin-invite.js";
@@ -626,6 +629,31 @@ const instagramNativeConnector=(!instagramNativeConfigured ||
       client:instagramOAuthClient
     })
   });
+// The modern Telegram OIDC client ID and secret are independent of the Bot
+// API token. Start only with explicit owner opt-in and BotFather URL allowlist.
+const telegramNativeConnector=!env.BROWSER_TELEGRAM_OIDC_ENABLED?undefined
+  :new WorkspaceTelegramOIDCConnections({
+    clientId:env.TELEGRAM_OIDC_CLIENT_ID!,
+    redirectUri:new URL("/app/auth/connect/telegram/callback",
+      env.BROWSER_AUTH_ORIGIN).toString(),
+    intents:new AuthenticatedWorkspaceConnectionIntents(
+      new SupabaseAuthPrincipalVerifier({
+        projectUrl:env.SUPABASE_AUTH_PROJECT_URL!,
+        publishableKey:env.SUPABASE_AUTH_PUBLISHABLE_KEY!,db
+      }),
+      new PostgresWorkspaceConnectionIntents(db)
+    ),
+    oidc:new TelegramOIDCClient({
+      clientId:env.TELEGRAM_OIDC_CLIENT_ID!,
+      clientSecret:env.TELEGRAM_OIDC_CLIENT_SECRET!,
+      redirectUri:new URL("/app/auth/connect/telegram/callback",
+        env.BROWSER_AUTH_ORIGIN).toString()
+    }),
+    business:new TelegramNativeBusinessReader({
+      botToken:env.TELEGRAM_BOT_TOKEN!
+    }),
+    registry:privateWorkspaceRegistry
+  });
 const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
   projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
   db,
@@ -647,6 +675,7 @@ const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
   // Private read-only inventory; no provider connections can be created here.
   connections:privateWorkspaceRegistry,
   ...(instagramNativeConnector===undefined?{}:{instagramConnections:instagramNativeConnector}),
+  ...(telegramNativeConnector===undefined?{}:{telegramConnections:telegramNativeConnector}),
   auth: new SupabaseAuthPrincipalVerifier({
     projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
     publishableKey: env.SUPABASE_AUTH_PUBLISHABLE_KEY!,
@@ -675,7 +704,8 @@ const server = buildServer({
     browserAuth: {origin: env.BROWSER_AUTH_ORIGIN!,controller: browserAuth,
       allowWorkspaceInvitations:workspaceInvites!==undefined,
       allowWorkspaceConnections:true,
-      allowInstagramConnect:instagramNativeConnector!==undefined}
+      allowInstagramConnect:instagramNativeConnector!==undefined,
+      allowTelegramOIDC:telegramNativeConnector!==undefined}
   }),
   buildIdentity: runtimeBuildIdentity(),
   ready: async () =>

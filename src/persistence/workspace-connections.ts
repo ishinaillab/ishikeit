@@ -305,6 +305,66 @@ export class PostgresWorkspaceConnectionRegistry {
     });
   }
 
+  /**
+   * Telegram OIDC ownership and its Bot API Business permission are separate
+   * provider proofs. Only the trusted server coordinator may call this after
+   * Telegram getBusinessConnection returns the EXACT OIDC subject.
+   * The caller rechecks fresh AAL2 and membership; the SQL transaction
+   * independently fences account ownership, original app and current role.
+   */
+  async activateTelegramBusiness(input:{
+    workspaceId:string;connectionId:string;actor:WorkspacePrincipal;
+    providerApplicationKey:string;ownerId:string;
+    businessConnectionId:string;verifiedAt:string
+  }):Promise<WorkspaceConnection>{
+    const p=z.object({
+      workspaceId:uuid,connectionId:uuid,actor:principalSchema,
+      providerApplicationKey:shortRef,ownerId:accountId,
+      businessConnectionId:accountId,
+      verifiedAt:z.iso.datetime({offset:true})
+    }).strict().parse(input);
+    const at=Date.parse(p.verifiedAt);
+    if(!Number.isFinite(at)||at>Date.now()+120000||at<Date.now()-900000)
+      throw new Error("Fresh Telegram Business provider readback required");
+    return this.db.transaction(async tx=>{
+      await authorize(tx,{workspaceId:p.workspaceId,...p.actor},"admin");
+      const previous=await readLocked(tx,p.workspaceId,p.connectionId);
+      if(previous.status!=="verifying"||previous.provider!=="telegram"||
+        previous.accountId!==p.ownerId)
+        throw new Error("Telegram OIDC owner verification mismatch");
+      const binding=await tx.query<BindingRow>(
+        `SELECT provider_application_key,provider_connection_id,credential_account_id
+           FROM public.ishikeit_account_connections
+          WHERE workspace_id=$1 AND connection_id=$2`,
+        [p.workspaceId,p.connectionId]
+      );
+      const orig=binding.rows[0];
+      if(orig===undefined||
+        orig.provider_application_key!==p.providerApplicationKey||
+        orig.provider_connection_id!==null||
+        orig.credential_account_id!==null)
+        throw new Error("Telegram business binding has changed");
+      // Uniqueness of (provider,provider_connection_id) and of immutable
+      // account owner is enforced by PostgreSQL (including paused links).
+      const result=await tx.query<ConnectionRow>(
+        `UPDATE public.ishikeit_account_connections
+           SET provider_connection_id=$3,status='connected',
+               generation=generation+1,activated_at=now(),updated_at=now()
+          WHERE connection_id=$1 AND workspace_id=$2
+            AND provider='telegram' AND provider_account_id=$4
+            AND provider_connection_id IS NULL AND credential_account_id IS NULL
+            AND status='verifying'
+          RETURNING connection_id,workspace_id,provider,provider_account_id,status,generation`,
+        [p.connectionId,p.workspaceId,p.businessConnectionId,p.ownerId]
+      );
+      const row=result.rows[0];
+      if(row===undefined)throw new Error("Telegram business activation not permitted");
+      const activated=present(row);
+      await audit(tx,activated,"activated",p.actor);
+      return activated;
+    });
+  }
+
   async pause(input: z.infer<typeof idAction>): Promise<WorkspaceConnection> {
     const p = idAction.parse(input);
     return this.db.transaction(async (tx) => {

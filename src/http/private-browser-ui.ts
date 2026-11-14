@@ -136,6 +136,7 @@ export const privateLoginHtml = `<!doctype html>
         <div class="channels-toolbar">
           <p id="channels-context" class="muted">Current workspace</p>
           <button type="button" id="channels-connect-instagram" class="secondary" hidden>Connect Instagram</button>
+          <button type="button" id="channels-connect-telegram" class="secondary" hidden>Connect Telegram</button>
           <button type="button" id="channels-refresh" class="secondary">Refresh status</button>
         </div>
         <p id="channels-note" class="muted channels-note">This list shows Ishikeit's internal connection status, not a live provider permission check. Account linking and sending remain unavailable until verified provider authorization is implemented.</p>
@@ -493,6 +494,7 @@ const channelsStatus=get("channels-status");
 const channelsMore=get("channels-more");
 const channelsRefresh=get("channels-refresh");
 const channelsConnectInstagram=get("channels-connect-instagram");
+const channelsConnectTelegram=get("channels-connect-telegram");
 const channelsNote=get("channels-note");
 const status=get("status");
 const accountMenu=get("account-menu");
@@ -510,6 +512,7 @@ let workspaceRows=[];
 let currentWorkspaceId="";
 let invitingEnabled=false;
 let instagramConnectEnabled=false;
+let telegramConnectEnabled=false;
 let connectionsEpoch=0;
 let connectionsLoading=false;
 let connectionsNext=null;
@@ -589,6 +592,7 @@ function resetConnections(){
   channelsMore.disabled=false;
   channelsRefresh.disabled=false;
   channelsConnectInstagram.disabled=false;
+  channelsConnectTelegram.disabled=false;
 }
 function channelsAllowed(){
   const workspace=workspaceRows.find(item=>item.workspaceId===currentWorkspaceId);
@@ -684,6 +688,52 @@ async function loadConnections(more){
           }
         });
         card.append(activate);
+      }
+      if(telegramConnectEnabled && record.provider==="telegram" &&
+         record.status==="verifying"){
+        const form=document.createElement("form");
+        form.className="channel-telegram-confirm";
+        const label=document.createElement("label");
+        label.textContent="Telegram Business connection ID";
+        const businessInput=document.createElement("input");
+        businessInput.type="text";businessInput.required=true;
+        businessInput.maxLength=256;businessInput.minLength=5;
+        businessInput.autocomplete="off";businessInput.spellcheck=false;
+        businessInput.placeholder="Business connection ID";
+        const submit=document.createElement("button");
+        submit.type="submit";submit.className="secondary";
+        submit.textContent="Verify Telegram Business";
+        label.append(businessInput);form.append(label,submit);
+        form.addEventListener("submit",async event=>{
+          event.preventDefault();
+          if(!telegramConnectEnabled || !channelsAllowed() ||
+             record.workspaceId!==currentWorkspaceId ||
+             mode!=="dashboard" || !csrfToken)return;
+          const candidate=businessInput.value.trim();
+          if(candidate.length<5 || candidate.length>256 ||
+             /[\\x00-\\x1f\\x7f]/u.test(candidate)){
+            channelsStatus.textContent="Enter a valid Telegram Business connection ID.";
+            return;
+          }
+          submit.disabled=true;
+          channelsStatus.textContent="Checking your Telegram Business connection…";
+          try{
+            const response=await request(
+              "/app/auth/workspaces/"+encodeURIComponent(record.workspaceId)+
+              "/connections/"+encodeURIComponent(record.connectionId)+
+              "/telegram-business",
+              {businessConnectionId:candidate},csrfToken
+            );
+            if(!response.ok)throw Error("Business verification refused");
+            businessInput.value="";
+            channelsStatus.textContent="Telegram Business readback confirmed for your account. Automation remains inactive until tenant routing is approved.";
+            void loadConnections(false);
+          }catch{
+            submit.disabled=false;businessInput.value="";
+            channelsStatus.textContent="Telegram Business connection was not verified. Confirm the owner and granted rights in Telegram and try again.";
+          }
+        });
+        card.append(form);
       }
       channelsList.append(card);
     }
@@ -840,8 +890,9 @@ function renderWorkspace(){
   get("nav-channels").hidden=!channelsAllowed();
   get("channels-context").textContent="Workspace: "+name;
   channelsConnectInstagram.hidden=!(instagramConnectEnabled && channelsAllowed());
-  channelsNote.textContent=instagramConnectEnabled
-    ?"Accounts are authorized through Instagram directly. A verified grant remains inactive until you confirm activation. Connecting does not start automation; provider permissions and public eligibility may differ."
+  channelsConnectTelegram.hidden=!(telegramConnectEnabled && channelsAllowed());
+  channelsNote.textContent=(instagramConnectEnabled||telegramConnectEnabled)
+    ?"Provider account authentication is separate from messaging permission. Confirm any provider Business connection separately. The registry does not activate messaging or automation."
     :"This is a private registry inventory, not a live provider permission check. Account onboarding and sending are currently unavailable.";
 }
 function showPanel(panel){
@@ -878,6 +929,7 @@ function showDashboard(data,preserve){
   workspaceRows=data.workspaces.items;
   invitingEnabled=data.memberInvitationsEnabled===true;
   instagramConnectEnabled=data.instagramConnectEnabled===true;
+  telegramConnectEnabled=data.telegramConnectEnabled===true;
   if(!workspaceRows.some(item=>item.workspaceId===currentWorkspaceId))
     currentWorkspaceId=workspaceRows[0].workspaceId;
   renderWorkspace();
@@ -1223,6 +1275,29 @@ channelsConnectInstagram.addEventListener("click",async()=>{
     if(workspaceId===currentWorkspaceId && mode==="dashboard"){
       channelsConnectInstagram.disabled=false;
       channelsStatus.textContent="Instagram authorization could not be started. Check your permissions and try again.";
+    }
+  }
+});
+channelsConnectTelegram.addEventListener("click",async()=>{
+  if(!telegramConnectEnabled||!channelsAllowed()||mode!=="dashboard"||
+     !csrfToken||!currentWorkspaceId)return;
+  const workspaceId=currentWorkspaceId;
+  channelsConnectTelegram.disabled=true;
+  channelsStatus.textContent="Opening verified Telegram sign-in…";
+  try{
+    const response=await request("/app/auth/workspaces/"+
+      encodeURIComponent(workspaceId)+"/connections/telegram/start",{},csrfToken);
+    if(workspaceId!==currentWorkspaceId||mode!=="dashboard")return;
+    if(!response.ok)throw Error("Telegram identity verification unavailable");
+    const data=await response.json();
+    const url=new URL(data.authorizationUrl);
+    if(url.origin!=="https://oauth.telegram.org" || url.pathname!=="/auth")
+      throw Error("Unrecognized Telegram auth host");
+    window.location.assign(url.toString());
+  }catch{
+    if(workspaceId===currentWorkspaceId&&mode==="dashboard"){
+      channelsConnectTelegram.disabled=false;
+      channelsStatus.textContent="Telegram authorization could not start. Check your workspace role and try again.";
     }
   }
 });

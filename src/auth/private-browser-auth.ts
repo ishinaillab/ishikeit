@@ -10,6 +10,7 @@ import type { PostgresDatabase, SqlExecutor } from "../persistence/postgres.js";
 import type { PostgresWorkspaceInvitations, InviteSummary } from "./workspace-member-invitations.js";
 import type { PostgresWorkspaceConnectionRegistry, WorkspaceConnectionPage } from "../persistence/workspace-connections.js";
 import type { WorkspaceInstagramConnectionCoordinator } from "./workspace-instagram-connect.js";
+import type { WorkspaceTelegramOIDCConnections } from "./workspace-telegram-oidc.js";
 
 const bearer = z.string().min(20).max(4096).regex(/^[A-Za-z0-9_-]+$/u);
 const normalizedEmail = z.email().min(3).max(320).transform(x=>x.trim().toLowerCase());
@@ -162,6 +163,7 @@ export class PrivateBrowserAuthService {
     memberInvites?:Pick<PostgresWorkspaceInvitations,"invite">;
     connections?:Pick<PostgresWorkspaceConnectionRegistry,"listForAdministrator">;
     instagramConnections?:Pick<WorkspaceInstagramConnectionCoordinator,"begin"|"complete"|"confirm">;
+    telegramConnections?:Pick<WorkspaceTelegramOIDCConnections,"begin"|"complete"|"confirm">;
     csrfKeyBase64:string;
     onOtpFailure?: (diagnostic:BrowserOtpFailureDiagnostic)=>void;
     /** Fixed enums only. Never log raw provider errors or any TOTP secret. */
@@ -559,6 +561,35 @@ export class PrivateBrowserAuthService {
     const verified=await this.#privilegedForProvider(cookie);
     return this.deps.instagramConnections.confirm({
       workspaceId,connectionId,actor:verified.principal
+    });
+  }
+
+  async beginTelegramConnection(cookie:string,workspaceId:string){
+    if(this.deps.telegramConnections===undefined)
+      throw new Error("Telegram OIDC connection unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.telegramConnections.begin(verified.accessToken,workspaceId);
+  }
+
+  async completeTelegramConnection(cookie:string,input:{
+    workspaceId:string;state:string;browserNonce:string;authorizationCode:string
+  }){
+    if(this.deps.telegramConnections===undefined)
+      throw new Error("Telegram OIDC connection unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.telegramConnections.complete({
+      ...input,accessToken:verified.accessToken
+    });
+  }
+
+  async confirmTelegramBusiness(cookie:string,input:{
+    workspaceId:string;connectionId:string;businessConnectionId:string
+  }){
+    if(this.deps.telegramConnections===undefined)
+      throw new Error("Telegram OIDC connection unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.telegramConnections.confirm({
+      ...input,actor:verified.principal
     });
   }
 

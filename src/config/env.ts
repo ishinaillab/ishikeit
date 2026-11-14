@@ -23,6 +23,9 @@ const schema = z.object({
   // Explicit owner opt-in after registering the new, exact Meta callback.
   // Never silently reuse the existing legacy Instagram OAuth redirect.
   BROWSER_INSTAGRAM_CONNECT_ENABLED: booleanFromEnv.default(false),
+  BROWSER_TELEGRAM_OIDC_ENABLED: booleanFromEnv.default(false),
+  TELEGRAM_OIDC_CLIENT_ID: z.string().regex(/^[1-9][0-9]{4,15}$/u).optional(),
+  TELEGRAM_OIDC_CLIENT_SECRET: z.string().min(16).max(1024).optional(),
   // Observation-only. Never enables tenant routing, ownership claims or sends.
   WORKSPACE_SHADOW_ROUTING_ENABLED: booleanFromEnv.default(false),
   BROWSER_AUTH_ORIGIN: z.string().url().optional(),
@@ -98,6 +101,25 @@ const schema = z.object({
   TIKTOK_MARKETING_OAUTH_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
   TIKTOK_OUTBOUND_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000)
 }).superRefine((value, ctx) => {
+  if(value.BROWSER_TELEGRAM_OIDC_ENABLED){
+    if(!value.BROWSER_AUTH_ENABLED)ctx.addIssue({
+      code:"custom",path:["BROWSER_AUTH_ENABLED"],
+      message:"Telegram OIDC linking requires AAL2 browser auth"
+    });
+    for(const key of [
+      "BROWSER_AUTH_ORIGIN","TELEGRAM_OIDC_CLIENT_ID",
+      "TELEGRAM_OIDC_CLIENT_SECRET","TELEGRAM_BOT_TOKEN"
+    ] as const){
+      if(value[key]===undefined)ctx.addIssue({
+        code:"custom",path:[key],message:"Telegram OIDC provider settings missing"
+      });
+    }
+    if(value.TELEGRAM_BOT_TOKEN!==undefined&&
+      value.TELEGRAM_OIDC_CLIENT_ID!==undefined&&
+      value.TELEGRAM_BOT_TOKEN.split(":",1)[0]!==value.TELEGRAM_OIDC_CLIENT_ID)
+      ctx.addIssue({code:"custom",path:["TELEGRAM_OIDC_CLIENT_ID"],
+        message:"Telegram Login bot ID must match the configured Business bot"});
+  }
   if(value.BROWSER_INSTAGRAM_CONNECT_ENABLED){
     if(!value.BROWSER_AUTH_ENABLED)ctx.addIssue({
       code:"custom",path:["BROWSER_AUTH_ENABLED"],

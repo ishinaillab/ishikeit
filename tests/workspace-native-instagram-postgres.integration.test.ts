@@ -184,6 +184,60 @@ describe.skipIf(db===undefined)("native Instagram grant custody under disposable
       .toMatchObject({accountId:linked.connectionId});
   });
 
+  it("isolates TikTok account-holder grants atomically without legacy token overwrite or cross-tenant claims",async()=>{
+    const clientApp="tiktok-holder-987654321";
+    async function linkTikTok(workspaceId:string,actor:WorkspacePrincipal,account:string){
+      const authSessionId=randomUUID(),connectionId=randomUUID();
+      const request={workspaceId,actor,sessionId:authSessionId,
+        provider:"tiktok",providerApplicationKey:clientApp,
+        redirectUri:"https://apps.ishinaillab.com/app/auth/connect/tiktok/callback/"};
+      const created=await intents!.begin(request);
+      const claim=await intents!.consume({...request,
+        state:created.state,browserNonce:created.browserNonce});
+      if(claim===undefined)throw Error("TikTok simulated owner grant not consumed");
+      return registry!.linkVerified({
+        workspaceId,actor,connectionId,
+        intentId:claim.intentId,sessionId:authSessionId,
+        providerApplicationKey:clientApp,credentialAccountId:connectionId,
+        proof:{provider:"tiktok",accountId:account,source:"oauth_grant",
+          sourceReference:clientApp,verifiedAt:new Date().toISOString()}
+      },tx=>vault!.putInTransaction(tx,{
+        provider:"workspace-tiktok",accountId:connectionId,
+        accessToken:"tenant-tiktok-private-"+connectionId,
+        refreshToken:"refresh-"+connectionId,
+        scopes:["biz.manage"],accessExpiresAt:expiry(),
+        refreshExpiresAt:new Date(Date.now()+31536000000)
+      }));
+    }
+    const first=await linkTikTok(workspaceA,ownerA,"tiktok-owner-a");
+    const second=await linkTikTok(workspaceB,ownerB,"tiktok-owner-b");
+    expect(first.status).toBe("verifying");
+    expect(second.status).toBe("verifying");
+    const rows=await db!.query<{provider:string;account_id:string;ciphertext:string}>(
+      "SELECT provider,account_id,encode(access_token_ciphertext,'hex') AS ciphertext FROM public.oauth_credentials"
+    );
+    expect(rows.rows).toHaveLength(2);
+    for(const row of rows.rows){
+      expect(row.provider).toBe("workspace-tiktok");
+      expect(row.ciphertext).not.toContain("tenant-tiktok-private");
+      expect((await vault!.get(row.provider,row.account_id))?.accessToken)
+        .toBe("tenant-tiktok-private-"+row.account_id);
+    }
+    await expect(vault!.latest("workspace-tiktok")).rejects.toThrow(/scope/);
+    await expect(vault!.list("workspace-tiktok")).rejects.toThrow(/scope/);
+    await expect(vault!.put({
+      provider:"workspace-tiktok",accountId:randomUUID(),
+      accessToken:"unsafe",scopes:["biz.manage"]
+    })).rejects.toThrow(/scope/);
+    await expect(linkTikTok(workspaceB,ownerB,"tiktok-owner-a")).rejects.toThrow();
+    expect((await db!.query(
+      "SELECT count(*)::integer AS n FROM public.oauth_credentials"
+    )).rows[0]?.n).toBe(2);
+    expect(await registry!.findForAdministrator({
+      workspaceId:workspaceA,connectionId:second.connectionId,actor:ownerA
+    })).toBeUndefined();
+  });
+
   it("rejects any writer attempt to store credentials in existing legacy provider namespace",async()=>{
     await expect(db!.transaction(tx=>vault!.putInTransaction(tx,{
       ...credential(randomUUID()),provider:"instagram"

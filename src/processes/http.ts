@@ -59,6 +59,7 @@ import { PostgresWorkspaceConnectionIntents } from "../persistence/workspace-con
 import { AuthenticatedWorkspaceConnectionIntents } from "../auth/authenticated-workspace-connection.js";
 import { ProviderNativeInstagramConsent } from "../auth/workspace-provider-consent.js";
 import { WorkspaceInstagramConnectionCoordinator } from "../auth/workspace-instagram-connect.js";
+import { WorkspaceTikTokOwnerConnections,TikTokAccountPermissionClient } from "../auth/workspace-tiktok-connect.js";
 import {
   WorkspaceTelegramOIDCConnections,TelegramOIDCClient,TelegramNativeBusinessReader
 } from "../auth/workspace-telegram-oidc.js";
@@ -216,11 +217,13 @@ const instagramOAuthConfigured = (
   && env.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined
 );
 const instagramNativeConfigured=env.BROWSER_INSTAGRAM_CONNECT_ENABLED;
+const tiktokHolderConfigured=env.BROWSER_TIKTOK_ACCOUNT_CONNECT_ENABLED;
 const oauthStore = !(
   tiktokOAuthConfigured
   || tiktokMarketingOAuthConfigured
   || instagramOAuthConfigured
   || instagramNativeConfigured
+  || tiktokHolderConfigured
 )
   ? undefined
   : new PostgresOAuthCredentialStore(
@@ -654,6 +657,32 @@ const telegramNativeConnector=!env.BROWSER_TELEGRAM_OIDC_ENABLED?undefined
     }),
     registry:privateWorkspaceRegistry
   });
+const tiktokOwnerConnector=(!tiktokHolderConfigured||oauthStore===undefined)
+  ?undefined
+  :new WorkspaceTikTokOwnerConnections({
+    appId:env.TIKTOK_BUSINESS_APP_ID!,
+    authorizationUrl:env.TIKTOK_ACCOUNT_HOLDER_AUTHORIZATION_URL!,
+    redirectUri:new URL(
+      "/app/auth/connect/tiktok/callback/",env.BROWSER_AUTH_ORIGIN
+    ).toString(),
+    intents:new AuthenticatedWorkspaceConnectionIntents(
+      new SupabaseAuthPrincipalVerifier({
+        projectUrl:env.SUPABASE_AUTH_PROJECT_URL!,
+        publishableKey:env.SUPABASE_AUTH_PUBLISHABLE_KEY!,db
+      }),
+      new PostgresWorkspaceConnectionIntents(db)
+    ),
+    oauth:new TikTokOAuthClient({
+      appId:env.TIKTOK_BUSINESS_APP_ID!,
+      appSecret:env.TIKTOK_BUSINESS_APP_SECRET!,
+      apiVersion:env.TIKTOK_BUSINESS_API_VERSION,
+      requestTimeoutMs:env.TIKTOK_OAUTH_REQUEST_TIMEOUT_MS
+    }),
+    accountReader:new TikTokAccountPermissionClient({
+      version:"v1.3",appId:env.TIKTOK_BUSINESS_APP_ID!
+    }),
+    registry:privateWorkspaceRegistry,vault:oauthStore
+  });
 const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
   projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
   db,
@@ -676,6 +705,7 @@ const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
   connections:privateWorkspaceRegistry,
   ...(instagramNativeConnector===undefined?{}:{instagramConnections:instagramNativeConnector}),
   ...(telegramNativeConnector===undefined?{}:{telegramConnections:telegramNativeConnector}),
+  ...(tiktokOwnerConnector===undefined?{}:{tiktokConnections:tiktokOwnerConnector}),
   auth: new SupabaseAuthPrincipalVerifier({
     projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
     publishableKey: env.SUPABASE_AUTH_PUBLISHABLE_KEY!,
@@ -705,7 +735,8 @@ const server = buildServer({
       allowWorkspaceInvitations:workspaceInvites!==undefined,
       allowWorkspaceConnections:true,
       allowInstagramConnect:instagramNativeConnector!==undefined,
-      allowTelegramOIDC:telegramNativeConnector!==undefined}
+      allowTelegramOIDC:telegramNativeConnector!==undefined,
+      allowTikTokHolder:tiktokOwnerConnector!==undefined}
   }),
   buildIdentity: runtimeBuildIdentity(),
   ready: async () =>

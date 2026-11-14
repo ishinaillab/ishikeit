@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {privateLoginHtml,privateLoginCss,privateLoginJs} from "./private-browser-ui.js";
+import {instagramConnectionReturnHtml,instagramConnectionReturnJs} from "./private-workspace-connect.js";
 import {
   BrowserLoginSessionSetupError, BrowserMfaEnrollmentRateLimited,
   BrowserMfaPendingEnrollment, BrowserMfaLastAuthenticatorError,
@@ -22,6 +23,9 @@ export interface BrowserAuthController {
   listWorkspaceConnections?:(
     cookie:string,workspaceId:string,after?:string
   )=>ReturnType<PrivateBrowserAuthService["listWorkspaceConnections"]>;
+  beginInstagramConnection?:PrivateBrowserAuthService["beginInstagramConnection"];
+  completeInstagramConnection?:PrivateBrowserAuthService["completeInstagramConnection"];
+  confirmInstagramConnection?:PrivateBrowserAuthService["confirmInstagramConnection"];
   refresh(cookie:string):ReturnType<PrivateBrowserAuthService["refresh"]>;
   csrf(cookie:string):Promise<string>;
   listTotpFactors(cookie:string):ReturnType<PrivateBrowserAuthService["listTotpFactors"]>;
@@ -75,6 +79,31 @@ function privateResponse(reply:FastifyReply):FastifyReply {
 function cookie(name:string,value:string,age:number):string {
   return name+"="+value+"; Path=/; Max-Age="+age+"; HttpOnly; Secure; SameSite=Strict";
 }
+const connectCookieName="__Host-ishikeit-ig-connect";
+const connectCookieSchema=z.string().regex(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{43}$/iu
+);
+function readConnectCookie(req:FastifyRequest):{
+  workspaceId:string;browserNonce:string
+}|undefined {
+  const raw=req.headers.cookie;
+  if(raw===undefined||raw.length>8192)return undefined;
+  let value:string|undefined;
+  for(const part of raw.split(";")){
+    const pos=part.indexOf("=");
+    if(pos<0||part.slice(0,pos).trim()!==connectCookieName)continue;
+    if(value!==undefined)return undefined;
+    value=part.slice(pos+1).trim();
+  }
+  if(value===undefined||!connectCookieSchema.safeParse(value).success)
+    return undefined;
+  const split=value.indexOf(".");
+  return {workspaceId:value.slice(0,split),browserNonce:value.slice(split+1)};
+}
+function connectCookie(value:string,age:number):string {
+  return connectCookieName+"="+value+"; Path=/; Max-Age="+age+
+    "; HttpOnly; Secure; SameSite=Lax";
+}
 function clearCookie(name:string):string {
   return name+"=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict";
 }
@@ -82,7 +111,7 @@ function clearCookie(name:string):string {
 export function registerPrivateBrowserAuthRoutes(
   server:FastifyInstance,
   deps:{origin:string;controller:BrowserAuthController;allowWorkspaceInvitations?:boolean;
-    allowWorkspaceConnections?:boolean}
+    allowWorkspaceConnections?:boolean;allowInstagramConnect?:boolean}
 ):void {
   const url=new URL(deps.origin);
   if(url.protocol!=="https:" || url.pathname!=="/" || url.search || url.hash
@@ -130,6 +159,9 @@ export function registerPrivateBrowserAuthRoutes(
   function invitationCapability(data:{memberInvitationsEnabled?:boolean}):boolean {
     // The UI must not expose an invitation feature unless its route is enabled.
     return deps.allowWorkspaceInvitations===true && data.memberInvitationsEnabled===true;
+  }
+  function instagramConnectCapability():boolean {
+    return deps.allowInstagramConnect===true;
   }
 
   function privateUi(req:FastifyRequest,reply:FastifyReply,
@@ -248,7 +280,8 @@ export function registerPrivateBrowserAuthRoutes(
       return reply.code(200).send({
         status:"authenticated",expiresAt:data.expiresAt,
         csrfToken:data.csrfToken,workspaces:data.workspaces,
-        memberInvitationsEnabled:invitationCapability(data)
+        memberInvitationsEnabled:invitationCapability(data),
+        instagramConnectEnabled:instagramConnectCapability()
       });
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
@@ -291,6 +324,126 @@ export function registerPrivateBrowserAuthRoutes(
     );
   }
 
+  // Owner/admin native Instagram OAuth connect. Disabled by default unless
+  // the exact server app and registered callback are configured. Live legacy
+  // webhook routing stays untouched even when these private routes are on.
+  if(deps.allowInstagramConnect===true &&
+    deps.controller.beginInstagramConnection!==undefined &&
+    deps.controller.completeInstagramConnection!==undefined &&
+    deps.controller.confirmInstagramConnection!==undefined){
+    const uuidSchema=z.string().uuid();
+    const callbackSchema=z.object({
+      state:z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+      code:z.string().regex(/^[A-Za-z0-9._~%-]{8,4096}$/u)
+    }).strict();
+    const finishSchema=z.object({
+      state:z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+      authorizationCode:z.string().regex(/^[A-Za-z0-9._~%-]{8,4096}$/u)
+    }).strict();
+    server.post<{Params:{workspaceId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/instagram/start",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const params=z.object({workspaceId:uuidSchema}).strict().safeParse(req.params);
+        if(!params.success||!z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const started=await deps.controller.beginInstagramConnection!(
+            value,params.data.workspaceId
+          );
+          const external=new URL(started.authorizationUrl);
+          if(external.origin!=="https://www.instagram.com" ||
+            external.pathname!=="/oauth/authorize")
+            throw Error("Provider authorization URL invalid");
+          return reply.header("set-cookie",connectCookie(
+            params.data.workspaceId+"."+started.browserNonce,600
+          )).code(200).send({
+            status:"provider_authorization_required",
+            authorizationUrl:started.authorizationUrl,
+            expiresAt:started.expiresAt
+          });
+        }catch{
+          return deny(reply,403).send({status:"connection_unavailable"});
+        }
+      }
+    );
+    // OAuth provider redirects are cross-site; no Strict session cookie is
+    // relied on during GET. GET is read-only, no code redemption. The returned
+    // first-party document immediately removes the code from browser history
+    // before POSTing with the ordinary Strict BFF cookie and session CSRF.
+    server.get("/app/auth/connect/instagram/callback",async(req,reply)=>{
+      privateResponse(reply);
+      if(req.headers.host!==host)
+        return deny(reply,403).send("Authorization unavailable");
+      const callback=callbackSchema.safeParse(req.query);
+      if(!callback.success)
+        return deny(reply,400).send("Authorization unavailable");
+      return reply.header("content-security-policy",
+        "default-src 'none'; script-src 'self'; style-src 'self'; "+
+        "img-src 'self'; connect-src 'self'; frame-ancestors 'none'; "+
+        "base-uri 'none'; form-action 'none'")
+        .type("text/html; charset=utf-8").code(200)
+        .send(instagramConnectionReturnHtml(callback.data.state,callback.data.code));
+    });
+    server.get("/app/auth/instagram-return.js",(req,reply)=>{
+      privateResponse(reply);
+      if(req.headers.host!==host)
+        return deny(reply,403).send("Authorization unavailable");
+      return reply.type("text/javascript; charset=utf-8")
+        .send(instagramConnectionReturnJs);
+    });
+    server.post("/app/auth/connect/instagram/complete",
+      {bodyLimit:8192},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const binding=readConnectCookie(req);
+        const parsed=finishSchema.safeParse(req.body);
+        if(binding===undefined||!parsed.success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const result=await deps.controller.completeInstagramConnection!(value,{
+            workspaceId:binding.workspaceId,browserNonce:binding.browserNonce,
+            state:parsed.data.state,authorizationCode:parsed.data.authorizationCode
+          });
+          return reply.header("set-cookie",connectCookie("",0))
+            .code(200).send(result);
+        }catch{
+          return deny(reply,403).header("set-cookie",connectCookie("",0))
+            .send({status:"connection_rejected"});
+        }
+      }
+    );
+    server.post<{Params:{workspaceId:string;connectionId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/:connectionId/activate",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const params=z.object({workspaceId:uuidSchema,connectionId:uuidSchema})
+          .strict().safeParse(req.params);
+        if(!params.success||!z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const result=await deps.controller.confirmInstagramConnection!(
+            value,params.data.workspaceId,params.data.connectionId
+          );
+          return reply.code(200).send(result);
+        }catch{
+          return deny(reply,403).send({status:"activation_unavailable"});
+        }
+      }
+    );
+  }
+
   server.post("/app/auth/refresh",{bodyLimit:256},async(req,reply)=>{
     privateResponse(reply);
     if(!mutation(req,reply))return reply;
@@ -304,7 +457,8 @@ export function registerPrivateBrowserAuthRoutes(
           csrfToken:data.csrfToken});
       return reply.code(200).send({status:"authenticated",expiresAt:data.expiresAt,
         csrfToken:data.csrfToken,workspaces:data.workspaces,
-        memberInvitationsEnabled:invitationCapability(data)});
+        memberInvitationsEnabled:invitationCapability(data),
+        instagramConnectEnabled:instagramConnectCapability()});
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
   server.get("/app/auth/mfa/factors",async(req,reply)=>{
@@ -411,7 +565,8 @@ export function registerPrivateBrowserAuthRoutes(
         .code(200).send({
           status:"authenticated",expiresAt:data.expiresAt,csrfToken:data.csrfToken,
           workspaces:data.workspaces,
-          memberInvitationsEnabled:invitationCapability(data)
+          memberInvitationsEnabled:invitationCapability(data),
+        instagramConnectEnabled:instagramConnectCapability()
         });
     }catch{return deny(reply,403).send({status:"mfa_verification_failed"});}
   });

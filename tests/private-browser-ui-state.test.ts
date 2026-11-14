@@ -48,6 +48,8 @@ interface ChannelRowFixture {
 interface UiFixtureOptions {
   channelItems?:ChannelRowFixture[];
   channelReadStatus?:number;
+  capabilityPayload?:unknown;
+  capabilityReadStatus?:number;
   state?:"authenticated"|"mfa_required"|"unauthenticated";
   deferInitialSession?:boolean;
   pendingEmailCookie?:boolean;
@@ -112,6 +114,8 @@ function setup(options:UiFixtureOptions={}){
   let resetRequests=0;
   let channelReads=0;
   const channelPaths:string[]=[];
+  let capabilityReads=0;
+  const capabilityPaths:string[]=[];
   let signIn2faEnabled=true;
   const disabled=new Set<string>();
   const factorLabels=new Map<string,string>();
@@ -152,6 +156,14 @@ function setup(options:UiFixtureOptions={}){
     }
     if(path==="/app/auth/csrf")
       return Promise.resolve(response({status:"unauthenticated"},401));
+    if(path.startsWith("/app/auth/workspaces/")&&path.endsWith("/capabilities")){
+      capabilityReads++;
+      capabilityPaths.push(path);
+      if(options.capabilityReadStatus && options.capabilityReadStatus!==200)
+        return Promise.resolve(response({status:"capability_evidence_unavailable"},
+          options.capabilityReadStatus));
+      return Promise.resolve(response(options.capabilityPayload??{status:"unavailable"}));
+    }
     if(path.startsWith("/app/auth/workspaces/") && path.includes("/connections")){
       channelReads++;
       channelPaths.push(path);
@@ -307,7 +319,8 @@ function setup(options:UiFixtureOptions={}){
     },
     stats:()=>({enrollRequests,refreshRequests,logoutRequests,
       factorReads,restoreCalls,pendingChecks,restoredEmail,securityChanges,resetRequests,
-      channelReads,channelPaths,signIn2faEnabled,disabledCount:disabled.size,deletedByProvider,copiedKey,factors})};
+      channelReads,channelPaths,capabilityReads,capabilityPaths,
+      signIn2faEnabled,disabledCount:disabled.size,deletedByProvider,copiedKey,factors})};
 }
 
 describe("secure workspace UX and real static frontend lifecycle",()=>{
@@ -546,6 +559,70 @@ describe("secure workspace UX and real static frontend lifecycle",()=>{
     expect(ui.stats().channelPaths).toEqual([
       "/app/auth/workspaces/"+workspace1.workspaceId+"/connections"
     ]);
+  });
+
+  it("renders source-bounded per-account rights evidence while explicitly denying live sending",async()=>{
+    const row:ChannelRowFixture={
+      connectionId:"123e4567-e89b-42d3-a456-426614174001",
+      workspaceId:workspace1.workspaceId,provider:"telegram",
+      accountId:"9001",status:"connected",generation:2
+    };
+    const payload={
+      connection:row,capability:{
+        provider:"telegram",accountId:"9001",
+        contractRevision:"2026-11-02.1",tenantSendingEnabled:false,
+        features:[{id:"official_account_replies",evidenceStatus:"available",
+          reason:"All reviewed API requirements verified for this account"}],
+        evidence:[{key:"telegram.rights.can_reply",status:"granted",
+          source:"provider_connection_readback",
+          validUntil:new Date(Date.now()+300000).toISOString()}]
+      }
+    };
+    const ui=setup({channelItems:[row],capabilityPayload:payload});
+    await ui.flush();await ui.click("nav-channels");
+    const card=ui.dom.getElementById("channels-list").children[0]!;
+    const info=card.children[0]!;
+    const toggle=info.children[info.children.length-2]!;
+    const panel=info.children[info.children.length-1]!;
+    expect(toggle.textContent).toBe("View verified permissions");
+    expect(panel.hidden).toBe(true);
+    await ui.clickElement(toggle);
+    expect(panel.hidden).toBe(false);
+    expect(panel.children[0]?.textContent).toContain("not a message-send");
+    expect(panel.children[1]?.children[0]?.textContent).toContain("sending still disabled");
+    expect(panel.children[2]?.children[0]?.textContent)
+      .toContain("telegram.rights.can_reply: granted");
+    expect(ui.stats().capabilityReads).toBe(1);
+    expect(ui.stats().capabilityPaths).toEqual([
+      "/app/auth/workspaces/"+workspace1.workspaceId+
+      "/connections/"+row.connectionId+"/capabilities"
+    ]);
+    await ui.clickElement(toggle);
+    expect(panel.hidden).toBe(true);
+    expect(ui.stats().capabilityReads).toBe(1);
+  });
+
+  it("rejects a forged other-account evidence response without rendering its values",async()=>{
+    const row:ChannelRowFixture={
+      connectionId:"123e4567-e89b-42d3-a456-426614174001",
+      workspaceId:workspace1.workspaceId,provider:"telegram",
+      accountId:"9001",status:"connected",generation:2
+    };
+    const ui=setup({channelItems:[row],capabilityPayload:{
+      connection:{...row,accountId:"FOREIGN-TENANT-ACCOUNT"},
+      capability:{provider:"telegram",accountId:"FOREIGN-TENANT-ACCOUNT",
+        tenantSendingEnabled:false,
+        features:[{id:"bad",evidenceStatus:"available",
+          reason:"SECRET-NEVER-SHOW"}],evidence:[]}
+    }});
+    await ui.flush();await ui.click("nav-channels");
+    const info=ui.dom.getElementById("channels-list").children[0]!.children[0]!;
+    const toggle=info.children[info.children.length-2]!;
+    const panel=info.children[info.children.length-1]!;
+    await ui.clickElement(toggle);
+    expect(panel.children[0]?.textContent).toContain("could not be verified");
+    expect(panel.children[0]?.textContent).not.toContain("SECRET-NEVER-SHOW");
+    expect(ui.stats().capabilityReads).toBe(1);
   });
 
   it("paginates the account registry in bounded pages with no duplicate first page",async()=>{

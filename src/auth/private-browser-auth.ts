@@ -161,7 +161,8 @@ export class PrivateBrowserAuthService {
     otp:Pick<SupabaseEmailOtpClient,"sendOtp"|"verifyOtp"|"refresh"|"revoke">;
     portfolio:Pick<AuthenticatedWorkspacePortfolio,"list">;
     memberInvites?:Pick<PostgresWorkspaceInvitations,"invite">;
-    connections?:Pick<PostgresWorkspaceConnectionRegistry,"listForAdministrator">;
+    connections?:Pick<PostgresWorkspaceConnectionRegistry,
+      "listForAdministrator"|"capabilitiesForAdministrator">;
     instagramConnections?:Pick<WorkspaceInstagramConnectionCoordinator,"begin"|"complete"|"confirm">;
     telegramConnections?:Pick<WorkspaceTelegramOIDCConnections,"begin"|"complete"|"confirm">;
     csrfKeyBase64:string;
@@ -517,6 +518,20 @@ export class PrivateBrowserAuthService {
     return this.deps.connections.listForAdministrator({
       workspaceId,actor:privileged.principal,pageSize:20,
       ...(after===undefined?{}:{after})
+    });
+  }
+
+  /** Independently revalidate current AAL2, exact login session, then
+   * enforce membership and exact connection under one server-side PG
+   * transaction. No provider secrets, plan inference or send activation.
+   */
+  async workspaceAccountCapabilities(cookie:string,workspaceId:string,
+    connectionId:string){
+    if(this.deps.connections===undefined)
+      throw Error("Account capability evidence unavailable");
+    const trusted=await this.#privilegedForProvider(cookie);
+    return this.deps.connections.capabilitiesForAdministrator({
+      workspaceId,connectionId,actor:trusted.principal
     });
   }
 

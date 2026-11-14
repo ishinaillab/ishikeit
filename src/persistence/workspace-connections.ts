@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import type pg from "pg";
 import { z } from "zod";
 import type { PostgresDatabase, SqlExecutor } from "./postgres.js";
+import {
+  presentAccountCapabilityEvidence,
+  type AccountCapabilityPresentation
+} from "../policy/account-capability-presentation.js";
+import type {ObservedAccountFact} from "../policy/provider-contract.js";
 
 /**
  * Server-only Phase 2 workspace registry. The caller MUST supply a principal
@@ -475,6 +480,55 @@ export class PostgresWorkspaceConnectionRegistry {
         [p.connectionId,p.workspaceId]
       );
       return result.rows[0]===undefined?undefined:present(result.rows[0]);
+    });
+  }
+
+  /** Scoped, read-only owner/admin capability evidence preview. All account,
+   * provider and observed proofs originate from this single authorized
+   * database transaction. No cross-account inference or public RLS grants.
+   * This is NOT a tenant send permit or provider entitlement refresh.
+   */
+  async capabilitiesForAdministrator(input:z.infer<typeof idAction>):Promise<{
+    connection:WorkspaceConnection;
+    capability:AccountCapabilityPresentation;
+  }>{
+    const p=idAction.parse(input);
+    return this.db.transaction(async tx=>{
+      await authorize(tx,{workspaceId:p.workspaceId,...p.actor},"admin");
+      const current=await tx.query<ConnectionRow>(
+        `SELECT connection_id,workspace_id,provider,provider_account_id,status,generation
+           FROM public.ishikeit_account_connections
+          WHERE workspace_id=$1 AND connection_id=$2
+          FOR SHARE`,
+        [p.workspaceId,p.connectionId]
+      );
+      const row=current.rows[0];
+      if(row===undefined)throw Error("Connection not found in workspace");
+      const connection=present(row);
+      const observations=await tx.query<pg.QueryResultRow&{
+        evidence_key:string;state:"granted"|"denied";
+        evidence_source:ObservedAccountFact["source"];
+        source_reference:string;observed_at:Date;valid_until:Date
+      }>(
+        `SELECT evidence_key,state,evidence_source,source_reference,
+                observed_at,valid_until
+           FROM public.provider_account_capability_facts
+          WHERE provider=$1 AND account_id=$2
+          ORDER BY evidence_key ASC
+          LIMIT 65`,
+        [connection.provider,connection.accountId]
+      );
+      if(observations.rows.length>64)
+        throw Error("Account capability evidence exceeds safe read bound");
+      const facts:ObservedAccountFact[]=observations.rows.map(e=>({
+        provider:connection.provider,accountId:connection.accountId,
+        key:e.evidence_key,state:e.state,source:e.evidence_source,
+        sourceReference:e.source_reference,
+        observedAt:e.observed_at.toISOString(),validUntil:e.valid_until.toISOString()
+      }));
+      return {connection,capability:presentAccountCapabilityEvidence({
+        provider:connection.provider,accountId:connection.accountId,facts
+      })};
     });
   }
 

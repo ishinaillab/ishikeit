@@ -664,6 +664,109 @@ async function loadConnections(more){
       const state=document.createElement("span");state.className="channel-state";
       state.textContent=channelStatusLabel(record.status);
       card.append(info,state);
+      // A read-only permission evidence preview is distinct from the
+      // tenant's actual ability to dispatch, bill or subscribe webhooks.
+      const inspect=document.createElement("button");
+      inspect.type="button";inspect.className="secondary";
+      inspect.textContent="View verified permissions";
+      inspect.setAttribute("aria-label","View provider permission evidence for "+
+        record.provider+" account "+record.accountId);
+      const evidencePanel=document.createElement("div");
+      evidencePanel.className="channel-capability-preview";
+      evidencePanel.hidden=true;
+      inspect.addEventListener("click",async()=>{
+        if(!stillCurrent()||!channelsAllowed())return;
+        if(!evidencePanel.hidden){
+          evidencePanel.hidden=true;
+          inspect.textContent="View verified permissions";
+          return;
+        }
+        inspect.disabled=true;
+        evidencePanel.hidden=false;
+        evidencePanel.replaceChildren();
+        const msg=document.createElement("p");msg.className="muted";
+        msg.textContent="Checking current saved provider evidence…";
+        evidencePanel.append(msg);
+        try{
+          const endpoint="/app/auth/workspaces/"+encodeURIComponent(workspaceId)+
+            "/connections/"+encodeURIComponent(record.connectionId)+"/capabilities";
+          const response=await fetch(endpoint,{
+            credentials:"same-origin",cache:"no-store",redirect:"error"
+          });
+          if(!stillCurrent())return;
+          if(!response.ok)throw Error("Capability read denied");
+          const data=await response.json();
+          if(!data||!data.connection||!data.capability||
+            data.connection.workspaceId!==workspaceId||
+            data.connection.connectionId!==record.connectionId||
+            data.connection.accountId!==record.accountId||
+            data.connection.provider!==record.provider||
+            data.connection.generation!==record.generation||
+            data.capability.provider!==record.provider||
+            data.capability.accountId!==record.accountId||
+            data.capability.tenantSendingEnabled!==false||
+            !Array.isArray(data.capability.features)||
+            data.capability.features.length>24||
+            !Array.isArray(data.capability.evidence)||
+            data.capability.evidence.length>64)
+            throw Error("Unexpected provider capability record");
+          const warning=document.createElement("p");
+          warning.className="muted";
+          warning.textContent="Read-only provider evidence, not a message-send or "+
+            "subscription permission. Account plan and paid features are not inferred.";
+          evidencePanel.replaceChildren(warning);
+          const decisions=document.createElement("ul");
+          decisions.className="channel-capability-list";
+          const allowed=new Set(["available","needs_permission","unsupported","unverified"]);
+          const labels={available:"Requirements verified (sending still disabled)",
+            needs_permission:"Provider permission denied or revoked",
+            unsupported:"Unsupported for this account type",
+            unverified:"Not verified for this account"};
+          for(const feature of data.capability.features){
+            if(!feature||typeof feature.id!=="string"||
+              !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(feature.id)||
+              !allowed.has(feature.evidenceStatus)||
+              typeof feature.reason!=="string"||feature.reason.length>240)
+              throw Error("Invalid provider feature evidence");
+            const item=document.createElement("li");
+            item.textContent=feature.id.replaceAll("_"," ")+": "+
+              labels[feature.evidenceStatus]+" — "+feature.reason;
+            decisions.append(item);
+          }
+          if(!decisions.children.length){
+            const empty=document.createElement("p");
+            empty.className="muted";
+            empty.textContent="No reviewed features exist for this provider.";
+            evidencePanel.append(empty);
+          }else evidencePanel.append(decisions);
+          const evidenceList=document.createElement("ul");
+          evidenceList.className="channel-capability-list";
+          const states=new Set(["granted","denied","expired","unknown"]);
+          for(const fact of data.capability.evidence){
+            if(!fact||typeof fact.key!=="string"||
+              !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(fact.key)||
+              !states.has(fact.status))
+              throw Error("Invalid provider evidence");
+            const item=document.createElement("li");
+            item.textContent=fact.key+": "+fact.status+
+              (typeof fact.validUntil==="string"&&
+                Number.isFinite(Date.parse(fact.validUntil))
+                ?" (evidence until "+new Date(fact.validUntil)
+                  .toLocaleDateString(undefined,{dateStyle:"medium"})+")":"");
+            evidenceList.append(item);
+          }
+          if(evidenceList.children.length)evidencePanel.append(evidenceList);
+          inspect.textContent="Hide verified permissions";
+        }catch{
+          if(!stillCurrent())return;
+          evidencePanel.replaceChildren();
+          const error=document.createElement("p");error.className="muted";
+          error.textContent="Permission evidence could not be verified. "+
+            "Refresh the account list or sign in again.";
+          evidencePanel.append(error);
+        }finally{if(stillCurrent())inspect.disabled=false;}
+      });
+      info.append(inspect,evidencePanel);
       if(instagramConnectEnabled && record.provider==="instagram" &&
          record.status==="verifying"){
         const activate=document.createElement("button");

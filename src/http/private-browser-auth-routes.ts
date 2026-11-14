@@ -24,6 +24,7 @@ export interface BrowserAuthController {
   listWorkspaceConnections?:(
     cookie:string,workspaceId:string,after?:string
   )=>ReturnType<PrivateBrowserAuthService["listWorkspaceConnections"]>;
+  workspaceAccountCapabilities?:PrivateBrowserAuthService["workspaceAccountCapabilities"];
   beginInstagramConnection?:PrivateBrowserAuthService["beginInstagramConnection"];
   completeInstagramConnection?:PrivateBrowserAuthService["completeInstagramConnection"];
   confirmInstagramConnection?:PrivateBrowserAuthService["confirmInstagramConnection"];
@@ -332,6 +333,35 @@ export function registerPrivateBrowserAuthRoutes(
           return reply.code(200).send(page);
         }catch{
           return deny(reply,403).send({status:"connections_unavailable"});
+        }
+      }
+    );
+  }
+
+  // Source-bounded read-only per-account capability evidence, never a send
+  // permit. No provider tokens, app secrets or internal source references.
+  if(deps.allowWorkspaceConnections===true &&
+    deps.controller.workspaceAccountCapabilities!==undefined){
+    server.get<{Params:{workspaceId:string;connectionId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/:connectionId/capabilities",
+      async(req,reply)=>{
+        privateResponse(reply);
+        if(!sameOrigin(req,false))
+          return deny(reply,403).send({status:"forbidden"});
+        const value=session(req,reply);
+        if(value===undefined)
+          return deny(reply).send({status:"unauthenticated"});
+        const params=z.object({workspaceId:z.string().uuid(),
+          connectionId:z.string().uuid()}).strict().safeParse(req.params);
+        if(!params.success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          return reply.code(200).send(
+            await deps.controller.workspaceAccountCapabilities!(
+              value,params.data.workspaceId,params.data.connectionId
+            ));
+        }catch{
+          return deny(reply,403).send({status:"capability_evidence_unavailable"});
         }
       }
     );

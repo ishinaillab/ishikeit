@@ -20,6 +20,8 @@ jobs:
           package-manager-cache: false
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - name: Verify protected Priority 3 SQL-only migration workflow safety (negative regressions)
+        run: node --test scripts/test-priority3-protected-schema-workflow.mjs
       - name: Verify protected GitHub first-admin deployment environment guard (mock only)
         run: node --test scripts/test-verify-protected-provisioning-environment.mjs
       - name: Verify protected Supabase Auth SMTP, invitation redirect, and MFA configuration checks (mock only)

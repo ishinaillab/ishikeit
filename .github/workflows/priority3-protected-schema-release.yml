@@ -134,20 +134,20 @@ jobs:
           PY
       - uses: supabase/setup-cli@v3
         with:
-          version: '^3'
+          version: '3.1.0'
       - name: Non-mutating official Supabase hosted migration plan
         if: inputs.operation != 'verify'
         working-directory: db-release
         run: |
           set -euo pipefail
           supabase migration list --remote="$DATABASE_URL"
-          supabase db push --dry-run --remote="$DATABASE_URL"
+          supabase db push --dry-run --skip-vault --remote="$DATABASE_URL"
       - name: Apply exactly the approved migrations after both owner approvals
         if: inputs.operation == 'apply'
         working-directory: db-release
         run: |
           set -euo pipefail
-          supabase db push --yes --remote="$DATABASE_URL"
+          supabase db push --yes --skip-vault --remote="$DATABASE_URL"
       - name: Independently read back all 44 applied migration versions
         if: inputs.operation == 'apply' || inputs.operation == 'verify'
         working-directory: db-release

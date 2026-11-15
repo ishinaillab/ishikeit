@@ -15,7 +15,7 @@ function basicRules(repo){
   return [
     {type:"deletion"},{type:"non_fast_forward"},{type:"required_linear_history"},
     {type:"pull_request",parameters:{
-      required_approving_review_count:1,
+      required_approving_review_count:0,
       dismiss_stale_reviews_on_push:true,
       required_review_thread_resolution:true
     }},
@@ -62,7 +62,7 @@ async function blocked(mutations,pattern){
   await assert.rejects(scenario.run(),pattern);
   return scenario;
 }
-test("verifies both exact protected main SHAs, fresh independent reviews, required CI and human environments",async()=>{
+test("verifies both exact protected main SHAs, solo-owner PR gates, required CI and human release environments",async()=>{
   const s=makeScenario();
   const result=await s.run();
   assert.deepEqual(result,{verified:true,appMainSha:appSha,
@@ -72,14 +72,14 @@ test("verifies both exact protected main SHAs, fresh independent reviews, requir
   assert.ok(s.seen.every(x=>x.init.method==="GET"&&x.init.redirect==="error"));
   assert.ok(s.seen.every(x=>x.url.startsWith("https://api.github.com/repos/ishinaillab/")));
 });
-test("refuses zero approvals, stale review approvals and unresolved review threads",async()=>{
+test("refuses unworkable independent approvals, disabled safeguards and unresolved review threads",async()=>{
   for(const [key,value] of [
-    ["required_approving_review_count",0],
+    ["required_approving_review_count",1],
     ["dismiss_stale_reviews_on_push",false],
     ["required_review_thread_resolution",false]
   ]){
     const base=basicRules(APP);base[3].parameters[key]=value;
-    await blocked({[u(APP,"/rules/branches/main")]:base},/fresh approvals/);
+    await blocked({[u(APP,"/rules/branches/main")]:base},/protected solo-owner/);
   }
 });
 test("enforces app and DB CI independently and requires strict current branch",async()=>{

@@ -50,10 +50,10 @@ function checkRules(repo,rules){
     throw Error("Mandatory GitHub main rules unavailable");
   const pr=rules.find(x=>x?.type==="pull_request");
   if(!pr||!Number.isSafeInteger(pr.parameters?.required_approving_review_count) ||
-     pr.parameters.required_approving_review_count<1 ||
+     pr.parameters.required_approving_review_count!==0 ||
      pr.parameters.dismiss_stale_reviews_on_push!==true ||
      pr.parameters.required_review_thread_resolution!==true)
-    throw Error("GitHub main requires reviewed, fresh approvals");
+    throw Error("GitHub main requires protected solo-owner pull requests and resolved threads");
   if(!rules.some(x=>x?.type==="non_fast_forward") ||
      !rules.some(x=>x?.type==="deletion") ||
      !rules.some(x=>x?.type==="required_linear_history"))

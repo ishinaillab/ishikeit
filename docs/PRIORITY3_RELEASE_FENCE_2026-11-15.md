@@ -120,3 +120,10 @@ The standalone fencing tests passed **5/5** in disposable PG17 with lint/strict 
 ### Actual Supabase client-role privilege negative tests
 
 An additional disposable PG17 regression now creates both real `anon` and `authenticated` NOLOGIN roles **before** the release-ownership migration, confirms neither role has SELECT or UPDATE privilege and uses independent `SET LOCAL ROLE` transactions to prove direct SELECT is denied. Five of five release-fence PG17 cases, ESLint and strict TypeScript passed; lab cleanup exit 0. The table's RLS/REVOKE is independently exercised, not inferred from missing-role fallback values.
+
+
+## 2026-11-16 owner-authorized single-maintainer GitHub ruleset adjustment
+
+Both public repositories are owned by the sole `@ishinaillab` account and have no independent collaborators. The owner explicitly authorized proper production-release work. Live GitHub ruleset readback confirmed `required_approving_review_count=0` on both `main` branches to eliminate an impossible independent code-review requirement; **the mandatory pull request, strict GitHub-Actions-source checks (app four, DB `migration-ci`), resolved review threads, non-fast-forward and deletion protections remain active**. Both GitHub Actions environments continue to require a separate explicit owner approval, target only `main` and forbid admin bypass. The zero-review rule **is not** a deployment authorization. A trusted independent reviewer should be invited and nonzero review restored if the organization becomes multi-maintainer.
+
+The `scripts/verify-priority3-github-release.mjs` fail-closed readback and its negative tests were updated to require this *exact* solo-owner policy, reject reintroduced impossible review requirements, and retain protected environment/CI checks. Genuine cross-system release ownership and provider-owner acceptance remain separate release gates, not claimed by this administrative adjustment. No production database schema or customer provider route was changed by the ruleset update.

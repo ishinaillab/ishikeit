@@ -1,0 +1,167 @@
+name: Priority 3 protected Supabase schema release
+run-name: Priority 3 ${{ inputs.operation }} at ${{ inputs.db_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_sha:
+        description: Exact protected app main commit SHA
+        required: true
+        type: string
+      db_sha:
+        description: Exact protected DB main commit SHA
+        required: true
+        type: string
+      operation:
+        description: 'preflight: no writes; apply: reviewed SQL; verify: readback'
+        required: true
+        default: preflight
+        type: choice
+        options: [preflight, apply, verify]
+
+permissions:
+  contents: read
+
+# Identical group required for every future privileged Ishikeit release job.
+concurrency:
+  group: ishikeit-priority3-privileged-release
+  cancel-in-progress: false
+
+jobs:
+  owner-approval:
+    if: github.actor == 'ishinaillab' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ishikeit-priority3-production
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Exact protected app and DB SHAs, CI rules and human environments
+        env:
+          ISHIKEIT_RELEASE_APP_SHA: ${{ inputs.app_sha }}
+          ISHIKEIT_RELEASE_DB_SHA: ${{ inputs.db_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$ISHIKEIT_RELEASE_APP_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$ISHIKEIT_RELEASE_DB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$ISHIKEIT_RELEASE_APP_SHA" ]]
+          node scripts/verify-priority3-github-release.mjs
+
+  production-migration:
+    needs: owner-approval
+    if: needs.owner-approval.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    # Existing owner-reviewed environment scopes the DB URL to a second
+    # distinct approval, not accessible from PR jobs or first admission.
+    environment: ishikeit-provisioning
+    env:
+      ISHIKEIT_RELEASE_APP_SHA: ${{ inputs.app_sha }}
+      ISHIKEIT_RELEASE_DB_SHA: ${{ inputs.db_sha }}
+      OPERATION: ${{ inputs.operation }}
+      DATABASE_URL: ${{ secrets.ISHIKEIT_DATABASE_URL }}
+      PGSSLMODE: require
+      SUPABASE_ENV: production
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: ishinaillab/ishikeit-db
+          ref: ${{ inputs.db_sha }}
+          path: db-release
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Recheck both exact protected SHAs after independent environment approval
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$ISHIKEIT_RELEASE_APP_SHA" ]]
+          [[ "$(git -C db-release rev-parse HEAD)" == "$ISHIKEIT_RELEASE_DB_SHA" ]]
+          node scripts/verify-priority3-github-release.mjs
+          test -f db-release/supabase/config.toml
+          test ! -e db-release/supabase/roles.sql
+          test ! -e db-release/supabase/seed.sql
+      - name: Install PostgreSQL client for read-only history verification
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+      - name: Verify production project identity and complete immutable migration prefix
+        working-directory: db-release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re, subprocess
+          from pathlib import Path
+          from urllib.parse import urlsplit
+          url=os.environ.get("DATABASE_URL", "")
+          ref="vhmrliqemkfxblzsoyaz"
+          u=urlsplit(url)
+          assert u.scheme in ("postgres","postgresql"), "Database URL missing"
+          host=u.hostname or ""
+          user=u.username or ""
+          assert host.endswith((".supabase.co",".supabase.com")), "Unexpected database host"
+          assert ref in host or user.endswith("."+ref), "Incorrect Supabase project"
+          assert u.password, "Database credential missing"
+          versions=[]
+          for path in Path("supabase/migrations").glob("*.sql"):
+              match=re.fullmatch(r"([0-9]{14})_[^.]+\.sql",path.name)
+              assert match, "Malformed migration file"
+              versions.append(match.group(1))
+          versions.sort()
+          assert len(versions)==44 and len(set(versions))==44, "Unexpected migration history"
+          expected=["20261115013500","20261115021500","20261115030147",
+                    "20261115040000","20261115040500"]
+          assert versions[39:]==expected, "Unexpected pending migrations"
+          remote=subprocess.check_output(["psql",url,"-X","-A","-t","-v",
+              "ON_ERROR_STOP=1","-c",
+              "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"],
+              text=True).splitlines()
+          mode=os.environ["OPERATION"]
+          assert mode in ("preflight","apply","verify"), "Unsupported operation"
+          assert len(remote)==(44 if mode=="verify" else 39), "Unexpected applied version count"
+          assert remote==versions[:len(remote)], "Remote migration history diverged"
+          print("Exact protected Supabase project and versioned migration prefix verified")
+          PY
+      - uses: supabase/setup-cli@v3
+        with:
+          version: '3.1.0'
+      - name: Non-mutating official Supabase hosted migration plan
+        if: inputs.operation != 'verify'
+        working-directory: db-release
+        run: |
+          set -euo pipefail
+          supabase migration list --remote="$DATABASE_URL"
+          supabase db push --dry-run --skip-vault --remote="$DATABASE_URL"
+      - name: Apply exactly the approved migrations after both owner approvals
+        if: inputs.operation == 'apply'
+        working-directory: db-release
+        run: |
+          set -euo pipefail
+          supabase db push --yes --skip-vault --remote="$DATABASE_URL"
+      - name: Independently read back all 44 applied migration versions
+        if: inputs.operation == 'apply' || inputs.operation == 'verify'
+        working-directory: db-release
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re, subprocess
+          from pathlib import Path
+          versions=sorted(re.fullmatch(r"([0-9]{14})_[^.]+\.sql",p.name).group(1)
+                          for p in Path("supabase/migrations").glob("*.sql"))
+          remote=subprocess.check_output(["psql",os.environ["DATABASE_URL"],
+              "-X","-A","-t","-v","ON_ERROR_STOP=1","-c",
+              "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"],
+              text=True).splitlines()
+          assert len(remote)==44 and remote==versions, "Live migration acceptance failed"
+          print("Verified: all 44 SQL versions applied to protected Supabase database")
+          PY

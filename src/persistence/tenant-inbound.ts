@@ -36,6 +36,57 @@ const hashSchema = z.string().regex(/^[0-9a-f]{64}$/u);
 
 export type TenantIngressBinding = z.infer<typeof bindingSchema>;
 
+function object(value:unknown):Record<string,unknown>|undefined{
+  return value!==null&&typeof value==="object"&&!Array.isArray(value)
+    ?value as Record<string,unknown>:undefined;
+}
+function telegramUserId(value:unknown):string|undefined{
+  return typeof value==="number"&&Number.isSafeInteger(value)&&value>0
+    ?String(value):undefined;
+}
+/** Normalized Bot API events name the BOT, while native ownership is the
+ * VERIFIED Business user's numeric Telegram ID. Only a correctly bound
+ * inbound Business message may cross that representation boundary. A future
+ * production caller MUST separately verify the webhook secret and a current
+ * getBusinessConnection result for this exact bot, owner and connection. */
+function boundEvent(raw:CanonicalEvent,b:TenantIngressBinding):CanonicalEvent{
+  if(raw.provider==="meta"&&["instagram","messenger","whatsapp"].includes(b.provider)
+     &&raw.channel===b.provider &&raw.accountId===b.providerAccountId)return raw;
+  if(raw.provider==="tiktok"&&b.provider==="tiktok"&&
+     raw.channel==="business"&&raw.accountId===b.providerAccountId)return raw;
+  // Legacy synthetic/meta and future unrelated adapters still require
+  // provider equality. Native products above have stricter channel mapping.
+  if(raw.provider===b.provider&&
+     !["telegram","instagram","messenger","whatsapp","tiktok"].includes(b.provider)&&
+     (b.provider!=="meta"||["instagram","messenger","whatsapp"].includes(raw.channel))&&
+     raw.accountId===b.providerAccountId)return raw;
+  if(raw.provider!=="telegram"||b.provider!=="telegram"||
+     raw.channel!=="bot"||raw.eventType!=="message.received"||
+     !/^telegram-oidc-[1-9][0-9]{4,15}$/u.test(b.providerApplicationKey)||
+     !/^[1-9][0-9]{0,15}$/u.test(b.providerAccountId)||
+     typeof b.providerConnectionId!=="string"||
+     b.providerConnectionId.length<5||b.providerConnectionId.length>256||
+     !/^[1-9][0-9]{0,15}$/u.test(raw.identityId??"")||
+     !raw.occurredAt)
+    throw Error("Tenant ingress provider identity mismatch");
+  const bot=b.providerApplicationKey.slice("telegram-oidc-".length);
+  const body=object(object(object(raw.data)?.update)?.business_message);
+  const chat=object(body?.chat),sender=object(body?.from);
+  if(raw.accountId!==bot ||
+     raw.source!=="urn:ishikeit:source:telegram:bot:"+bot ||
+     object(raw.data)?.businessConnectionId!==b.providerConnectionId ||
+     body?.business_connection_id!==b.providerConnectionId ||
+     chat?.type!=="private" ||
+     telegramUserId(chat.id)!==raw.identityId ||
+     telegramUserId(sender?.id)!==raw.identityId ||
+     sender?.is_bot!==false ||
+     body?.sender_business_bot!==undefined ||
+     raw.identityId===b.providerAccountId)
+    throw Error("Tenant Telegram Business message identity mismatch");
+  return {...raw,accountId:b.providerAccountId};
+}
+
+
 interface DuplicateRow extends pg.QueryResultRow {
   workspace_id: string | null;
   connection_id: string | null;
@@ -60,15 +111,11 @@ export class PostgresTenantInboundStaging {
     rawBodyHash: string,
     bindingInput: TenantIngressBinding
   ): Promise<"created" | "duplicate"> {
-    const event = canonicalEventSchema.parse(eventInput);
-    const identity = ingressSchema.parse(identityInput);
-    const binding = bindingSchema.parse(bindingInput);
+    const original=canonicalEventSchema.parse(eventInput);
+    const identity=ingressSchema.parse(identityInput);
+    const binding=bindingSchema.parse(bindingInput);
     hashSchema.parse(rawBodyHash);
-
-    if (event.provider !== binding.provider ||
-        event.accountId !== binding.providerAccountId) {
-      throw new Error("Tenant ingress provider identity mismatch");
-    }
+    const event=boundEvent(original,binding);
     // Legacy WhatsApp opt-out/opt-in and LatePoint projection require
     // immediate transaction-side effects currently implemented only in the
     // legacy inbound store. Do not silently omit those safety side effects.

@@ -20,6 +20,8 @@ jobs:
           package-manager-cache: false
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - name: Verify exact-SHA protected Priority 3 GitHub app and DB release preflight (mock only)
+        run: node --test scripts/test-verify-priority3-github-release.mjs
       - name: Verify protected GitHub first-admin deployment environment guard (mock only)
         run: node --test scripts/test-verify-protected-provisioning-environment.mjs
       - name: Verify protected Supabase Auth SMTP, invitation redirect, and MFA configuration checks (mock only)
@@ -88,6 +90,19 @@ jobs:
         env:
           PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
         run: npx vitest run tests/outbox-postgres.integration.test.ts tests/oauth-postgres.integration.test.ts tests/postgres-idle-recovery.integration.test.ts tests/durable-worker-heartbeats-postgres.integration.test.ts tests/operational-incident-postgres.integration.test.ts tests/account-capability-facts-postgres.integration.test.ts tests/workspace-connections-postgres.integration.test.ts
+      - name: Verify app-scoped owner rights, cross-workspace transfer isolation, and monotonic Priority 3 release lease on disposable PostgreSQL 17
+        env:
+          PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
+        # These isolated fixtures own temporary private capability/lease
+        # tables. Do NOT run them concurrently with each other or with
+        # the legacy compatibility suites above.
+        run: npx vitest run tests/workspace-account-capabilities-postgres.integration.test.ts tests/priority3-release-fence-postgres.integration.test.ts --no-file-parallelism
+      - name: Prove active disconnect quarantine, tenant isolation, in-flight uncertainty, and retry ledger on disposable PostgreSQL 17
+        env:
+          PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
+        # Fixture owns disposable foundation, registry and outbox tables.
+        # Keep it separate from all other PG integration steps.
+        run: npx vitest run tests/active-disconnect-postgres.integration.test.ts tests/active-disconnect-finalizer-postgres.integration.test.ts tests/tenant-send-generation-postgres.integration.test.ts --no-file-parallelism
       - name: Validate tenant provenance constraints on standalone disposable PostgreSQL 17 schema
         env:
           PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test

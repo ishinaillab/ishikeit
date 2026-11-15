@@ -53,6 +53,11 @@ export class PostgresInstagramDataLifecycle implements InstagramDataLifecycle {
        WHERE provider='instagram' AND account_id=ANY($1::text[])`,
       [[...new Set([accountId, credentialAccountId, ...aliases])]]
     );
+    await this.db.query(
+      `DELETE FROM public.provider_account_capability_facts_v2
+       WHERE provider='instagram' AND account_id=ANY($1::text[])`,
+      [[...new Set([accountId, credentialAccountId, ...aliases])]]
+    );
     await this.oauthStore.revoke("instagram", credentialAccountId, "deauthorized");
   }
 
@@ -97,6 +102,11 @@ export class PostgresInstagramDataLifecycle implements InstagramDataLifecycle {
         // identity record and must be purged with this account.
         await tx.query(
           `DELETE FROM public.provider_account_capability_facts
+           WHERE provider='instagram' AND account_id=ANY($1::text[])`,
+          [accountIds]
+        );
+        await tx.query(
+          `DELETE FROM public.provider_account_capability_facts_v2
            WHERE provider='instagram' AND account_id=ANY($1::text[])`,
           [accountIds]
         );

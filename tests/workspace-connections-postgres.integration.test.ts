@@ -403,6 +403,106 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     })).rejects.toThrow(/authorization denied/i);
   });
 
+  it("cancels only unactivated native claims; active and foreign accounts are forbidden",async()=>{
+    const pending=await link(workspaceA,ownerA,"instagram","pending-id-1");
+    await expect(registry!.requestUnactivatedDisconnect({
+      workspaceId:workspaceA,connectionId:pending.connectionId,actor:ownerB
+    })).rejects.toThrow(/authorization denied/i);
+    await expect(registry!.requestUnactivatedDisconnect({
+      workspaceId:workspaceA,connectionId:pending.connectionId,actor:agentA
+    })).rejects.toThrow(/authorization denied/i);
+    const requested=await registry!.requestUnactivatedDisconnect({
+      workspaceId:workspaceA,connectionId:pending.connectionId,actor:ownerA
+    });
+    expect(requested.status).toBe("disconnecting");
+    expect(requested.generation).toBe(pending.generation+1);
+    expect(await registry!.requestUnactivatedDisconnect({
+      workspaceId:workspaceA,connectionId:pending.connectionId,actor:ownerA
+    })).toEqual(requested);
+    expect(await registry!.activeProviderAccount("instagram","pending-id-1"))
+      .toBeUndefined();
+    await expect(link(workspaceB,ownerB,"instagram","pending-id-1"))
+      .rejects.toThrow();
+    const events=await db!.query<{event_type:string}>(
+      "SELECT event_type FROM public.ishikeit_connection_audit WHERE connection_id=$1",
+      [pending.connectionId]);
+    expect(events.rows.filter(x=>x.event_type==="disconnect_requested"))
+      .toHaveLength(1);
+
+    const active=await link(workspaceA,ownerA,"messenger","active-page-id-9");
+    await activate(active.connectionId,workspaceA,ownerA,"messenger","active-page-id-9");
+    await expect(registry!.requestUnactivatedDisconnect({
+      workspaceId:workspaceA,connectionId:active.connectionId,actor:ownerA
+    })).rejects.toThrow(/unactivated/i);
+    expect((await registry!.activeProviderAccount("messenger","active-page-id-9"))
+      ?.status).toBe("connected");
+  });
+
+  it("finalizes only a tokenless never-active pending claim and atomically releases it",async()=>{
+    const pending=await link(workspaceA,ownerA,"telegram","owner-id-tokenless");
+    await registry!.requestUnactivatedDisconnect({
+      workspaceId:workspaceA,connectionId:pending.connectionId,actor:ownerA
+    });
+    const a={workspaceId:workspaceA,connectionId:pending.connectionId,actor:ownerA};
+    await expect(registry!.completeTokenlessUnactivatedDisconnect({
+      ...a,actor:ownerB
+    })).rejects.toThrow(/authorization denied/i);
+    const [finished,raced]=await Promise.all([
+      registry!.completeTokenlessUnactivatedDisconnect(a),
+      registry!.completeTokenlessUnactivatedDisconnect(a)
+    ]);
+    expect(finished).toMatchObject({
+      status:"disconnected",generation:pending.generation+2
+    });
+    expect(raced).toEqual(finished);
+    expect(await registry!.completeTokenlessUnactivatedDisconnect(a)).toEqual(finished);
+    const history=await db!.query<{event_type:string}>(
+      "SELECT event_type FROM public.ishikeit_connection_audit WHERE connection_id=$1",
+      [pending.connectionId]
+    );
+    expect(history.rows.filter(x=>x.event_type==="disconnect_requested")).toHaveLength(1);
+    expect(history.rows.filter(x=>x.event_type==="disconnected")).toHaveLength(1);
+    const reconnected=await link(workspaceB,ownerB,"telegram","owner-id-tokenless");
+    expect(reconnected.status).toBe("verifying");
+    expect(reconnected.connectionId).not.toBe(pending.connectionId);
+  });
+
+  it("retains claim for any active, credential-bound, or provider-bound disconnect",async()=>{
+    const active=await link(workspaceA,ownerA,"telegram","active-owner-1");
+    await activate(active.connectionId,workspaceA,ownerA,"telegram","active-owner-1");
+    await registry!.requestDisconnect({
+      workspaceId:workspaceA,connectionId:active.connectionId,actor:ownerA
+    });
+    // The owner-facing Cancel pending link endpoint must never treat a
+    // previously activated connection's active disconnect as a link cancel.
+    await expect(registry!.requestUnactivatedDisconnect({
+      workspaceId:workspaceA,connectionId:active.connectionId,actor:ownerA
+    })).rejects.toThrow(/unactivated/i);
+    await expect(registry!.completeTokenlessUnactivatedDisconnect({
+      workspaceId:workspaceA,connectionId:active.connectionId,actor:ownerA
+    })).rejects.toThrow(/activated|provider cleanup/i);
+    await expect(link(workspaceB,ownerB,"telegram","active-owner-1")).rejects.toThrow();
+    for(const mode of ["credential","provider_connection"] as const){
+      const connectionId=randomUUID();
+      const accountId="pending-"+mode;
+      const gate=await authorizedIntent(workspaceA,ownerA,"instagram");
+      const pending=await registry!.linkVerified({
+        connectionId,workspaceId:workspaceA,actor:ownerA,
+        providerApplicationKey:"ishikeit-test-app",...gate,
+        ...(mode==="credential"?{credentialAccountId:connectionId}:
+          {providerConnectionId:"provider-binding-"+mode}),
+        proof:proof("instagram",accountId)
+      });
+      await registry!.requestUnactivatedDisconnect({
+        workspaceId:workspaceA,connectionId:pending.connectionId,actor:ownerA
+      });
+      await expect(registry!.completeTokenlessUnactivatedDisconnect({
+        workspaceId:workspaceA,connectionId:pending.connectionId,actor:ownerA
+      })).rejects.toThrow(/credential|provider cleanup/i);
+      await expect(link(workspaceB,ownerB,"instagram",accountId)).rejects.toThrow();
+    }
+  });
+
   it("pauses and fences a generation; disconnecting retains global ownership", async () => {
     const pending = await link(workspaceA,ownerA,"whatsapp","phone-id-42");
     const active = await activate(

@@ -50,6 +50,7 @@ import { EventHandlerRegistry } from "../processing/registry.js";
 import { InboundProcessorWorker } from "../workers/inbound-processor-worker.js";
 import { OutboxWorker } from "../workers/outbox-worker.js";
 import { TelegramSender } from "../channels/telegram-send.js";
+import { telegramBotIdFromToken } from "../security/telegram.js";
 import { TikTokBusinessSender } from "../channels/tiktok-send.js";
 import { CredentialCipher } from "../auth/credential-cipher.js";
 import { SupabaseAuthPrincipalVerifier } from "../auth/supabase-workspace-principal.js";
@@ -59,6 +60,12 @@ import { PostgresWorkspaceConnectionIntents } from "../persistence/workspace-con
 import { AuthenticatedWorkspaceConnectionIntents } from "../auth/authenticated-workspace-connection.js";
 import { ProviderNativeInstagramConsent } from "../auth/workspace-provider-consent.js";
 import { WorkspaceInstagramConnectionCoordinator } from "../auth/workspace-instagram-connect.js";
+import { WorkspaceWhatsAppEmbeddedV4Connections } from "../auth/workspace-whatsapp-embedded-v4.js";
+import { WhatsAppEmbeddedV4BusinessGrantReader } from "../auth/whatsapp-embedded-v4-proof.js";
+import {
+  WorkspaceMessengerPageConnections, MetaMessengerPageClient
+} from "../auth/workspace-messenger-connect.js";
+import { WorkspaceTikTokOwnerConnections,TikTokAccountPermissionClient } from "../auth/workspace-tiktok-connect.js";
 import {
   WorkspaceTelegramOIDCConnections,TelegramOIDCClient,TelegramNativeBusinessReader
 } from "../auth/workspace-telegram-oidc.js";
@@ -67,6 +74,7 @@ import { SupabaseTotpMfaClient } from "../auth/supabase-totp-mfa.js";
 import { SupabaseAdminInviteClient } from "../auth/supabase-admin-invite.js";
 import { PostgresWorkspaceInvitations } from "../auth/workspace-member-invitations.js";
 import { PrivateBrowserAuthService } from "../auth/private-browser-auth.js";
+import { PostgresActiveDisconnectHold } from "../persistence/active-disconnect.js";
 import { PostgresBrowserAuthMaintenance } from "../auth/private-browser-auth-maintenance.js";
 import { PostgresOAuthCredentialStore } from "../auth/oauth-store.js";
 import { PostgresAccountCapabilityFacts } from "../persistence/account-capability-facts.js";
@@ -122,11 +130,12 @@ const telegramShadow = shadowInspector === undefined ? undefined
 const observeTelegramBusinessShadow = telegramShadow === undefined ? undefined
   : (proof: { botId: string; ownerId: string; connectionId: string }) =>
       telegramShadow.observe(proof);
-function latestObservedProof(provider: string, accountId: string, keys: readonly string[], source: "provider_api" | "provider_connection_readback", reference: string) {
+function latestObservedProof(provider: string, accountId: string,
+  providerApplicationKey:string, keys: readonly string[], source: "provider_api" | "provider_connection_readback", reference: string) {
   const observedAt = new Date();
   const validUntil = new Date(observedAt.getTime() + 5 * 60 * 1000);
   return keys.map((key) => ({
-    provider, accountId, key, state: "granted" as const,
+    provider, accountId, providerApplicationKey,key, state: "granted" as const,
     source, sourceReference: reference,
     observedAt: observedAt.toISOString(), validUntil: validUntil.toISOString()
   }));
@@ -160,7 +169,8 @@ const telegramSender = env.TELEGRAM_BOT_TOKEN === undefined ? undefined
         const observedAt = new Date();
         const validUntil = new Date(observedAt.getTime() + 5 * 60_000);
         const fact = (key: string, granted: boolean) => ({
-          provider: "telegram", accountId: observation.ownerId, key,
+          provider: "telegram", accountId: observation.ownerId,
+          providerApplicationKey:telegramBotIdFromToken(env.TELEGRAM_BOT_TOKEN!),key,
           state: granted ? "granted" as const : "denied" as const,
           source: "provider_connection_readback" as const,
           sourceReference: "getBusinessConnection",
@@ -216,11 +226,17 @@ const instagramOAuthConfigured = (
   && env.OAUTH_CREDENTIAL_ENCRYPTION_KEY_B64 !== undefined
 );
 const instagramNativeConfigured=env.BROWSER_INSTAGRAM_CONNECT_ENABLED;
+const whatsappV4Configured=env.BROWSER_WHATSAPP_EMBEDDED_V4_ENABLED;
+const messengerNativeConfigured=env.BROWSER_MESSENGER_CONNECT_ENABLED;
+const tiktokHolderConfigured=env.BROWSER_TIKTOK_ACCOUNT_CONNECT_ENABLED;
 const oauthStore = !(
   tiktokOAuthConfigured
   || tiktokMarketingOAuthConfigured
   || instagramOAuthConfigured
   || instagramNativeConfigured
+  || whatsappV4Configured
+  || messengerNativeConfigured
+  || tiktokHolderConfigured
 )
   ? undefined
   : new PostgresOAuthCredentialStore(
@@ -475,7 +491,7 @@ async function reconcileInstagramOAuthAccounts(): Promise<void> {
       // Historical OAuth scopes are NOT elevated to newly granted permissions.
       try {
         await capabilityFacts.record(latestObservedProof(
-          "instagram", professionalAccountId,
+          "instagram", professionalAccountId, env.META_APP_ID,
           ["instagram.oauth", "instagram.app_access"],
           "provider_api", "professional_account_and_subscription_readback"
         ));
@@ -571,7 +587,7 @@ async function reconcileMessengerManagedPage(): Promise<void> {
         // Evidence is observation-only and never changes outbound eligibility.
         try {
           await capabilityFacts.record(latestObservedProof(
-            "messenger", verifiedPageId, ["messenger.page"],
+            "messenger", verifiedPageId, env.META_APP_ID, ["messenger.page"],
             "provider_api", "page_subscribed_apps_readback"
           ));
         } catch {
@@ -613,6 +629,7 @@ const instagramNativeConnector=(!instagramNativeConfigured ||
   ?undefined
   :new WorkspaceInstagramConnectionCoordinator({
     appId:env.META_INSTAGRAM_OAUTH_APP_ID!,
+    capabilityFacts,
     registry:privateWorkspaceRegistry,oauth:oauthStore,client:instagramOAuthClient,
     consent:new ProviderNativeInstagramConsent({
       appId:env.META_INSTAGRAM_OAUTH_APP_ID!,
@@ -628,6 +645,46 @@ const instagramNativeConnector=(!instagramNativeConfigured ||
       ),
       client:instagramOAuthClient
     })
+  });
+const whatsappV4NativeConnector=(!whatsappV4Configured||oauthStore===undefined)
+  ?undefined
+  :new WorkspaceWhatsAppEmbeddedV4Connections({
+    appId:env.META_APP_ID,
+    configId:env.META_WHATSAPP_EMBEDDED_V4_CONFIG_ID!,
+    graphVersion:env.META_GRAPH_API_VERSION,
+    origin:env.BROWSER_AUTH_ORIGIN!,
+    intents:new AuthenticatedWorkspaceConnectionIntents(
+      new SupabaseAuthPrincipalVerifier({
+        projectUrl:env.SUPABASE_AUTH_PROJECT_URL!,
+        publishableKey:env.SUPABASE_AUTH_PUBLISHABLE_KEY!,db
+      }),new PostgresWorkspaceConnectionIntents(db)
+    ),
+    reader:new WhatsAppEmbeddedV4BusinessGrantReader({
+      appId:env.META_APP_ID,appSecret:env.META_APP_SECRET,
+      graphVersion:env.META_GRAPH_API_VERSION
+    }),
+    registry:privateWorkspaceRegistry,vault:oauthStore,
+    capabilityFacts
+  });
+const messengerNativeConnector=(!messengerNativeConfigured||oauthStore===undefined)
+  ?undefined
+  :new WorkspaceMessengerPageConnections({
+    appId:env.META_APP_ID,
+    redirectUri:new URL("/app/auth/connect/messenger/callback",
+      env.BROWSER_AUTH_ORIGIN).toString(),
+    intents:new AuthenticatedWorkspaceConnectionIntents(
+      new SupabaseAuthPrincipalVerifier({
+        projectUrl:env.SUPABASE_AUTH_PROJECT_URL!,
+        publishableKey:env.SUPABASE_AUTH_PUBLISHABLE_KEY!,db
+      }),new PostgresWorkspaceConnectionIntents(db)
+    ),
+    client:new MetaMessengerPageClient({
+      appId:env.META_APP_ID,appSecret:env.META_APP_SECRET,
+      configId:env.META_FACEBOOK_LOGIN_CONFIG_ID!,
+      graphVersion:env.META_GRAPH_API_VERSION
+    }),
+    registry:privateWorkspaceRegistry,vault:oauthStore,
+    capabilityFacts
   });
 // The modern Telegram OIDC client ID and secret are independent of the Bot
 // API token. Start only with explicit owner opt-in and BotFather URL allowlist.
@@ -652,7 +709,35 @@ const telegramNativeConnector=!env.BROWSER_TELEGRAM_OIDC_ENABLED?undefined
     business:new TelegramNativeBusinessReader({
       botToken:env.TELEGRAM_BOT_TOKEN!
     }),
+    capabilityFacts,
     registry:privateWorkspaceRegistry
+  });
+const tiktokOwnerConnector=(!tiktokHolderConfigured||oauthStore===undefined)
+  ?undefined
+  :new WorkspaceTikTokOwnerConnections({
+    appId:env.TIKTOK_BUSINESS_APP_ID!,
+    authorizationUrl:env.TIKTOK_ACCOUNT_HOLDER_AUTHORIZATION_URL!,
+    redirectUri:new URL(
+      "/app/auth/connect/tiktok/callback/",env.BROWSER_AUTH_ORIGIN
+    ).toString(),
+    intents:new AuthenticatedWorkspaceConnectionIntents(
+      new SupabaseAuthPrincipalVerifier({
+        projectUrl:env.SUPABASE_AUTH_PROJECT_URL!,
+        publishableKey:env.SUPABASE_AUTH_PUBLISHABLE_KEY!,db
+      }),
+      new PostgresWorkspaceConnectionIntents(db)
+    ),
+    oauth:new TikTokOAuthClient({
+      appId:env.TIKTOK_BUSINESS_APP_ID!,
+      appSecret:env.TIKTOK_BUSINESS_APP_SECRET!,
+      apiVersion:env.TIKTOK_BUSINESS_API_VERSION,
+      requestTimeoutMs:env.TIKTOK_OAUTH_REQUEST_TIMEOUT_MS
+    }),
+    accountReader:new TikTokAccountPermissionClient({
+      version:"v1.3",appId:env.TIKTOK_BUSINESS_APP_ID!
+    }),
+    registry:privateWorkspaceRegistry,vault:oauthStore,
+    capabilityFacts
   });
 const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
   projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
@@ -674,8 +759,13 @@ const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
   ...(workspaceInvites===undefined?{}:{memberInvites:workspaceInvites}),
   // Private read-only inventory; no provider connections can be created here.
   connections:privateWorkspaceRegistry,
+  // Staged only. No active browser disconnect route is exposed in production.
+  activeDisconnect:new PostgresActiveDisconnectHold(db),
   ...(instagramNativeConnector===undefined?{}:{instagramConnections:instagramNativeConnector}),
+  ...(whatsappV4NativeConnector===undefined?{}:{whatsappEmbeddedV4:whatsappV4NativeConnector}),
+  ...(messengerNativeConnector===undefined?{}:{messengerConnections:messengerNativeConnector}),
   ...(telegramNativeConnector===undefined?{}:{telegramConnections:telegramNativeConnector}),
+  ...(tiktokOwnerConnector===undefined?{}:{tiktokConnections:tiktokOwnerConnector}),
   auth: new SupabaseAuthPrincipalVerifier({
     projectUrl: env.SUPABASE_AUTH_PROJECT_URL!,
     publishableKey: env.SUPABASE_AUTH_PUBLISHABLE_KEY!,
@@ -704,8 +794,12 @@ const server = buildServer({
     browserAuth: {origin: env.BROWSER_AUTH_ORIGIN!,controller: browserAuth,
       allowWorkspaceInvitations:workspaceInvites!==undefined,
       allowWorkspaceConnections:true,
+      allowActiveWorkspaceDisconnect:false,
       allowInstagramConnect:instagramNativeConnector!==undefined,
-      allowTelegramOIDC:telegramNativeConnector!==undefined}
+      allowWhatsAppEmbeddedV4:whatsappV4NativeConnector!==undefined,
+      allowMessengerConnect:messengerNativeConnector!==undefined,
+      allowTelegramOIDC:telegramNativeConnector!==undefined,
+      allowTikTokHolder:tiktokOwnerConnector!==undefined}
   }),
   buildIdentity: runtimeBuildIdentity(),
   ready: async () =>

@@ -1,0 +1,161 @@
+name: Priority 3 owner-approved encrypted Supabase backup
+run-name: Ishikeit backup for ${{ inputs.db_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_sha:
+        description: Exact protected app main SHA
+        required: true
+        type: string
+      db_sha:
+        description: Exact protected database main SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ishikeit-priority3-privileged-release
+  cancel-in-progress: false
+
+jobs:
+  owner-approval:
+    if: github.actor == 'ishinaillab' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: ishikeit-priority3-production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Verify exact app and DB heads and both release environments
+        env:
+          ISHIKEIT_RELEASE_APP_SHA: ${{ inputs.app_sha }}
+          ISHIKEIT_RELEASE_DB_SHA: ${{ inputs.db_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$ISHIKEIT_RELEASE_APP_SHA" ]]
+          node scripts/verify-priority3-github-release.mjs
+
+  encrypted-logical-backup:
+    needs: owner-approval
+    if: needs.owner-approval.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ishikeit-provisioning
+    timeout-minutes: 45
+    env:
+      ISHIKEIT_RELEASE_APP_SHA: ${{ inputs.app_sha }}
+      ISHIKEIT_RELEASE_DB_SHA: ${{ inputs.db_sha }}
+      DATABASE_URL: ${{ secrets.ISHIKEIT_DATABASE_URL }}
+      PGSSLMODE: require
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: ishinaillab/ishikeit-db
+          ref: ${{ inputs.db_sha }}
+          path: db-release
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Confirm protected heads and Supabase project before database credential use
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$ISHIKEIT_RELEASE_APP_SHA" ]]
+          [[ "$(git -C db-release rev-parse HEAD)" == "$ISHIKEIT_RELEASE_DB_SHA" ]]
+          node scripts/verify-priority3-github-release.mjs
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlsplit
+          u=urlsplit(os.environ.get("DATABASE_URL",""))
+          host=u.hostname or ""
+          user=u.username or ""
+          ref="vhmrliqemkfxblzsoyaz"
+          assert u.scheme in ("postgres","postgresql")
+          assert host.endswith((".supabase.co",".supabase.com"))
+          assert ref in host or user.endswith("."+ref), "Unexpected project"
+          assert u.password, "Database credential missing"
+          PY
+          test -f docs/ISHIKEIT_PRIORITY3_BACKUP_PUBLIC_RECIPIENT.txt
+          grep -q '^age1pq1' docs/ISHIKEIT_PRIORITY3_BACKUP_PUBLIC_RECIPIENT.txt
+      - uses: supabase/setup-cli@v3
+        with:
+          version: '3.1.0'
+      - name: Create three filtered SQL exports; never upload plaintext
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          d="$RUNNER_TEMP/ishikeit-priority3-db-backup"
+          mkdir -p "$d"
+          supabase db dump --remote="$DATABASE_URL" --role-only --file "$d/roles.sql"
+          supabase db dump --remote="$DATABASE_URL" --file "$d/schema.sql"
+          supabase db dump --remote="$DATABASE_URL" --data-only --use-copy \
+            -x storage.buckets_vectors -x storage.vector_indexes \
+            --file "$d/data.sql"
+          test -s "$d/schema.sql"
+          test -s "$d/data.sql"
+          test -s "$d/roles.sql"
+          (cd "$d" && sha256sum roles.sql schema.sql data.sql > manifest.sha256)
+          printf 'app_sha=%s\ndb_sha=%s\ngithub_run_id=%s\n' \
+            "$ISHIKEIT_RELEASE_APP_SHA" "$ISHIKEIT_RELEASE_DB_SHA" "$GITHUB_RUN_ID" \
+            > "$d/release-identity.txt"
+          tar -czf "$d/backup.tar.gz" -C "$d" \
+            roles.sql schema.sql data.sql manifest.sha256 release-identity.txt
+          test -s "$d/backup.tar.gz"
+      - name: Install official age v1.3.2 with pinned verified archive SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/ishikeit-age-bin"
+          mkdir -p "$dir"
+          curl --proto '=https' --tlsv1.2 --location --fail --silent --show-error \
+            'https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz' \
+            -o "$dir/age.tar.gz"
+          printf '%s  %s\n' \
+            'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10' \
+            "$dir/age.tar.gz" | sha256sum --check --
+          tar -xf "$dir/age.tar.gz" -C "$dir"
+          "$dir/age/age" --version | grep -qx 'v1.3.2'
+      - name: Encrypt whole backup only to independently held post-quantum owner recipient
+        id: encrypt
+        shell: bash
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/ishikeit-priority3-db-backup"
+          agebin="$RUNNER_TEMP/ishikeit-age-bin/age/age"
+          "$agebin" --encrypt \
+            -R docs/ISHIKEIT_PRIORITY3_BACKUP_PUBLIC_RECIPIENT.txt \
+            -o "$d/backup.age" "$d/backup.tar.gz"
+          test -s "$d/backup.age"
+          bytes="$(stat -c %s "$d/backup.age")"
+          test "$bytes" -gt 512
+          test "$bytes" -lt 104857600
+          sha256sum "$d/backup.age" | sed "s|$d/||"
+          echo "artifact_path=$d/backup.age" >> "$GITHUB_OUTPUT"
+          shred --remove -- "$d/roles.sql" "$d/schema.sql" "$d/data.sql" \
+            "$d/manifest.sha256" "$d/release-identity.txt" "$d/backup.tar.gz"
+      - name: Upload age-encrypted payload only for owner-controlled restore validation
+        uses: actions/upload-artifact@v4
+        with:
+          name: ishikeit-p3-encrypted-db-${{ github.run_id }}
+          path: ${{ steps.encrypt.outputs.artifact_path }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Delete only runner temporary backup files
+        if: always()
+        shell: bash
+        run: |
+          rm -rf -- "$RUNNER_TEMP/ishikeit-priority3-db-backup" \
+            "$RUNNER_TEMP/ishikeit-age-bin"

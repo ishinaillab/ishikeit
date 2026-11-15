@@ -3,6 +3,9 @@ import { z } from "zod";
 import {privateLoginHtml,privateLoginCss,privateLoginJs} from "./private-browser-ui.js";
 import {instagramConnectionReturnHtml,instagramConnectionReturnJs} from "./private-workspace-connect.js";
 import {telegramOIDCReturnHtml,telegramOIDCReturnJs} from "./private-telegram-connect.js";
+import {whatsappEmbeddedV4Html,whatsappEmbeddedV4Js} from "./private-whatsapp-embedded-v4.js";
+import {messengerPageReturnHtml,messengerPageReturnJs} from "./private-messenger-connect.js";
+import {tiktokAccountReturnHtml,tiktokAccountReturnJs} from "./private-tiktok-connect.js";
 import {
   BrowserLoginSessionSetupError, BrowserMfaEnrollmentRateLimited,
   BrowserMfaPendingEnrollment, BrowserMfaLastAuthenticatorError,
@@ -24,12 +27,25 @@ export interface BrowserAuthController {
   listWorkspaceConnections?:(
     cookie:string,workspaceId:string,after?:string
   )=>ReturnType<PrivateBrowserAuthService["listWorkspaceConnections"]>;
+  workspaceAccountCapabilities?:PrivateBrowserAuthService["workspaceAccountCapabilities"];
+  requestPendingWorkspaceDisconnect?:PrivateBrowserAuthService["requestPendingWorkspaceDisconnect"];
+  requestActiveWorkspaceDisconnect?:PrivateBrowserAuthService["requestActiveWorkspaceDisconnect"];
+  inspectActiveWorkspaceDisconnect?:PrivateBrowserAuthService["inspectActiveWorkspaceDisconnect"];
   beginInstagramConnection?:PrivateBrowserAuthService["beginInstagramConnection"];
+  beginWhatsAppEmbeddedV4?:PrivateBrowserAuthService["beginWhatsAppEmbeddedV4"];
+  completeWhatsAppEmbeddedV4?:PrivateBrowserAuthService["completeWhatsAppEmbeddedV4"];
+  confirmWhatsAppEmbeddedV4?:PrivateBrowserAuthService["confirmWhatsAppEmbeddedV4"];
+  beginMessengerConnection?:PrivateBrowserAuthService["beginMessengerConnection"];
+  completeMessengerConnection?:PrivateBrowserAuthService["completeMessengerConnection"];
+  confirmMessengerConnection?:PrivateBrowserAuthService["confirmMessengerConnection"];
   completeInstagramConnection?:PrivateBrowserAuthService["completeInstagramConnection"];
   confirmInstagramConnection?:PrivateBrowserAuthService["confirmInstagramConnection"];
   beginTelegramConnection?:PrivateBrowserAuthService["beginTelegramConnection"];
   completeTelegramConnection?:PrivateBrowserAuthService["completeTelegramConnection"];
   confirmTelegramBusiness?:PrivateBrowserAuthService["confirmTelegramBusiness"];
+  beginTikTokConnection?:PrivateBrowserAuthService["beginTikTokConnection"];
+  completeTikTokConnection?:PrivateBrowserAuthService["completeTikTokConnection"];
+  confirmTikTokConnection?:PrivateBrowserAuthService["confirmTikTokConnection"];
   refresh(cookie:string):ReturnType<PrivateBrowserAuthService["refresh"]>;
   csrf(cookie:string):Promise<string>;
   listTotpFactors(cookie:string):ReturnType<PrivateBrowserAuthService["listTotpFactors"]>;
@@ -91,6 +107,9 @@ const connectCookieSchema=z.string().regex(
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{43}$/iu
 );
 const telegramConnectCookieName="__Host-ishikeit-tg-connect";
+const whatsappV4CookieName="__Host-ishikeit-wa-v4-connect";
+const messengerConnectCookieName="__Host-ishikeit-fb-page-connect";
+const tiktokConnectCookieName="__Host-ishikeit-tiktok-connect";
 function readConnectCookie(req:FastifyRequest,name:string=connectCookieName):{
   workspaceId:string;browserNonce:string
 }|undefined {
@@ -119,8 +138,10 @@ function clearCookie(name:string):string {
 export function registerPrivateBrowserAuthRoutes(
   server:FastifyInstance,
   deps:{origin:string;controller:BrowserAuthController;allowWorkspaceInvitations?:boolean;
-    allowWorkspaceConnections?:boolean;allowInstagramConnect?:boolean;
-    allowTelegramOIDC?:boolean}
+    allowWorkspaceConnections?:boolean;allowWorkspaceDisconnectRequests?:boolean;
+    allowActiveWorkspaceDisconnect?:boolean;
+    allowInstagramConnect?:boolean;
+    allowWhatsAppEmbeddedV4?:boolean;allowMessengerConnect?:boolean;allowTelegramOIDC?:boolean;allowTikTokHolder?:boolean}
 ):void {
   const url=new URL(deps.origin);
   if(url.protocol!=="https:" || url.pathname!=="/" || url.search || url.hash
@@ -174,6 +195,15 @@ export function registerPrivateBrowserAuthRoutes(
   }
   function telegramConnectCapability():boolean {
     return deps.allowTelegramOIDC===true;
+  }
+  function whatsappV4Capability():boolean {
+    return deps.allowWhatsAppEmbeddedV4===true;
+  }
+  function messengerConnectCapability():boolean {
+    return deps.allowMessengerConnect===true;
+  }
+  function tiktokConnectCapability():boolean {
+    return deps.allowTikTokHolder===true;
   }
 
   function privateUi(req:FastifyRequest,reply:FastifyReply,
@@ -294,7 +324,13 @@ export function registerPrivateBrowserAuthRoutes(
         csrfToken:data.csrfToken,workspaces:data.workspaces,
         memberInvitationsEnabled:invitationCapability(data),
         instagramConnectEnabled:instagramConnectCapability(),
-        telegramConnectEnabled:telegramConnectCapability()
+        telegramConnectEnabled:telegramConnectCapability(),
+        whatsappEmbeddedV4Enabled:whatsappV4Capability(),
+        messengerConnectEnabled:messengerConnectCapability(),
+        tiktokConnectEnabled:tiktokConnectCapability(),
+        connectionCancellationEnabled:deps.allowWorkspaceConnections===true &&
+          deps.allowWorkspaceDisconnectRequests===true &&
+          deps.controller.requestPendingWorkspaceDisconnect!==undefined
       });
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
@@ -335,6 +371,115 @@ export function registerPrivateBrowserAuthRoutes(
         }
       }
     );
+  }
+
+  // Source-bounded read-only per-account capability evidence, never a send
+  // permit. No provider tokens, app secrets or internal source references.
+  if(deps.allowWorkspaceConnections===true &&
+    deps.controller.workspaceAccountCapabilities!==undefined){
+    server.get<{Params:{workspaceId:string;connectionId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/:connectionId/capabilities",
+      async(req,reply)=>{
+        privateResponse(reply);
+        if(!sameOrigin(req,false))
+          return deny(reply,403).send({status:"forbidden"});
+        const value=session(req,reply);
+        if(value===undefined)
+          return deny(reply).send({status:"unauthenticated"});
+        const params=z.object({workspaceId:z.string().uuid(),
+          connectionId:z.string().uuid()}).strict().safeParse(req.params);
+        if(!params.success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          return reply.code(200).send(
+            await deps.controller.workspaceAccountCapabilities!(
+              value,params.data.workspaceId,params.data.connectionId
+            ));
+        }catch{
+          return deny(reply,403).send({status:"capability_evidence_unavailable"});
+        }
+      }
+    );
+  }
+
+  // Staged cancellation only for UNACTIVATED claims: explicit opt-in, AAL2
+  // session, current workspace owner/admin and atomic registry verification.
+  // No provider revocation or legacy send cutover is claimed by this 202.
+  if(deps.allowWorkspaceConnections===true &&
+    deps.allowWorkspaceDisconnectRequests===true &&
+    deps.controller.requestPendingWorkspaceDisconnect!==undefined){
+    server.post<{Params:{workspaceId:string;connectionId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/:connectionId/cancel-pending",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const params=z.object({workspaceId:z.string().uuid(),
+          connectionId:z.string().uuid()}).strict().safeParse(req.params);
+        if(!params.success || !z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const result=await deps.controller.requestPendingWorkspaceDisconnect!(
+            value,params.data.workspaceId,params.data.connectionId
+          );
+          if(result.status==="disconnected")
+            return reply.code(200).send(result);
+          if(result.status==="disconnecting")
+            return reply.code(202).send(result);
+          throw Error("Provider cleanup confirmation required");
+        }catch{
+          return deny(reply,403).send({status:"cancellation_unavailable"});
+        }
+      }
+    );
+  }
+
+  // Active-account disconnect is staged, never enabled merely by having
+  // the database store. Protected release, routing/worker send fences and
+  // genuine provider cleanup must precede a production feature enablement.
+  if(deps.allowWorkspaceConnections===true &&
+    deps.allowActiveWorkspaceDisconnect===true &&
+    deps.controller.requestActiveWorkspaceDisconnect!==undefined &&
+    deps.controller.inspectActiveWorkspaceDisconnect!==undefined){
+    const identity=z.object({
+      workspaceId:z.string().uuid(),connectionId:z.string().uuid()
+    }).strict();
+    server.post<{Params:{workspaceId:string;connectionId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/:connectionId/disconnect-active",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const parsed=identity.safeParse(req.params);
+        if(!parsed.success||!z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const hold=await deps.controller.requestActiveWorkspaceDisconnect!(
+            value,parsed.data.workspaceId,parsed.data.connectionId);
+          return reply.code(202).send({status:"disconnecting",...hold});
+        }catch{return deny(reply,403).send({status:"active_disconnect_unavailable"});}
+      });
+    server.get<{Params:{workspaceId:string;connectionId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/:connectionId/disconnect-status",
+      async(req,reply)=>{
+        privateResponse(reply);
+        if(!sameOrigin(req,false))
+          return deny(reply,403).send({status:"forbidden"});
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        const parsed=identity.safeParse(req.params);
+        if(!parsed.success)return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const hold=await deps.controller.inspectActiveWorkspaceDisconnect!(
+            value,parsed.data.workspaceId,parsed.data.connectionId);
+          if(hold===undefined)return deny(reply,404).send({status:"not_found"});
+          return reply.code(200).send({status:"disconnecting",...hold});
+        }catch{return deny(reply,403).send({status:"active_disconnect_unavailable"});}
+      });
   }
 
   // Owner/admin native Instagram OAuth connect. Disabled by default unless
@@ -453,6 +598,247 @@ export function registerPrivateBrowserAuthRoutes(
         }catch{
           return deny(reply,403).send({status:"activation_unavailable"});
         }
+      }
+    );
+  }
+
+  // WhatsApp Embedded Signup v4 is an owner-only JS SDK flow, NOT a
+  // redirect-based OAuth callback. Every browser asset ID is an untrusted
+  // candidate until server token inspection and Graph asset readback.
+  if(deps.allowWhatsAppEmbeddedV4===true &&
+    deps.controller.beginWhatsAppEmbeddedV4!==undefined &&
+    deps.controller.completeWhatsAppEmbeddedV4!==undefined &&
+    deps.controller.confirmWhatsAppEmbeddedV4!==undefined){
+    const uuidSchema=z.string().uuid();
+    const numeric=z.string().regex(/^[1-9][0-9]{4,31}$/u);
+    const finish=z.object({
+      state:z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+      authorizationCode:z.string().min(8).max(4096)
+        .regex(/^[A-Za-z0-9._~%-]+$/u),
+      messagingAccountId:numeric,phoneNumberId:numeric
+    }).strict();
+    server.get<{Params:{workspaceId:string}}>(
+      "/app/auth/workspaces/:workspaceId/whatsapp/signup",
+      async(req,reply)=>{
+        privateResponse(reply);
+        if(!sameOrigin(req,false))return deny(reply,403).send("Forbidden");
+        const parsed=z.object({workspaceId:uuidSchema}).strict().safeParse(req.params);
+        if(!parsed.success)return deny(reply,400).send("Invalid workspace");
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send("Unauthenticated");
+        if(deps.controller.listWorkspaceConnections===undefined)
+          return deny(reply,403).send("Workspace authorization unavailable");
+        try{
+          await deps.controller.get(value);
+          await deps.controller.listWorkspaceConnections(
+            value,parsed.data.workspaceId);
+        }catch{return deny(reply,403).send("Workspace authorization unavailable");}
+        return reply.header("content-security-policy",
+          "default-src 'none'; script-src 'self' https://connect.facebook.net; "+
+          "style-src 'self'; img-src 'self' data: https://www.facebook.com; "+
+          "connect-src 'self' https://www.facebook.com https://web.facebook.com "+
+          "https://graph.facebook.com; "+
+          "frame-src https://www.facebook.com https://web.facebook.com; "+
+          "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; "+
+          "form-action 'none'")
+          .type("text/html; charset=utf-8")
+          .send(whatsappEmbeddedV4Html(parsed.data.workspaceId));
+      }
+    );
+    server.get("/app/auth/whatsapp-v4.js",async(req,reply)=>{
+      privateResponse(reply);
+      if(!sameOrigin(req,false))return deny(reply,403).send("Forbidden");
+      const value=session(req,reply);
+      if(value===undefined)return deny(reply).send("Unauthenticated");
+      try{await deps.controller.get(value);}
+      catch{return deny(reply).send("Unauthenticated");}
+      return reply.type("text/javascript; charset=utf-8")
+        .send(whatsappEmbeddedV4Js);
+    });
+    server.post<{Params:{workspaceId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/whatsapp/start",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const parsed=z.object({workspaceId:uuidSchema}).strict().safeParse(req.params);
+        if(!parsed.success||!z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const started=await deps.controller.beginWhatsAppEmbeddedV4!(
+            value,parsed.data.workspaceId);
+          // Nonce always stays in Secure HttpOnly browser cookie; SDK never
+          // sees it. Opaque state goes only to first-party JS ephemeral RAM.
+          return reply.header("set-cookie",connectCookie(
+            parsed.data.workspaceId+"."+started.browserNonce,
+            600,whatsappV4CookieName
+          )).code(200).send({
+            status:"owner_authorization_required",
+            state:started.state,expiresAt:started.expiresAt,
+            appId:started.appId,configId:started.configId,
+            graphVersion:started.graphVersion
+          });
+        }catch{return deny(reply,403).send({status:"connection_unavailable"});}
+      }
+    );
+    server.post<{Params:{workspaceId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/whatsapp/complete",
+      {bodyLimit:8192},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const parsed=finish.safeParse(req.body);
+        const workspace=z.object({workspaceId:uuidSchema}).strict().safeParse(req.params);
+        const binding=readConnectCookie(req,whatsappV4CookieName);
+        if(!parsed.success||!workspace.success||!binding||
+          binding.workspaceId!==workspace.data.workspaceId)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const result=await deps.controller.completeWhatsAppEmbeddedV4!(value,{
+            workspaceId:binding.workspaceId,browserNonce:binding.browserNonce,
+            ...parsed.data
+          });
+          return reply.header("set-cookie",connectCookie("",0,whatsappV4CookieName))
+            .code(200).send(result);
+        }catch{
+          return deny(reply,403)
+            .header("set-cookie",connectCookie("",0,whatsappV4CookieName))
+            .send({status:"connection_rejected"});
+        }
+      }
+    );
+    server.post<{Params:{workspaceId:string;connectionId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/:connectionId/whatsapp-activate",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const parsed=z.object({workspaceId:uuidSchema,connectionId:uuidSchema})
+          .strict().safeParse(req.params);
+        if(!parsed.success||!z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          return reply.code(200).send(
+            await deps.controller.confirmWhatsAppEmbeddedV4!(
+              value,parsed.data.workspaceId,parsed.data.connectionId
+            ));
+        }catch{return deny(reply,403).send({status:"activation_unavailable"});}
+      }
+    );
+  }
+
+  // Facebook Login for Business Page linking. This only registers a
+  // private owner-native tenant registry candidate. It never subscribes
+  // a Page to webhooks, mutates Meta settings or authorizes a send.
+  if(deps.allowMessengerConnect===true &&
+    deps.controller.beginMessengerConnection!==undefined &&
+    deps.controller.completeMessengerConnection!==undefined &&
+    deps.controller.confirmMessengerConnection!==undefined){
+    const uuidSchema=z.string().uuid();
+    const stateSchema=z.string().regex(/^[A-Za-z0-9_-]{43}$/u);
+    const codeSchema=z.string().min(8).max(4096).regex(/^[A-Za-z0-9._~%-]+$/u);
+    const callback=z.object({state:stateSchema,code:codeSchema}).strict();
+    const finish=z.object({
+      state:stateSchema,authorizationCode:codeSchema,
+      pageId:z.string().regex(/^[1-9][0-9]{4,31}$/u)
+    }).strict();
+    server.post<{Params:{workspaceId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/messenger/start",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const parsed=z.object({workspaceId:uuidSchema}).strict().safeParse(req.params);
+        if(!parsed.success||!z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const started=await deps.controller.beginMessengerConnection!(
+            value,parsed.data.workspaceId);
+          const target=new URL(started.authorizationUrl);
+          if(target.origin!=="https://www.facebook.com"||
+            !/^\/v[0-9]{1,2}\.[0-9]{1,2}\/dialog\/oauth$/u.test(target.pathname))
+            throw Error("Unrecognized Meta login authorization host");
+          return reply.header("set-cookie",connectCookie(
+            parsed.data.workspaceId+"."+started.browserNonce,600,
+            messengerConnectCookieName
+          )).code(200).send({
+            status:"provider_authorization_required",
+            authorizationUrl:started.authorizationUrl,expiresAt:started.expiresAt
+          });
+        }catch{return deny(reply,403).send({status:"connection_unavailable"});}
+      }
+    );
+    server.get("/app/auth/connect/messenger/callback",async(req,reply)=>{
+      privateResponse(reply);
+      if(req.headers.host!==host)
+        return deny(reply,403).send("Authorization unavailable");
+      const parsed=callback.safeParse(req.query);
+      if(!parsed.success)return deny(reply,400).send("Authorization unavailable");
+      return reply.header("content-security-policy",
+        "default-src 'none'; script-src 'self'; style-src 'self'; "+
+        "img-src 'self'; connect-src 'self'; frame-ancestors 'none'; "+
+        "base-uri 'none'; form-action 'none'")
+        .type("text/html; charset=utf-8")
+        .send(messengerPageReturnHtml(parsed.data.state,parsed.data.code));
+    });
+    server.get("/app/auth/messenger-return.js",(req,reply)=>{
+      privateResponse(reply);
+      if(req.headers.host!==host)
+        return deny(reply,403).send("Authorization unavailable");
+      return reply.type("text/javascript; charset=utf-8")
+        .send(messengerPageReturnJs);
+    });
+    server.post("/app/auth/connect/messenger/complete",
+      {bodyLimit:8192},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const binding=readConnectCookie(req,messengerConnectCookieName);
+        const parsed=finish.safeParse(req.body);
+        if(binding===undefined||!parsed.success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const linked=await deps.controller.completeMessengerConnection!(value,{
+            workspaceId:binding.workspaceId,browserNonce:binding.browserNonce,
+            state:parsed.data.state,authorizationCode:parsed.data.authorizationCode,
+            pageId:parsed.data.pageId
+          });
+          return reply.header("set-cookie",
+            connectCookie("",0,messengerConnectCookieName)).code(200).send(linked);
+        }catch{
+          return deny(reply,403).header("set-cookie",
+            connectCookie("",0,messengerConnectCookieName))
+            .send({status:"connection_rejected"});
+        }
+      }
+    );
+    server.post<{Params:{workspaceId:string;connectionId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/:connectionId/messenger-activate",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const path=z.object({workspaceId:uuidSchema,connectionId:uuidSchema})
+          .strict().safeParse(req.params);
+        if(!path.success||!z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const result=await deps.controller.confirmMessengerConnection!(
+            value,path.data.workspaceId,path.data.connectionId);
+          return reply.code(200).send(result);
+        }catch{return deny(reply,403).send({status:"activation_unavailable"});}
       }
     );
   }
@@ -577,6 +963,120 @@ export function registerPrivateBrowserAuthRoutes(
     );
   }
 
+  if(deps.allowTikTokHolder===true &&
+    deps.controller.beginTikTokConnection!==undefined &&
+    deps.controller.completeTikTokConnection!==undefined &&
+    deps.controller.confirmTikTokConnection!==undefined){
+    const uuidSchema=z.string().uuid();
+    const callback=z.object({
+      state:z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+      auth_code:z.string().min(8).max(4096).regex(/^[A-Za-z0-9._~%-]+$/u)
+    }).strict();
+    const finish=z.object({
+      state:z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+      authorizationCode:z.string().min(8).max(4096)
+        .regex(/^[A-Za-z0-9._~%-]+$/u)
+    }).strict();
+    server.post<{Params:{workspaceId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/tiktok/start",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const path=z.object({workspaceId:uuidSchema}).strict().safeParse(req.params);
+        if(!path.success||!z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const started=await deps.controller.beginTikTokConnection!(
+            value,path.data.workspaceId
+          );
+          const target=new URL(started.authorizationUrl);
+          if(target.protocol!=="https:"||
+            !["ads.tiktok.com","business-api.tiktok.com","www.tiktok.com"]
+              .includes(target.hostname)||
+            Boolean(target.username)||Boolean(target.password))throw Error("Unrecognized TikTok account-holder host");
+          return reply.header("set-cookie",connectCookie(
+            path.data.workspaceId+"."+started.browserNonce,600,
+            tiktokConnectCookieName
+          )).code(200).send({
+            status:"provider_authorization_required",
+            authorizationUrl:started.authorizationUrl,expiresAt:started.expiresAt
+          });
+        }catch{return deny(reply,403).send({status:"connection_unavailable"});}
+      }
+    );
+    server.get("/app/auth/connect/tiktok/callback/",async(req,reply)=>{
+      privateResponse(reply);
+      if(req.headers.host!==host)
+        return deny(reply,403).send("Authorization unavailable");
+      const parsed=callback.safeParse(req.query);
+      if(!parsed.success)
+        return deny(reply,400).send("Authorization unavailable");
+      return reply.header("content-security-policy",
+        "default-src 'none'; script-src 'self'; style-src 'self'; "+
+        "img-src 'self'; connect-src 'self'; frame-ancestors 'none'; "+
+        "base-uri 'none'; form-action 'none'")
+        .type("text/html; charset=utf-8")
+        .send(tiktokAccountReturnHtml(parsed.data.state,parsed.data.auth_code));
+    });
+    server.get("/app/auth/tiktok-return.js",(req,reply)=>{
+      privateResponse(reply);
+      if(req.headers.host!==host)
+        return deny(reply,403).send("Authorization unavailable");
+      return reply.type("text/javascript; charset=utf-8")
+        .send(tiktokAccountReturnJs);
+    });
+    server.post("/app/auth/connect/tiktok/complete",
+      {bodyLimit:8192},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const binding=readConnectCookie(req,tiktokConnectCookieName);
+        const parsed=finish.safeParse(req.body);
+        if(binding===undefined||!parsed.success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const result=await deps.controller.completeTikTokConnection!(value,{
+            workspaceId:binding.workspaceId,browserNonce:binding.browserNonce,
+            state:parsed.data.state,authorizationCode:parsed.data.authorizationCode
+          });
+          return reply.header("set-cookie",
+            connectCookie("",0,tiktokConnectCookieName))
+            .code(200).send(result);
+        }catch{
+          return deny(reply,403).header("set-cookie",
+            connectCookie("",0,tiktokConnectCookieName))
+            .send({status:"connection_rejected"});
+        }
+      }
+    );
+    server.post<{Params:{workspaceId:string;connectionId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/:connectionId/tiktok-activate",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const path=z.object({
+          workspaceId:uuidSchema,connectionId:uuidSchema
+        }).strict().safeParse(req.params);
+        if(!path.success||!z.object({}).strict().safeParse(req.body).success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const result=await deps.controller.confirmTikTokConnection!(
+            value,path.data.workspaceId,path.data.connectionId
+          );
+          return reply.code(200).send(result);
+        }catch{return deny(reply,403).send({status:"activation_unavailable"});}
+      }
+    );
+  }
+
   server.post("/app/auth/refresh",{bodyLimit:256},async(req,reply)=>{
     privateResponse(reply);
     if(!mutation(req,reply))return reply;
@@ -592,7 +1092,10 @@ export function registerPrivateBrowserAuthRoutes(
         csrfToken:data.csrfToken,workspaces:data.workspaces,
         memberInvitationsEnabled:invitationCapability(data),
         instagramConnectEnabled:instagramConnectCapability(),
-        telegramConnectEnabled:telegramConnectCapability()});
+        telegramConnectEnabled:telegramConnectCapability(),
+        whatsappEmbeddedV4Enabled:whatsappV4Capability(),
+        messengerConnectEnabled:messengerConnectCapability(),
+        tiktokConnectEnabled:tiktokConnectCapability()});
     }catch{return deny(reply).send({status:"unauthenticated"});}
   });
   server.get("/app/auth/mfa/factors",async(req,reply)=>{
@@ -701,7 +1204,10 @@ export function registerPrivateBrowserAuthRoutes(
           workspaces:data.workspaces,
           memberInvitationsEnabled:invitationCapability(data),
         instagramConnectEnabled:instagramConnectCapability(),
-        telegramConnectEnabled:telegramConnectCapability()
+        telegramConnectEnabled:telegramConnectCapability(),
+        whatsappEmbeddedV4Enabled:whatsappV4Capability(),
+        messengerConnectEnabled:messengerConnectCapability(),
+        tiktokConnectEnabled:tiktokConnectCapability()
         });
     }catch{return deny(reply,403).send({status:"mfa_verification_failed"});}
   });

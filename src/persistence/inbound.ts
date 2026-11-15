@@ -21,6 +21,8 @@ export interface StoredInboundEvent {
   partitionKey: string;
   status: string;
   processedAt?: Date;
+  /** Native workspace provenance: never process using legacy Ishi Nail Lab handlers. */
+  tenantBound?: true;
 }
 
 export interface InboundEventProcessingStore {
@@ -36,6 +38,9 @@ interface EventRow extends pg.QueryResultRow {
   partition_key: string;
   status: string;
   processed_at: Date | null;
+  workspace_id: string | null;
+  connection_id: string | null;
+  connection_generation: string | number | null;
 }
 
 export class PostgresInboundStore implements InboundStore {
@@ -116,7 +121,9 @@ export class PostgresInboundEventRepository implements InboundEventProcessingSto
 
   async get(id: string): Promise<StoredInboundEvent | undefined> {
     const result = await this.db.query<EventRow>(
-      "SELECT id,normalized_payload,partition_key,status,processed_at FROM inbound_events WHERE id = $1::uuid",
+      `SELECT id,normalized_payload,partition_key,status,processed_at,
+              workspace_id,connection_id,connection_generation
+         FROM inbound_events WHERE id = $1::uuid`,
       [id]
     );
     const row = result.rows[0];
@@ -130,7 +137,9 @@ export class PostgresInboundEventRepository implements InboundEventProcessingSto
       event: parsed.data,
       partitionKey: row.partition_key,
       status: row.status,
-      ...(row.processed_at === null ? {} : { processedAt: row.processed_at })
+      ...(row.processed_at === null ? {} : { processedAt: row.processed_at }),
+      ...(row.workspace_id !== null || row.connection_id !== null ||
+        row.connection_generation !== null ? { tenantBound: true as const } : {})
     };
   }
 
@@ -140,7 +149,9 @@ export class PostgresInboundEventRepository implements InboundEventProcessingSto
        SET status = 'processing',
            attempt_count = attempt_count + 1,
            last_error = NULL
-       WHERE id = $1::uuid AND processed_at IS NULL`,
+       WHERE id = $1::uuid AND processed_at IS NULL
+         AND workspace_id IS NULL AND connection_id IS NULL
+         AND connection_generation IS NULL`,
       [id]
     );
   }
@@ -155,6 +166,22 @@ export class PostgresInboundEventRepository implements InboundEventProcessingSto
       : null;
 
     await this.db.transaction(async (tx) => {
+      // Do not permit a direct/replayed store call to turn a parked native
+      // tenant event into an unscoped legacy action. Lock the source FIRST,
+      // before enqueueing any provider action.
+      const source = await tx.query<EventRow>(
+        `SELECT processed_at,workspace_id,connection_id,connection_generation
+           FROM inbound_events WHERE id=$1::uuid FOR UPDATE`,[id]
+      );
+      const current = source.rows[0];
+      if (current === undefined) throw new Error("Inbound event not found");
+      if (current.workspace_id !== null || current.connection_id !== null ||
+          current.connection_generation !== null) {
+        throw new Error("Native tenant ingress cannot use legacy action publication");
+      }
+      // A processed legacy event must not publish additional reply actions on
+      // a replay, even if the caller supplies new idempotency keys.
+      if (current.processed_at !== null) return;
       for (const action of actions) await enqueueAction(tx, action);
       const result = await tx.query(
         `UPDATE inbound_events
@@ -163,7 +190,9 @@ export class PostgresInboundEventRepository implements InboundEventProcessingSto
              last_error = NULL,
              processing_outcome = $2,
              handoff_reason = $3
-         WHERE id = $1::uuid AND processed_at IS NULL`,
+         WHERE id = $1::uuid AND processed_at IS NULL
+           AND workspace_id IS NULL AND connection_id IS NULL
+           AND connection_generation IS NULL`,
         [id, disposition.outcome, handoffReason]
       );
       if (result.rowCount === 1 && handoffReason !== null) {
@@ -198,7 +227,9 @@ export class PostgresInboundEventRepository implements InboundEventProcessingSto
       `UPDATE inbound_events
        SET status = 'failed',
            last_error = $2
-       WHERE id = $1::uuid AND processed_at IS NULL`,
+       WHERE id = $1::uuid AND processed_at IS NULL
+         AND workspace_id IS NULL AND connection_id IS NULL
+         AND connection_generation IS NULL`,
       [id, reason.slice(0, 2000)]
     );
   }

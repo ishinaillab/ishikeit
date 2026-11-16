@@ -153,3 +153,59 @@ test("rechecks each repo's active main rules after reading HEAD",async()=>{
     expectedAppMainSha:appSha,expectedDbMainSha:dbSha,fetchImpl
   }),/Mandatory GitHub main rules/);
 });
+
+test("authenticates every allowlisted readback with bounded job token and never allows redirects",async()=>{
+  const s=makeScenario();
+  const token="ghs_release_readback_synthetic_not_real_secret";
+  const seen=[];
+  await verifyPriority3GithubBoundary({
+    expectedAppMainSha:appSha,expectedDbMainSha:dbSha,githubToken:token,
+    fetchImpl:async(url,init)=>{
+      seen.push({url,init});
+      return new Response(JSON.stringify(s.docs.get(url)),{status:200});
+    }
+  });
+  assert.equal(seen.length,12);
+  assert.ok(seen.every(x=>x.init.headers.authorization==="Bearer "+token));
+  assert.ok(seen.every(x=>x.init.redirect==="error"&&x.init.method==="GET"));
+  assert.ok(seen.every(x=>x.url.startsWith("https://api.github.com/repos/ishinaillab/")));
+});
+test("rejects missing and oversized readback tokens without sending HTTP requests",async()=>{
+  for(const token of ["", "abc", "x".repeat(2049), 42]){
+    let calls=0;
+    await assert.rejects(verifyPriority3GithubBoundary({
+      expectedAppMainSha:appSha,expectedDbMainSha:dbSha,githubToken:token,
+      fetchImpl:async()=>{calls++;return new Response("{}",{status:200});}
+    }),/credential is invalid/);
+    assert.equal(calls,0);
+  }
+});
+test("redacts token and HTTP error bodies while reporting safe endpoint and status",async()=>{
+  const token="ghs_sensitive_synthetic_readback_12345";
+  const s=makeScenario();
+  const errors=[];
+  for(const repo of [APP,DB]){
+    const target=u(repo,"/environments/"+environments[repo]);
+    const calls=new Map(s.docs);
+    const fetchImpl=async(url)=>{
+      if(url===target)return new Response("SECRET_TOKEN="+token+"; personal data",{status:403,headers:{"x-ratelimit-remaining":"0"}});
+      return new Response(JSON.stringify(calls.get(url)),{status:200});
+    };
+    await assert.rejects(verifyPriority3GithubBoundary({
+      expectedAppMainSha:appSha,expectedDbMainSha:dbSha,githubToken:token,fetchImpl
+    }),e=>{
+      errors.push(e.message);
+      return e.message.includes(repo===APP?"app environment HTTP 403":"db environment HTTP 403") &&
+        e.message.includes("remaining=0") &&
+        !e.message.includes(token) && !e.message.includes("personal data");
+    });
+  }
+  assert.equal(errors.length,2);
+});
+test("fails closed on network failures without exposing token",async()=>{
+  const token="ghs_sensitive_synthetic_readback_12345";
+  await assert.rejects(verifyPriority3GithubBoundary({
+    expectedAppMainSha:appSha,expectedDbMainSha:dbSha,githubToken:token,
+    fetchImpl:async()=>{throw Error(token);}
+  }),e=>/network: app metadata/.test(e.message)&&!e.message.includes(token));
+});

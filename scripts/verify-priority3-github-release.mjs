@@ -105,7 +105,7 @@ export async function verifyPriority3GithubBoundary({
   // Do not print, persist, send to any URL other than allowlisted GitHub REST.
   if(authToken!==null &&
      (typeof authToken!=="string" || authToken.length<10 ||
-      authToken.length>8192 || /[\x00-\x20\x7f]/u.test(authToken)))
+      authToken.length>8192 || !/^[A-Za-z0-9_.-]+$/u.test(authToken)))
     throw Error("Invalid GitHub readback token");
   if(!SHA.test(expectedAppMainSha)||!SHA.test(expectedDbMainSha))
     throw Error("Exact protected main commit SHAs required");

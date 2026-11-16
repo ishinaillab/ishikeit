@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import type pg from "pg";
 import { z } from "zod";
 import type { PostgresDatabase, SqlExecutor } from "./postgres.js";
+import {
+  presentAccountCapabilityEvidence,
+  type AccountCapabilityPresentation
+} from "../policy/account-capability-presentation.js";
+import type {ObservedAccountFact} from "../policy/provider-contract.js";
 
 /**
  * Server-only Phase 2 workspace registry. The caller MUST supply a principal
@@ -384,6 +389,100 @@ export class PostgresWorkspaceConnectionRegistry {
     });
   }
 
+  /** Cancel an unactivated, private provider claim without pretending that a
+   * provider grant was revoked or that legacy customer routes are fenced.
+   * Active accounts require a separately released, tenant-aware disconnect
+   * workflow. The pending cleanup claim remains reserved until revocation is
+   * independently confirmed; never free the account for a second workspace.
+   */
+  async requestUnactivatedDisconnect(input:z.infer<typeof idAction>):
+    Promise<WorkspaceConnection>{
+    const p=idAction.parse(input);
+    return this.db.transaction(async tx=>{
+      await authorize(tx,{workspaceId:p.workspaceId,...p.actor},"admin");
+      const previous=await readLocked(tx,p.workspaceId,p.connectionId);
+      if(previous.status==="disconnecting"){
+        // Another internal disconnect may have requested cleanup for a
+        // previously ACTIVATED account. That is not pending-link cancel.
+        const prior=await tx.query<{activated_at:Date|null}>(
+          `SELECT activated_at FROM public.ishikeit_account_connections
+            WHERE workspace_id=$1 AND connection_id=$2 FOR UPDATE`,
+          [p.workspaceId,p.connectionId]
+        );
+        if(prior.rows[0]?.activated_at!==null)
+          throw new Error("Only an unactivated account link may be cancelled here");
+        return previous;
+      }
+      if(previous.status!=="verifying")
+        throw new Error("Only an unactivated account link may be cancelled here");
+      const changed=await tx.query<ConnectionRow>(
+        `UPDATE public.ishikeit_account_connections
+            SET status='disconnecting',generation=generation+1,updated_at=now()
+          WHERE workspace_id=$1 AND connection_id=$2 AND status='verifying'
+          RETURNING connection_id,workspace_id,provider,provider_account_id,status,generation`,
+        [p.workspaceId,p.connectionId]
+      );
+      if(changed.rows[0]===undefined)
+        throw new Error("Pending account cancellation was not authorized");
+      const record=present(changed.rows[0]);
+      await audit(tx,record,"disconnect_requested",p.actor);
+      return record;
+    });
+  }
+
+  /**
+   * Finish only a NEVER-ACTIVATED provider claim with no credential and no
+   * provider-owned connection. This is a private registry cleanup primitive,
+   * not OAuth token revocation, app uninstallation or an active disconnect.
+   *
+   * A real, token-bearing native connection MUST NOT release its global claim
+   * until independently confirmed provider cleanup and tenant-worker fencing
+   * have completed. This endpoint is intentionally NOT exposed to the BFF.
+   *
+   * Both role authorization and row/binding checks run under one transaction.
+   * The result is idempotent and increments generation exactly once.
+   */
+  async completeTokenlessUnactivatedDisconnect(input:z.infer<typeof idAction>):
+    Promise<WorkspaceConnection>{
+    const p=idAction.parse(input);
+    return this.db.transaction(async tx=>{
+      await authorize(tx,{workspaceId:p.workspaceId,...p.actor},"admin");
+      const prior=await readLocked(tx,p.workspaceId,p.connectionId);
+      if(prior.status==="disconnected")return prior;
+      if(prior.status!=="disconnecting")
+        throw Error("Account must be disconnecting before cleanup");
+      const original=await tx.query<{
+        activated_at:Date|null;credential_account_id:string|null;
+        provider_connection_id:string|null
+      }>(
+        `SELECT activated_at,credential_account_id,provider_connection_id
+           FROM public.ishikeit_account_connections
+          WHERE workspace_id=$1 AND connection_id=$2 FOR UPDATE`,
+        [p.workspaceId,p.connectionId]
+      );
+      const row=original.rows[0];
+      if(row===undefined||row.activated_at!==null||
+         row.credential_account_id!==null||row.provider_connection_id!==null)
+        throw Error("Provider cleanup required for activated or credential-bound claim");
+      const changed=await tx.query<ConnectionRow>(
+        `UPDATE public.ishikeit_account_connections
+            SET status='disconnected',disconnected_at=now(),
+                generation=generation+1,updated_at=now()
+          WHERE workspace_id=$1 AND connection_id=$2
+            AND status='disconnecting' AND activated_at IS NULL
+            AND credential_account_id IS NULL AND provider_connection_id IS NULL
+          RETURNING connection_id,workspace_id,provider,provider_account_id,
+                    status,generation`,
+        [p.workspaceId,p.connectionId]
+      );
+      if(changed.rowCount!==1||changed.rows[0]===undefined)
+        throw Error("Account cleanup was concurrently modified");
+      const completed=present(changed.rows[0]);
+      await audit(tx,completed,"disconnected",p.actor);
+      return completed;
+    });
+  }
+
   /** This ONLY fences the new registry. Existing live dispatch still needs a
    * staged, tested registry integration before disconnect is operational.
    * Keep the account claim until audited provider credential cleanup finishes. */
@@ -475,6 +574,116 @@ export class PostgresWorkspaceConnectionRegistry {
         [p.connectionId,p.workspaceId]
       );
       return result.rows[0]===undefined?undefined:present(result.rows[0]);
+    });
+  }
+
+  /** Private owner/admin-only binding read for providers where multiple
+   * account identities matter (e.g. WhatsApp Messaging account + phone).
+   * Never serialize this object into the public browser inventory. The
+   * subsequent activateVerified still locks and revalidates it atomically.
+   */
+  async findBindingForAdministrator(input:z.infer<typeof idAction>):Promise<{
+    provider:string;accountId:string;status:WorkspaceConnectionStatus;
+    providerApplicationKey:string;providerConnectionId:string|null;
+    credentialAccountId:string|null
+  }|undefined>{
+    const p=idAction.parse(input);
+    return this.db.transaction(async tx=>{
+      await authorize(tx,{workspaceId:p.workspaceId,...p.actor},"admin");
+      const result=await tx.query<{
+        provider:string;provider_account_id:string;status:WorkspaceConnectionStatus;
+        provider_application_key:string;provider_connection_id:string|null;
+        credential_account_id:string|null
+      }>(
+        `SELECT provider,provider_account_id,status,provider_application_key,
+                provider_connection_id,credential_account_id
+           FROM public.ishikeit_account_connections
+          WHERE connection_id=$1 AND workspace_id=$2`,
+        [p.connectionId,p.workspaceId]
+      );
+      const row=result.rows[0];
+      if(row===undefined)return undefined;
+      return {
+        provider:row.provider,accountId:row.provider_account_id,
+        status:row.status,providerApplicationKey:row.provider_application_key,
+        providerConnectionId:row.provider_connection_id,
+        credentialAccountId:row.credential_account_id
+      };
+    });
+  }
+
+  /** Scoped, read-only owner/admin capability evidence preview. All account,
+   * provider and observed proofs originate from this single authorized
+   * database transaction. No cross-account inference or public RLS grants.
+   * This is NOT a tenant send permit or provider entitlement refresh.
+   */
+  async capabilitiesForAdministrator(input:z.infer<typeof idAction>):Promise<{
+    connection:WorkspaceConnection;
+    capability:AccountCapabilityPresentation;
+  }>{
+    const p=idAction.parse(input);
+    return this.db.transaction(async tx=>{
+      await authorize(tx,{workspaceId:p.workspaceId,...p.actor},"admin");
+      const current=await tx.query<ConnectionRow&{created_at:Date;provider_application_key:string}>(
+        `SELECT connection_id,workspace_id,provider,provider_account_id,status,generation,
+                created_at,provider_application_key
+           FROM public.ishikeit_account_connections
+          WHERE workspace_id=$1 AND connection_id=$2
+          FOR SHARE`,
+        [p.workspaceId,p.connectionId]
+      );
+      const row=current.rows[0];
+      if(row===undefined)throw Error("Connection not found in workspace");
+      const connection=present(row);
+      // For a transferred provider account, provider observations BEFORE the
+      // current connection's creation are stale even if recorded afterward.
+      // Initial claims may retain earlier OAuth-grant observations, but any
+      // prior disconnected claim forces a new provider readback. Do not
+      // permit delayed previous-owner evidence to resurrect inherited rights.
+      // Account facts are shared by immutable provider identity. Once an
+      // account is disconnected and relinked to a different workspace, old
+      // observations must not be inherited as current permission evidence.
+      if(["disconnecting","disconnected","revoked"].includes(connection.status))
+        return {connection,capability:presentAccountCapabilityEvidence({
+          provider:connection.provider,accountId:connection.accountId,facts:[]
+        })};
+      const observations=await tx.query<pg.QueryResultRow&{
+        evidence_key:string;state:"granted"|"denied";
+        evidence_source:ObservedAccountFact["source"];
+        source_reference:string;observed_at:Date;valid_until:Date
+      }>(
+        `SELECT evidence_key,state,evidence_source,source_reference,
+                observed_at,valid_until
+           FROM public.provider_account_capability_facts_v2
+          WHERE provider=$1 AND account_id=$2 AND provider_application_key=$3
+            AND source_connection_id=$5::uuid
+            AND recorded_at >= $4
+            AND (
+              NOT EXISTS (
+                SELECT 1 FROM public.ishikeit_account_connections previous
+                 WHERE previous.provider=$1
+                   AND previous.provider_account_id=$2
+                   AND previous.connection_id<>$5
+                   AND previous.status='disconnected'
+              )
+              OR observed_at >= $4
+            )
+          ORDER BY evidence_key ASC
+          LIMIT 65`,
+        [connection.provider,connection.accountId,row.provider_application_key,
+          row.created_at,connection.connectionId]
+      );
+      if(observations.rows.length>64)
+        throw Error("Account capability evidence exceeds safe read bound");
+      const facts:ObservedAccountFact[]=observations.rows.map(e=>({
+        provider:connection.provider,accountId:connection.accountId,
+        key:e.evidence_key,state:e.state,source:e.evidence_source,
+        sourceReference:e.source_reference,
+        observedAt:e.observed_at.toISOString(),validUntil:e.valid_until.toISOString()
+      }));
+      return {connection,capability:presentAccountCapabilityEvidence({
+        provider:connection.provider,accountId:connection.accountId,facts
+      })};
     });
   }
 

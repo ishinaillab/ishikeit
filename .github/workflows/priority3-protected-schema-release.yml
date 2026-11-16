@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 # Identical group required for every future privileged Ishikeit release job.
 concurrency:
@@ -45,6 +46,7 @@ jobs:
         env:
           ISHIKEIT_RELEASE_APP_SHA: ${{ inputs.app_sha }}
           ISHIKEIT_RELEASE_DB_SHA: ${{ inputs.db_sha }}
+          ISHIKEIT_GITHUB_READBACK_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "$ISHIKEIT_RELEASE_APP_SHA" =~ ^[0-9a-f]{40}$ ]]
@@ -82,6 +84,8 @@ jobs:
           node-version: '24'
           package-manager-cache: false
       - name: Recheck both exact protected SHAs after independent environment approval
+        env:
+          ISHIKEIT_GITHUB_READBACK_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$ISHIKEIT_RELEASE_APP_SHA" ]]

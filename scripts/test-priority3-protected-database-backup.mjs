@@ -9,6 +9,7 @@ function verify(s){
   s=s.replace(/\r\n/gu,"\n");
   const must=[
     "\non:\n  workflow_dispatch:\n",
+    "\npermissions:\n  contents: read\n  actions: read\n",
     "group: ishikeit-priority3-privileged-release",
     "cancel-in-progress: false",
     "github.actor == 'ishinaillab' && github.ref == 'refs/heads/main'",
@@ -38,6 +39,7 @@ function verify(s){
   ];
   for(const part of must)assert.ok(s.includes(part),"Required backup protection absent: "+part.slice(0,74));
   assert.equal(s.split("node scripts/verify-priority3-github-release.mjs").length-1,2);
+  assert.equal(s.split("ISHIKEIT_GITHUB_READBACK_TOKEN: $"+"{{ github.token }}").length-1,2);
   assert.equal(s.split("environment: ishikeit-provisioning").length-1,1);
   assert.equal(s.split("uses: actions/upload-artifact@v4").length-1,1);
   const stages=s.split("\n  encrypted-logical-backup:\n");
@@ -58,6 +60,8 @@ const modifications=[
   ["allow other DB project",s=>s.replace('ref="vhmrliqemkfxblzsoyaz"','ref="wrong"')],
   ["enable automatic execution",s=>s.replace("\non:\n","\non:\n  push:\n")],
   ["cancel in-flight backup",s=>s.replace("cancel-in-progress: false","cancel-in-progress: true")],
+  ["remove authenticated release readback",s=>s.replace("ISHIKEIT_GITHUB_READBACK_TOKEN: $"+"{{ github.token }}","ISHIKEIT_GITHUB_READBACK_TOKEN: missing")],
+  ["remove actions read permission",s=>s.replace("  actions: read\n","")],
   ["remove current rules recheck",s=>s.replace("node scripts/verify-priority3-github-release.mjs","echo skipped")],
   ["drop role export",s=>s.replace('supabase db dump --remote="$DATABASE_URL" --role-only','supabase db dump --remote="$DATABASE_URL" --no-role')],
   ["drop archive encryption",s=>s.replace('"$agebin" --encrypt','echo unencrypted')],

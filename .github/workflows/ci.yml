@@ -11,6 +11,9 @@ permissions:
 jobs:
   node:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -20,6 +23,11 @@ jobs:
           package-manager-cache: false
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - name: Prove live authenticated Github release readback from hosted runner (no production credentials)
+        if: github.event_name == 'pull_request'
+        env:
+          ISHIKEIT_GITHUB_READBACK_TOKEN: ${{ github.token }}
+        run: node scripts/probe-priority3-github-readback.mjs
       - name: Verify protected Priority 3 SQL-only migration workflow safety (negative regressions)
         run: node --test scripts/test-priority3-protected-schema-workflow.mjs
       - name: Verify owner-approved ciphertext-only Priority 3 backup workflow (negative regressions)

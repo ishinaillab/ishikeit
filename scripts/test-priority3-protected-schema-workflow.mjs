@@ -9,7 +9,7 @@ function check(source){
   const s=source.replace(/\r\n/gu,"\n");
   const fragments=[
     "\non:\n  workflow_dispatch:\n",
-    "\npermissions:\n  contents: read\n",
+    "\npermissions:\n  contents: read\n  actions: read\n",
     "group: ishikeit-priority3-privileged-release",
     "cancel-in-progress: false",
     "github.actor == 'ishinaillab' && github.ref == 'refs/heads/main'",
@@ -30,6 +30,7 @@ function check(source){
   for(const fragment of fragments)
     assert.ok(s.includes(fragment),"Missing schema release control: "+fragment.slice(0,65));
   assert.equal(s.split("node scripts/verify-priority3-github-release.mjs").length-1,2);
+  assert.equal(s.split("ISHIKEIT_GITHUB_READBACK_TOKEN: $"+"{{ github.token }}").length-1,2);
   const stages=s.split("\n  production-migration:\n");
   assert.equal(stages.length,2);
   assert.doesNotMatch(stages[0],/secrets\.[A-Za-z_]+|DATABASE_URL\s*:/u);
@@ -54,6 +55,8 @@ const mutations=[
   ["remove one head preflight",s=>s.replace("node scripts/verify-priority3-github-release.mjs","echo skipped")],
   ["include seed",s=>s.replace("supabase db push --yes","supabase db push --include-seed --yes")],
   ["include roles",s=>s.replace("supabase db push --yes","supabase db push --include-roles --yes")],
+  ["drop authenticated GitHub readback",s=>s.replace("ISHIKEIT_GITHUB_READBACK_TOKEN: $"+"{{ github.token }}","ISHIKEIT_GITHUB_READBACK_TOKEN: missing")],
+  ["drop GitHub Actions read permission",s=>s.replace("  actions: read\n","")],
   ["drop DB checkout SHA check",s=>s.replace('[[ "$(git -C db-release rev-parse HEAD)" == "$ISHIKEIT_RELEASE_DB_SHA" ]]',"echo skipped")],
   ["expose credentials in initial job",s=>s.replace("    environment: ishikeit-priority3-production\n","    environment: ishikeit-priority3-production\n    env:\n      DATABASE_URL: $"+ "{{ secrets.ISHIKEIT_DATABASE_URL }}\n")]
 ];

@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ishikeit-priority3-privileged-release
@@ -38,6 +39,7 @@ jobs:
         env:
           ISHIKEIT_RELEASE_APP_SHA: ${{ inputs.app_sha }}
           ISHIKEIT_RELEASE_DB_SHA: ${{ inputs.db_sha }}
+          ISHIKEIT_GITHUB_READBACK_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$ISHIKEIT_RELEASE_APP_SHA" ]]
@@ -69,6 +71,8 @@ jobs:
           node-version: '24'
           package-manager-cache: false
       - name: Confirm protected heads and Supabase project before database credential use
+        env:
+          ISHIKEIT_GITHUB_READBACK_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$ISHIKEIT_RELEASE_APP_SHA" ]]

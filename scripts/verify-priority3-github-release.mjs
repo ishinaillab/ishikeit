@@ -23,19 +23,22 @@ const EXPECTED_CI={
 };
 const SHA=/^[0-9a-f]{40}$/u;
 
-async function boundedJson(url,fetchImpl){
+async function boundedJson(url,fetchImpl,authToken){
   const allow=url==="https://api.github.com/repos/"+APP ||
     url==="https://api.github.com/repos/"+DB ||
     url.startsWith("https://api.github.com/repos/"+APP+"/") ||
     url.startsWith("https://api.github.com/repos/"+DB+"/");
   if(!allow)throw Error("Unrecognized GitHub readback target");
+  const headers={"accept":"application/vnd.github+json",
+    "x-github-api-version":"2022-11-28",
+    "user-agent":"ishikeit-priority3-external-release-readback"};
+  if(authToken!==null && authToken!==undefined)
+    headers.authorization="Bearer "+authToken;
   let response;
   try{
     response=await fetchImpl(url,{
       method:"GET",redirect:"error",cache:"no-store",signal:AbortSignal.timeout(8000),
-      headers:{"accept":"application/vnd.github+json",
-        "x-github-api-version":"2022-11-28",
-        "user-agent":"ishikeit-priority3-external-release-readback"}
+      headers
     });
   }catch{throw Error("GitHub release verification unavailable");}
   if(!response.ok || Number(response.headers.get("content-length")??0)>131072)
@@ -94,32 +97,40 @@ function checkEnvironment(name,environment,branchPolicies){
     throw Error("Protected release environment must target main only");
 }
 export async function verifyPriority3GithubBoundary({
-  expectedAppMainSha,expectedDbMainSha,fetchImpl=fetch
+  expectedAppMainSha,expectedDbMainSha,fetchImpl=fetch,
+  authToken=process.env.GITHUB_TOKEN??null
 }){
+  // GitHub's job-scoped short-lived installation token increases REST quota
+  // without adding a PAT, overriding branch rules or granting write access.
+  // Do not print, persist, send to any URL other than allowlisted GitHub REST.
+  if(authToken!==null &&
+     (typeof authToken!=="string" || authToken.length<10 ||
+      authToken.length>8192 || !/^[A-Za-z0-9_.-]+$/u.test(authToken)))
+    throw Error("Invalid GitHub readback token");
   if(!SHA.test(expectedAppMainSha)||!SHA.test(expectedDbMainSha))
     throw Error("Exact protected main commit SHAs required");
   const refs=[[APP,APP_ENV,expectedAppMainSha],[DB,DB_ENV,expectedDbMainSha]];
   for(const [repo,environment,expectedSha] of refs){
     const base="https://api.github.com/repos/"+repo;
-    const repository=await boundedJson(base,fetchImpl);
+    const repository=await boundedJson(base,fetchImpl,authToken);
     if(repository?.full_name!==repo || repository.private!==false ||
        repository.archived!==false || repository.default_branch!=="main")
       throw Error("Release requires an unarchived public repository with main as default");
-    const rules=await boundedJson(base+"/rules/branches/main",fetchImpl);
+    const rules=await boundedJson(base+"/rules/branches/main",fetchImpl,authToken);
     checkRules(repo,rules);
-    const env=await boundedJson(base+"/environments/"+environment,fetchImpl);
+    const env=await boundedJson(base+"/environments/"+environment,fetchImpl,authToken);
     let branchPolicies;
     if(env.deployment_branch_policy?.custom_branch_policies===true){
       branchPolicies=await boundedJson(base+"/environments/"+environment+
-        "/deployment-branch-policies?per_page=100",fetchImpl);
+        "/deployment-branch-policies?per_page=100",fetchImpl,authToken);
     }
     checkEnvironment(environment,env,branchPolicies);
-    const head=await boundedJson(base+"/commits/main",fetchImpl);
+    const head=await boundedJson(base+"/commits/main",fetchImpl,authToken);
     if(head?.sha!==expectedSha)
       throw Error("Protected GitHub main revision changed during release preflight");
     // Recheck the rule readback after the source revision lookup: neither
     // a branch head nor a ruleset permission is an immutable deployment lease.
-    checkRules(repo,await boundedJson(base+"/rules/branches/main",fetchImpl));
+    checkRules(repo,await boundedJson(base+"/rules/branches/main",fetchImpl,authToken));
   }
   return {verified:true,appMainSha:expectedAppMainSha,
     dbMainSha:expectedDbMainSha,limitation:
@@ -129,6 +140,8 @@ export async function verifyPriority3GithubBoundary({
 if(process.argv[1]!==undefined &&
   import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
   try{
+    if(process.env.GITHUB_ACTIONS==="true" && !process.env.GITHUB_TOKEN)
+      throw Error("Protected Actions readback requires job-scoped GitHub token");
     await verifyPriority3GithubBoundary({
       expectedAppMainSha:process.env.ISHIKEIT_RELEASE_APP_SHA,
       expectedDbMainSha:process.env.ISHIKEIT_RELEASE_DB_SHA

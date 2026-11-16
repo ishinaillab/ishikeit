@@ -9,6 +9,7 @@ function verify(s){
   s=s.replace(/\r\n/gu,"\n");
   const must=[
     "\non:\n  workflow_dispatch:\n",
+    "\npermissions:\n  actions: read\n  contents: read\n",
     "group: ishikeit-priority3-privileged-release",
     "cancel-in-progress: false",
     "github.actor == 'ishinaillab' && github.ref == 'refs/heads/main'",
@@ -38,6 +39,8 @@ function verify(s){
   ];
   for(const part of must)assert.ok(s.includes(part),"Required backup protection absent: "+part.slice(0,74));
   assert.equal(s.split("node scripts/verify-priority3-github-release.mjs").length-1,2);
+  assert.equal(s.split("GITHUB_TOKEN: $"+ "{{ github.token }}").length-1,2);
+  assert.doesNotMatch(s,/actions: write|contents: write/u);
   assert.equal(s.split("environment: ishikeit-provisioning").length-1,1);
   assert.equal(s.split("uses: actions/upload-artifact@v4").length-1,1);
   const stages=s.split("\n  encrypted-logical-backup:\n");
@@ -52,6 +55,8 @@ function verify(s){
 }
 test("encrypted backup source passes protected owner and ciphertext-only controls",()=>verify(workflow));
 const modifications=[
+  ["grant GitHub write permission",s=>s.replace("  actions: read", "  actions: write")],
+  ["remove job-scoped GitHub readback credential",s=>s.replace("GITHUB_TOKEN: $"+"{{ github.token }}", "GITHUB_TOKEN: unverified")],
   ["remove initial owner approval",s=>s.replace("github.actor == 'ishinaillab'","github.actor != 'ishinaillab'")],
   ["expose database URL before first approval",s=>s.replace("    environment: ishikeit-priority3-production\n","    environment: ishikeit-priority3-production\n    env:\n      DATABASE_URL: $"+"{{ secrets.ISHIKEIT_DATABASE_URL }}\n")],
   ["remove second approval",s=>s.replace("environment: ishikeit-provisioning","environment: unprotected")],

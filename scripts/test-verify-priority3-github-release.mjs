@@ -52,8 +52,8 @@ function makeScenario(overrides={}){
     if(value==="403")return new Response("PRIVATE ERROR BODY",{status:403});
     return new Response(JSON.stringify(value),{status:200});
   };
-  return {seen,docs,run:()=>verifyPriority3GithubBoundary({
-    expectedAppMainSha:appSha,expectedDbMainSha:dbSha,fetchImpl
+  return {seen,docs,fetchImpl,run:(authToken=null)=>verifyPriority3GithubBoundary({
+    expectedAppMainSha:appSha,expectedDbMainSha:dbSha,fetchImpl,authToken
   })};
 }
 const u=(repo,tail)=>"https://api.github.com/repos/"+repo+tail;
@@ -152,4 +152,42 @@ test("rechecks each repo's active main rules after reading HEAD",async()=>{
   await assert.rejects(verifyPriority3GithubBoundary({
     expectedAppMainSha:appSha,expectedDbMainSha:dbSha,fetchImpl
   }),/Mandatory GitHub main rules/);
+});
+
+test("job-scoped token adds only authenticated read-only headers to all twelve GitHub endpoints",async()=>{
+  const secret="ghs_synthetic_mock_not_an_actual_token_abcdefg";
+  const s=makeScenario();
+  await s.run(secret);
+  assert.equal(s.seen.length,12);
+  for(const x of s.seen){
+    assert.equal(x.init.headers.authorization,"Bearer "+secret);
+    assert.equal(x.init.method,"GET");
+    assert.equal(x.init.redirect,"error");
+    assert.match(x.url,/^https:\/\/api\.github\.com\/repos\/ishinaillab\//u);
+  }
+  assert.doesNotMatch(JSON.stringify({verified:true}),/ghs_synthetic_mock/u);
+});
+test("authentication rejects malformed token before external API calls",async()=>{
+  const scenario=makeScenario();
+  for(const token of ["tiny","has newline\nattack","with spaces","\tsecret"]){
+    await assert.rejects(scenario.run(token),/Invalid GitHub readback token/);
+  }
+  assert.equal(scenario.seen.length,0);
+});
+test("failed authenticated lookup remains fail-closed and never retries without token",async()=>{
+  const secret="ghs_synthetic_mock_not_an_actual_token_abcdefg";
+  const seen=[];
+  const fetchImpl=async(url,init)=>{
+    seen.push({url,init});
+    return new Response("secret internal resource body that must not leak",
+      {status:403,headers:{"x-ratelimit-remaining":"0"}});
+  };
+  await assert.rejects(
+    verifyPriority3GithubBoundary({expectedAppMainSha:appSha,
+      expectedDbMainSha:dbSha,fetchImpl,authToken:secret}),
+    e=>e instanceof Error&&e.message==="GitHub release verification unavailable" &&
+      !e.message.includes(secret) && !e.message.includes("secret internal resource")
+  );
+  assert.equal(seen.length,1,"MUST NOT silently downgrade to anonymous");
+  assert.equal(seen[0].init.headers.authorization,"Bearer "+secret);
 });

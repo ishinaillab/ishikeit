@@ -9,7 +9,7 @@ function check(source){
   const s=source.replace(/\r\n/gu,"\n");
   const fragments=[
     "\non:\n  workflow_dispatch:\n",
-    "\npermissions:\n  contents: read\n",
+    "\npermissions:\n  actions: read\n  contents: read\n",
     "group: ishikeit-priority3-privileged-release",
     "cancel-in-progress: false",
     "github.actor == 'ishinaillab' && github.ref == 'refs/heads/main'",
@@ -30,6 +30,8 @@ function check(source){
   for(const fragment of fragments)
     assert.ok(s.includes(fragment),"Missing schema release control: "+fragment.slice(0,65));
   assert.equal(s.split("node scripts/verify-priority3-github-release.mjs").length-1,2);
+  assert.equal(s.split("GITHUB_TOKEN: $"+ "{{ github.token }}").length-1,2);
+  assert.doesNotMatch(s,/actions: write|contents: write/u);
   const stages=s.split("\n  production-migration:\n");
   assert.equal(stages.length,2);
   assert.doesNotMatch(stages[0],/secrets\.[A-Za-z_]+|DATABASE_URL\s*:/u);
@@ -42,6 +44,8 @@ function check(source){
 }
 test("owner-approved migration workflow is manual, serial, and SQL-only",()=>check(workflow));
 const mutations=[
+  ["grant GitHub write permission",s=>s.replace("  actions: read", "  actions: write")],
+  ["remove job-scoped GitHub readback credential",s=>s.replace("GITHUB_TOKEN: $"+"{{ github.token }}", "GITHUB_TOKEN: unverified")],
   ["drop Vault suppression from dry run",s=>s.replace("--dry-run --skip-vault","--dry-run")],
   ["drop Vault suppression from apply",s=>s.replace("--yes --skip-vault","--yes")],
   ["change owner authorization",s=>s.replace("github.actor == 'ishinaillab'","github.actor != 'ishinaillab'")],

@@ -10,7 +10,11 @@ import type { PostgresDatabase, SqlExecutor } from "../persistence/postgres.js";
 import type { PostgresWorkspaceInvitations, InviteSummary } from "./workspace-member-invitations.js";
 import type { PostgresWorkspaceConnectionRegistry, WorkspaceConnectionPage } from "../persistence/workspace-connections.js";
 import type { WorkspaceInstagramConnectionCoordinator } from "./workspace-instagram-connect.js";
+import type { WorkspaceWhatsAppEmbeddedV4Connections } from "./workspace-whatsapp-embedded-v4.js";
+import type { WorkspaceMessengerPageConnections } from "./workspace-messenger-connect.js";
 import type { WorkspaceTelegramOIDCConnections } from "./workspace-telegram-oidc.js";
+import type { WorkspaceTikTokOwnerConnections } from "./workspace-tiktok-connect.js";
+import type { PostgresActiveDisconnectHold } from "../persistence/active-disconnect.js";
 
 const bearer = z.string().min(20).max(4096).regex(/^[A-Za-z0-9_-]+$/u);
 const normalizedEmail = z.email().min(3).max(320).transform(x=>x.trim().toLowerCase());
@@ -161,9 +165,16 @@ export class PrivateBrowserAuthService {
     otp:Pick<SupabaseEmailOtpClient,"sendOtp"|"verifyOtp"|"refresh"|"revoke">;
     portfolio:Pick<AuthenticatedWorkspacePortfolio,"list">;
     memberInvites?:Pick<PostgresWorkspaceInvitations,"invite">;
-    connections?:Pick<PostgresWorkspaceConnectionRegistry,"listForAdministrator">;
+    connections?:Pick<PostgresWorkspaceConnectionRegistry,
+      "listForAdministrator"|"capabilitiesForAdministrator"|"requestUnactivatedDisconnect"> &
+      Partial<Pick<PostgresWorkspaceConnectionRegistry,
+        "completeTokenlessUnactivatedDisconnect">>;
     instagramConnections?:Pick<WorkspaceInstagramConnectionCoordinator,"begin"|"complete"|"confirm">;
+    whatsappEmbeddedV4?:Pick<WorkspaceWhatsAppEmbeddedV4Connections,"begin"|"complete"|"confirm">;
+    messengerConnections?:Pick<WorkspaceMessengerPageConnections,"begin"|"complete"|"confirm">;
     telegramConnections?:Pick<WorkspaceTelegramOIDCConnections,"begin"|"complete"|"confirm">;
+    tiktokConnections?:Pick<WorkspaceTikTokOwnerConnections,"begin"|"complete"|"confirm">;
+    activeDisconnect?:Pick<PostgresActiveDisconnectHold,"request"|"inspect">;
     csrfKeyBase64:string;
     onOtpFailure?: (diagnostic:BrowserOtpFailureDiagnostic)=>void;
     /** Fixed enums only. Never log raw provider errors or any TOTP secret. */
@@ -520,6 +531,70 @@ export class PrivateBrowserAuthService {
     });
   }
 
+  /** Independently revalidate current AAL2, exact login session, then
+   * enforce membership and exact connection under one server-side PG
+   * transaction. No provider secrets, plan inference or send activation.
+   */
+  async workspaceAccountCapabilities(cookie:string,workspaceId:string,
+    connectionId:string){
+    if(this.deps.connections===undefined)
+      throw Error("Account capability evidence unavailable");
+    const trusted=await this.#privilegedForProvider(cookie);
+    return this.deps.connections.capabilitiesForAdministrator({
+      workspaceId,connectionId,actor:trusted.principal
+    });
+  }
+
+  /** AAL2 and exact browser session before an unactivated provider claim
+   * can enter its auditable pending-cleanup state. This does not revoke the
+   * provider credential, free the unique account claim or stop legacy routes.
+   */
+  async requestPendingWorkspaceDisconnect(cookie:string,workspaceId:string,
+    connectionId:string){
+    if(this.deps.connections===undefined)
+      throw Error("Pending connection cancellation unavailable");
+    const trusted=await this.#privilegedForProvider(cookie);
+    const action={workspaceId,connectionId,actor:trusted.principal};
+    const pending=await this.deps.connections.requestUnactivatedDisconnect(action);
+    // This separately authorized, atomic step is permitted ONLY when the
+    // pending registry row has never activated and contains neither a token
+    // reference nor a provider connection identity. Otherwise stay at 202:
+    // retain the claim until official provider cleanup is independently proven.
+    if(this.deps.connections.completeTokenlessUnactivatedDisconnect===undefined)
+      return pending;
+    try{
+      return await this.deps.connections.completeTokenlessUnactivatedDisconnect(action);
+    }catch{
+      return pending;
+    }
+  }
+
+  /** ACTIVE disconnect is separate from cancelling an unactivated claim.
+   * Verify this exact browser session at AAL2 before the store independently
+   * locks and checks the live owner/admin role. This only freezes/quarantines:
+   * it does not imply provider revocation or allow tenant sending.
+   */
+  async requestActiveWorkspaceDisconnect(cookie:string,workspaceId:string,
+    connectionId:string){
+    if(this.deps.activeDisconnect===undefined)
+      throw Error("Active disconnect unavailable");
+    const trusted=await this.#privilegedForProvider(cookie);
+    return this.deps.activeDisconnect.request({
+      workspaceId,connectionId,actor:trusted.principal
+    });
+  }
+
+  /** Owner/admin inspection is sanitized and never exposes provider tokens. */
+  async inspectActiveWorkspaceDisconnect(cookie:string,workspaceId:string,
+    connectionId:string){
+    if(this.deps.activeDisconnect===undefined)
+      throw Error("Active disconnect unavailable");
+    const trusted=await this.#privilegedForProvider(cookie);
+    return this.deps.activeDisconnect.inspect({
+      workspaceId,connectionId,actor:trusted.principal
+    });
+  }
+
   /**
    * Provider linking remains exclusively inside the private opaque-cookie BFF.
    * Never return the Supabase bearer or provider tokens to client JavaScript.
@@ -564,6 +639,60 @@ export class PrivateBrowserAuthService {
     });
   }
 
+  async beginWhatsAppEmbeddedV4(cookie:string,workspaceId:string){
+    if(this.deps.whatsappEmbeddedV4===undefined)
+      throw Error("WhatsApp v4 onboarding unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.whatsappEmbeddedV4.begin(verified.accessToken,workspaceId);
+  }
+  async completeWhatsAppEmbeddedV4(cookie:string,input:{
+    workspaceId:string;state:string;browserNonce:string;
+    authorizationCode:string;messagingAccountId:string;phoneNumberId:string
+  }){
+    if(this.deps.whatsappEmbeddedV4===undefined)
+      throw Error("WhatsApp v4 onboarding unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.whatsappEmbeddedV4.complete({
+      ...input,accessToken:verified.accessToken
+    });
+  }
+  async confirmWhatsAppEmbeddedV4(cookie:string,workspaceId:string,
+    connectionId:string){
+    if(this.deps.whatsappEmbeddedV4===undefined)
+      throw Error("WhatsApp v4 onboarding unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.whatsappEmbeddedV4.confirm({
+      workspaceId,connectionId,actor:verified.principal
+    });
+  }
+
+  async beginMessengerConnection(cookie:string,workspaceId:string){
+    if(this.deps.messengerConnections===undefined)
+      throw Error("Messenger provider onboarding unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.messengerConnections.begin(verified.accessToken,workspaceId);
+  }
+  async completeMessengerConnection(cookie:string,input:{
+    workspaceId:string;state:string;browserNonce:string;
+    authorizationCode:string;pageId:string
+  }){
+    if(this.deps.messengerConnections===undefined)
+      throw Error("Messenger provider onboarding unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.messengerConnections.complete({
+      ...input,accessToken:verified.accessToken
+    });
+  }
+  async confirmMessengerConnection(cookie:string,workspaceId:string,
+    connectionId:string){
+    if(this.deps.messengerConnections===undefined)
+      throw Error("Messenger provider onboarding unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.messengerConnections.confirm({
+      workspaceId,connectionId,actor:verified.principal
+    });
+  }
+
   async beginTelegramConnection(cookie:string,workspaceId:string){
     if(this.deps.telegramConnections===undefined)
       throw new Error("Telegram OIDC connection unavailable");
@@ -590,6 +719,33 @@ export class PrivateBrowserAuthService {
     const verified=await this.#privilegedForProvider(cookie);
     return this.deps.telegramConnections.confirm({
       ...input,actor:verified.principal
+    });
+  }
+
+  async beginTikTokConnection(cookie:string,workspaceId:string){
+    if(this.deps.tiktokConnections===undefined)
+      throw Error("TikTok account holder connection unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.tiktokConnections.begin(verified.accessToken,workspaceId);
+  }
+
+  async completeTikTokConnection(cookie:string,input:{
+    workspaceId:string;state:string;browserNonce:string;authorizationCode:string
+  }){
+    if(this.deps.tiktokConnections===undefined)
+      throw Error("TikTok account holder connection unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.tiktokConnections.complete({
+      ...input,accessToken:verified.accessToken
+    });
+  }
+
+  async confirmTikTokConnection(cookie:string,workspaceId:string,connectionId:string){
+    if(this.deps.tiktokConnections===undefined)
+      throw Error("TikTok account holder connection unavailable");
+    const verified=await this.#privilegedForProvider(cookie);
+    return this.deps.tiktokConnections.confirm({
+      workspaceId,connectionId,actor:verified.principal
     });
   }
 

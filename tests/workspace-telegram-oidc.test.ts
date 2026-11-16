@@ -143,6 +143,74 @@ describe("Telegram native owner OIDC and Business evidence",()=>{
     );
   });
 
+  it("refuses a different Telegram business connection identifier even for the same OIDC owner",async()=>{
+    const {coordinator,business,registry,connection}=harness();
+    business.inspect.mockResolvedValueOnce({
+      connectionId:"business-conn-FORGERY",
+      ownerId:accountId,enabled:true,canReply:true
+    });
+    await expect(coordinator.confirm({
+      workspaceId,connectionId:connection.connectionId,actor,
+      businessConnectionId:"business-conn-A"
+    })).rejects.toThrow(/do not match|connection/i);
+    expect(registry.activateTelegramBusiness).not.toHaveBeenCalled();
+  });
+
+  it("records only freshly confirmed native Bot API rights under the OIDC connection app",async()=>{
+    const {intents,oidc,business,registry,connection}=harness();
+    const facts={record:vi.fn((input:unknown)=>{void input;return Promise.resolve(2);})};
+    const coordinator=new WorkspaceTelegramOIDCConnections({
+      clientId,redirectUri:callback,intents,oidc,business,registry,
+      capabilityFacts:facts
+    });
+    const input={workspaceId,connectionId:connection.connectionId,actor,
+      businessConnectionId:"business-conn-A"};
+    business.inspect.mockResolvedValueOnce({
+      connectionId:"business-conn-A",ownerId:"12345",enabled:true,canReply:true
+    });
+    await expect(coordinator.confirm(input)).rejects.toThrow();
+    expect(facts.record).not.toHaveBeenCalled();
+
+    const result=await coordinator.confirm(input);
+    expect(result.status).toBe("connected");
+    expect(facts.record).toHaveBeenCalledTimes(1);
+    const actual=facts.record.mock.calls[0]?.[0] as Array<{
+      provider:string;accountId:string;providerApplicationKey:string;
+      key:string;state:string;source:string;sourceReference:string;
+      observedAt:string;validUntil:string
+    }>;
+    expect(actual).toHaveLength(2);
+    expect(actual.map(item=>item.key).sort()).toEqual([
+      "telegram.business_connection","telegram.rights.can_reply"
+    ]);
+    expect(actual.every(item=>
+      item.provider==="telegram" && item.accountId===accountId &&
+      item.providerApplicationKey==="telegram-oidc-"+clientId &&
+      item.state==="granted" &&
+      item.source==="provider_connection_readback" &&
+      item.sourceReference==="getBusinessConnection"
+    )).toBe(true);
+    expect(actual.every(item=>
+      Date.parse(item.validUntil)>Date.parse(item.observedAt) &&
+      Date.parse(item.validUntil)-Date.parse(item.observedAt)===300000
+    )).toBe(true);
+  });
+
+  it("does not claim a failed evidence preview is failed provider activation",async()=>{
+    const {intents,oidc,business,registry,connection}=harness();
+    const facts={record:vi.fn((input:unknown)=>{void input;return Promise.reject(new Error("proof storage unavailable"));})};
+    const coordinator=new WorkspaceTelegramOIDCConnections({
+      clientId,redirectUri:callback,intents,oidc,business,registry,
+      capabilityFacts:facts
+    });
+    await expect(coordinator.confirm({
+      workspaceId,connectionId:connection.connectionId,actor,
+      businessConnectionId:"business-conn-A"
+    })).resolves.toMatchObject({status:"connected",generation:2});
+    expect(registry.activateTelegramBusiness).toHaveBeenCalledTimes(1);
+    expect(facts.record).toHaveBeenCalledTimes(1);
+  });
+
   it("checks real JOSE signature, audience, issuer, exp, nonce, id and alg",async()=>{
     const {publicKey,privateKey}=await generateKeyPair("RS256",{modulusLength:2048});
     const publicJwk=await exportJWK(publicKey);

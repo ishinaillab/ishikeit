@@ -28,6 +28,7 @@ describe("Instagram account deletion includes durable hashed conversation state"
     expect(result.statusUrl).toMatch(/^https:\/\/apps\.ishinaillab\.com\/ishikeit\/privacy\/data-deletion\/status\/[a-f0-9]{36}$/u);
     expect(executed.map(x => x.sql)).toEqual([
       expect.stringContaining("DELETE FROM public.provider_account_capability_facts"),
+      expect.stringContaining("DELETE FROM public.provider_account_capability_facts_v2"),
       expect.stringContaining("DELETE FROM public.meta_handoff_blocks"),
       expect.stringContaining("DELETE FROM public.meta_native_routing_ownership"),
       expect.stringContaining("DELETE FROM outbox_attempts"),
@@ -35,7 +36,8 @@ describe("Instagram account deletion includes durable hashed conversation state"
       expect.stringContaining("DELETE FROM inbound_events")
     ]);
     expect(executed[0]?.args).toEqual([["studio-ig", "studio-ig-alias"]]);
-    for (const index of [1, 2]) {
+    expect(executed[1]?.args).toEqual([["studio-ig", "studio-ig-alias"]]);
+    for (const index of [2, 3]) {
       expect(executed[index]?.sql).toContain("provider='meta' AND channel='instagram'");
       expect(executed[index]?.sql).toContain("account_id=ANY($1::text[])");
       expect(executed[index]?.args).toEqual([["studio-ig", "studio-ig-alias"]]);
@@ -59,6 +61,8 @@ describe("Instagram account deletion includes durable hashed conversation state"
     await reader.deauthorize("studio-ig");
     expect(dbQuery.mock.calls[0]?.[0]).toContain("DELETE FROM public.provider_account_capability_facts");
     expect(dbQuery.mock.calls[0]?.[1]).toEqual([["studio-ig", "studio-ig-alias"]]);
+    expect(dbQuery.mock.calls[1]?.[0]).toContain("DELETE FROM public.provider_account_capability_facts_v2");
+    expect(dbQuery.mock.calls[1]?.[1]).toEqual([["studio-ig", "studio-ig-alias"]]);
     expect(oauth.revoke).toHaveBeenCalledWith("instagram", "studio-ig", "deauthorized");
   });
 

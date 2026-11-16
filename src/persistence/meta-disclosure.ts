@@ -22,6 +22,9 @@ export class PostgresMetaDisclosureReader implements MetaDisclosureReader {
     const inbound = await this.db.query<PriorInboundRow>(
       `SELECT id FROM inbound_events
        WHERE partition_key = $1
+         AND workspace_id IS NULL
+         AND connection_id IS NULL
+         AND connection_generation IS NULL
          AND id <> $3::uuid
          AND event_type IN ('message.received', 'message.postback')
          AND processing_outcome = 'handled'
@@ -52,6 +55,9 @@ export class PostgresMetaDisclosureReader implements MetaDisclosureReader {
          WHERE id = ANY($1::uuid[])
            AND topic = 'action.dispatch'
            AND partition_key = $2
+           AND workspace_id IS NULL
+           AND connection_id IS NULL
+           AND connection_generation IS NULL
            AND published_at IS NOT NULL
            AND published_at >= $3::timestamptz - interval '24 hours'
            AND published_at < $3::timestamptz

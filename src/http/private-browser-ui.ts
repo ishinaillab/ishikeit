@@ -136,7 +136,10 @@ export const privateLoginHtml = `<!doctype html>
         <div class="channels-toolbar">
           <p id="channels-context" class="muted">Current workspace</p>
           <button type="button" id="channels-connect-instagram" class="secondary" hidden>Connect Instagram</button>
+          <button type="button" id="channels-connect-whatsapp" class="secondary" hidden>Connect WhatsApp</button>
+          <button type="button" id="channels-connect-messenger" class="secondary" hidden>Connect Messenger</button>
           <button type="button" id="channels-connect-telegram" class="secondary" hidden>Connect Telegram</button>
+          <button type="button" id="channels-connect-tiktok" class="secondary" hidden>Connect TikTok</button>
           <button type="button" id="channels-refresh" class="secondary">Refresh status</button>
         </div>
         <p id="channels-note" class="muted channels-note">This list shows Ishikeit's internal connection status, not a live provider permission check. Account linking and sending remain unavailable until verified provider authorization is implemented.</p>
@@ -494,7 +497,10 @@ const channelsStatus=get("channels-status");
 const channelsMore=get("channels-more");
 const channelsRefresh=get("channels-refresh");
 const channelsConnectInstagram=get("channels-connect-instagram");
+const channelsConnectWhatsApp=get("channels-connect-whatsapp");
+const channelsConnectMessenger=get("channels-connect-messenger");
 const channelsConnectTelegram=get("channels-connect-telegram");
+const channelsConnectTikTok=get("channels-connect-tiktok");
 const channelsNote=get("channels-note");
 const status=get("status");
 const accountMenu=get("account-menu");
@@ -512,7 +518,11 @@ let workspaceRows=[];
 let currentWorkspaceId="";
 let invitingEnabled=false;
 let instagramConnectEnabled=false;
+let whatsappEmbeddedV4Enabled=false;
+let messengerConnectEnabled=false;
 let telegramConnectEnabled=false;
+let tiktokConnectEnabled=false;
+let connectionCancellationEnabled=false;
 let connectionsEpoch=0;
 let connectionsLoading=false;
 let connectionsNext=null;
@@ -593,6 +603,7 @@ function resetConnections(){
   channelsRefresh.disabled=false;
   channelsConnectInstagram.disabled=false;
   channelsConnectTelegram.disabled=false;
+  channelsConnectTikTok.disabled=false;
 }
 function channelsAllowed(){
   const workspace=workspaceRows.find(item=>item.workspaceId===currentWorkspaceId);
@@ -664,6 +675,155 @@ async function loadConnections(more){
       const state=document.createElement("span");state.className="channel-state";
       state.textContent=channelStatusLabel(record.status);
       card.append(info,state);
+      // This is a request for provider cleanup of an UNACTIVATED claim,
+      // not a provider token revocation or completed account disconnection.
+      // The independent BFF feature is OFF until safe lifecycle acceptance.
+      if(connectionCancellationEnabled && record.status==="verifying"){
+        const cancel=document.createElement("button");
+        cancel.type="button";cancel.className="secondary";
+        cancel.textContent="Cancel pending link";
+        cancel.setAttribute("aria-label","Request cancellation of unactivated "+
+          record.provider+" account "+record.accountId);
+        cancel.addEventListener("click",async()=>{
+          if(!stillCurrent()||!channelsAllowed()||!csrfToken ||
+             record.workspaceId!==currentWorkspaceId)return;
+          cancel.disabled=true;
+          channelsStatus.textContent="Requesting cancellation of the pending link…";
+          try{
+            const response=await request("/app/auth/workspaces/"+
+              encodeURIComponent(record.workspaceId)+"/connections/"+
+              encodeURIComponent(record.connectionId)+"/cancel-pending",{},csrfToken);
+            if(!stillCurrent())return;
+            if(response.status!==202 && response.status!==200)
+              throw Error("Cancellation not accepted");
+            const result=await response.json();
+            if(!stillCurrent())return;
+            if(result?.workspaceId!==record.workspaceId ||
+              result.connectionId!==record.connectionId ||
+              !((response.status===202 && result.status==="disconnecting") ||
+                (response.status===200 && result.status==="disconnected")) ||
+              !Number.isSafeInteger(result.generation) ||
+              result.generation<record.generation+(response.status===200?2:1))
+              throw Error("Cancellation proof mismatch");
+            state.textContent=response.status===200?"Disconnected":"Disconnect requested";
+            cancel.hidden=true;
+            channelsStatus.textContent=response.status===200
+              ? "The pending link is cancelled and the local account claim released. "+
+                "This does not revoke external provider app permissions."
+              : "Cancellation requested. Provider cleanup is pending; "+
+                "the account remains reserved and cannot be transferred yet.";
+          }catch{
+            if(!stillCurrent())return;
+            cancel.disabled=false;
+            channelsStatus.textContent="Cancellation could not be verified. "+
+              "Refresh the account list or contact support.";
+          }
+        });
+        card.append(cancel);
+      }
+      // A read-only permission evidence preview is distinct from the
+      // tenant's actual ability to dispatch, bill or subscribe webhooks.
+      const inspect=document.createElement("button");
+      inspect.type="button";inspect.className="secondary";
+      inspect.textContent="View verified permissions";
+      inspect.setAttribute("aria-label","View provider permission evidence for "+
+        record.provider+" account "+record.accountId);
+      const evidencePanel=document.createElement("div");
+      evidencePanel.className="channel-capability-preview";
+      evidencePanel.hidden=true;
+      inspect.addEventListener("click",async()=>{
+        if(!stillCurrent()||!channelsAllowed())return;
+        if(!evidencePanel.hidden){
+          evidencePanel.hidden=true;
+          inspect.textContent="View verified permissions";
+          return;
+        }
+        inspect.disabled=true;
+        evidencePanel.hidden=false;
+        evidencePanel.replaceChildren();
+        const msg=document.createElement("p");msg.className="muted";
+        msg.textContent="Checking current saved provider evidence…";
+        evidencePanel.append(msg);
+        try{
+          const endpoint="/app/auth/workspaces/"+encodeURIComponent(workspaceId)+
+            "/connections/"+encodeURIComponent(record.connectionId)+"/capabilities";
+          const response=await fetch(endpoint,{
+            credentials:"same-origin",cache:"no-store",redirect:"error"
+          });
+          if(!stillCurrent())return;
+          if(!response.ok)throw Error("Capability read denied");
+          const data=await response.json();
+          if(!data||!data.connection||!data.capability||
+            data.connection.workspaceId!==workspaceId||
+            data.connection.connectionId!==record.connectionId||
+            data.connection.accountId!==record.accountId||
+            data.connection.provider!==record.provider||
+            data.connection.generation!==record.generation||
+            data.capability.provider!==record.provider||
+            data.capability.accountId!==record.accountId||
+            data.capability.tenantSendingEnabled!==false||
+            !Array.isArray(data.capability.features)||
+            data.capability.features.length>24||
+            !Array.isArray(data.capability.evidence)||
+            data.capability.evidence.length>64)
+            throw Error("Unexpected provider capability record");
+          const warning=document.createElement("p");
+          warning.className="muted";
+          warning.textContent="Read-only provider evidence, not a message-send or "+
+            "subscription permission. Account plan and paid features are not inferred.";
+          evidencePanel.replaceChildren(warning);
+          const decisions=document.createElement("ul");
+          decisions.className="channel-capability-list";
+          const allowed=new Set(["available","needs_permission","unsupported","unverified"]);
+          const labels={available:"Requirements verified (sending still disabled)",
+            needs_permission:"Provider permission denied or revoked",
+            unsupported:"Unsupported for this account type",
+            unverified:"Not verified for this account"};
+          for(const feature of data.capability.features){
+            if(!feature||typeof feature.id!=="string"||
+              !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(feature.id)||
+              !allowed.has(feature.evidenceStatus)||
+              typeof feature.reason!=="string"||feature.reason.length>240)
+              throw Error("Invalid provider feature evidence");
+            const item=document.createElement("li");
+            item.textContent=feature.id.replaceAll("_"," ")+": "+
+              labels[feature.evidenceStatus]+" — "+feature.reason;
+            decisions.append(item);
+          }
+          if(!decisions.children.length){
+            const empty=document.createElement("p");
+            empty.className="muted";
+            empty.textContent="No reviewed features exist for this provider.";
+            evidencePanel.append(empty);
+          }else evidencePanel.append(decisions);
+          const evidenceList=document.createElement("ul");
+          evidenceList.className="channel-capability-list";
+          const states=new Set(["granted","denied","expired","unknown"]);
+          for(const fact of data.capability.evidence){
+            if(!fact||typeof fact.key!=="string"||
+              !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(fact.key)||
+              !states.has(fact.status))
+              throw Error("Invalid provider evidence");
+            const item=document.createElement("li");
+            item.textContent=fact.key+": "+fact.status+
+              (typeof fact.validUntil==="string"&&
+                Number.isFinite(Date.parse(fact.validUntil))
+                ?" (evidence until "+new Date(fact.validUntil)
+                  .toLocaleDateString(undefined,{dateStyle:"medium"})+")":"");
+            evidenceList.append(item);
+          }
+          if(evidenceList.children.length)evidencePanel.append(evidenceList);
+          inspect.textContent="Hide verified permissions";
+        }catch{
+          if(!stillCurrent())return;
+          evidencePanel.replaceChildren();
+          const error=document.createElement("p");error.className="muted";
+          error.textContent="Permission evidence could not be verified. "+
+            "Refresh the account list or sign in again.";
+          evidencePanel.append(error);
+        }finally{if(stillCurrent())inspect.disabled=false;}
+      });
+      info.append(inspect,evidencePanel);
       if(instagramConnectEnabled && record.provider==="instagram" &&
          record.status==="verifying"){
         const activate=document.createElement("button");
@@ -685,6 +845,61 @@ async function loadConnections(more){
           }catch{
             activate.disabled=false;
             channelsStatus.textContent="Activation could not be verified. Try again after checking your account permission.";
+          }
+        });
+        card.append(activate);
+      }
+      if(whatsappEmbeddedV4Enabled && record.provider==="whatsapp" &&
+         record.status==="verifying"){
+        const activate=document.createElement("button");
+        activate.type="button";activate.className="secondary";
+        activate.textContent="Confirm WhatsApp number";
+        activate.setAttribute("aria-label","Confirm WhatsApp number "+record.accountId);
+        activate.addEventListener("click",async()=>{
+          if(!whatsappEmbeddedV4Enabled||!channelsAllowed()||
+            record.workspaceId!==currentWorkspaceId||
+            mode!=="dashboard"||!csrfToken)return;
+          activate.disabled=true;
+          channelsStatus.textContent="Rechecking the WhatsApp number with Meta…";
+          try{
+            const response=await request(
+              "/app/auth/workspaces/"+encodeURIComponent(record.workspaceId)+
+              "/connections/"+encodeURIComponent(record.connectionId)+
+              "/whatsapp-activate",{},csrfToken);
+            if(!response.ok)throw Error("Activation denied");
+            channelsStatus.textContent="WhatsApp number confirmed. Messages, number registration and "+
+              "webhook subscriptions remain disabled until separate provider approval.";
+            void loadConnections(false);
+          }catch{
+            activate.disabled=false;
+            channelsStatus.textContent="WhatsApp number could not be verified. Check your provider rights.";
+          }
+        });
+        card.append(activate);
+      }
+      if(messengerConnectEnabled && record.provider==="messenger" &&
+         record.status==="verifying"){
+        const activate=document.createElement("button");
+        activate.type="button";activate.className="secondary";
+        activate.textContent="Confirm Messenger Page";
+        activate.setAttribute("aria-label","Confirm Messenger Page "+record.accountId);
+        activate.addEventListener("click",async()=>{
+          if(!messengerConnectEnabled||!channelsAllowed()||
+            record.workspaceId!==currentWorkspaceId||
+            mode!=="dashboard"||!csrfToken)return;
+          activate.disabled=true;
+          channelsStatus.textContent="Verifying your Page with Meta…";
+          try{
+            const response=await request(
+              "/app/auth/workspaces/"+encodeURIComponent(record.workspaceId)+
+              "/connections/"+encodeURIComponent(record.connectionId)+
+              "/messenger-activate",{},csrfToken);
+            if(!response.ok)throw Error("Page activation denied");
+            channelsStatus.textContent="Page verified. Automation remains disabled until tenant routing is approved.";
+            void loadConnections(false);
+          }catch{
+            activate.disabled=false;
+            channelsStatus.textContent="Messenger Page verification unavailable. Check current Page permissions and try again.";
           }
         });
         card.append(activate);
@@ -734,6 +949,34 @@ async function loadConnections(more){
           }
         });
         card.append(form);
+      }
+      if(tiktokConnectEnabled && record.provider==="tiktok" &&
+         record.status==="verifying"){
+        const activate=document.createElement("button");
+        activate.type="button";activate.className="secondary";
+        activate.textContent="Verify TikTok account";
+        activate.setAttribute("aria-label","Verify TikTok account "+record.accountId);
+        activate.addEventListener("click",async()=>{
+          if(!tiktokConnectEnabled || !channelsAllowed() ||
+             record.workspaceId!==currentWorkspaceId ||
+             mode!=="dashboard" || !csrfToken)return;
+          activate.disabled=true;
+          channelsStatus.textContent="Confirming your TikTok account ownership and eligibility…";
+          try{
+            const response=await request(
+              "/app/auth/workspaces/"+encodeURIComponent(record.workspaceId)+
+              "/connections/"+encodeURIComponent(record.connectionId)+
+              "/tiktok-activate",{},csrfToken
+            );
+            if(!response.ok)throw Error("TikTok account verification unavailable");
+            channelsStatus.textContent="TikTok account readback verified. Messaging automation remains disabled until the app has approved messaging access.";
+            void loadConnections(false);
+          }catch{
+            activate.disabled=false;
+            channelsStatus.textContent="TikTok account could not be verified. Check the provider account authorization and try again.";
+          }
+        });
+        card.append(activate);
       }
       channelsList.append(card);
     }
@@ -890,8 +1133,13 @@ function renderWorkspace(){
   get("nav-channels").hidden=!channelsAllowed();
   get("channels-context").textContent="Workspace: "+name;
   channelsConnectInstagram.hidden=!(instagramConnectEnabled && channelsAllowed());
+  channelsConnectWhatsApp.hidden=!(whatsappEmbeddedV4Enabled && channelsAllowed());
+  channelsConnectMessenger.hidden=!(messengerConnectEnabled && channelsAllowed());
+  channelsConnectTikTok.hidden=!(tiktokConnectEnabled && channelsAllowed());
   channelsConnectTelegram.hidden=!(telegramConnectEnabled && channelsAllowed());
-  channelsNote.textContent=(instagramConnectEnabled||telegramConnectEnabled)
+  channelsNote.textContent=(instagramConnectEnabled||whatsappEmbeddedV4Enabled||
+    messengerConnectEnabled||tiktokConnectEnabled||
+    telegramConnectEnabled)
     ?"Provider account authentication is separate from messaging permission. Confirm any provider Business connection separately. The registry does not activate messaging or automation."
     :"This is a private registry inventory, not a live provider permission check. Account onboarding and sending are currently unavailable.";
 }
@@ -929,7 +1177,11 @@ function showDashboard(data,preserve){
   workspaceRows=data.workspaces.items;
   invitingEnabled=data.memberInvitationsEnabled===true;
   instagramConnectEnabled=data.instagramConnectEnabled===true;
+  whatsappEmbeddedV4Enabled=data.whatsappEmbeddedV4Enabled===true;
+  messengerConnectEnabled=data.messengerConnectEnabled===true;
   telegramConnectEnabled=data.telegramConnectEnabled===true;
+  tiktokConnectEnabled=data.tiktokConnectEnabled===true;
+  connectionCancellationEnabled=data.connectionCancellationEnabled===true;
   if(!workspaceRows.some(item=>item.workspaceId===currentWorkspaceId))
     currentWorkspaceId=workspaceRows[0].workspaceId;
   renderWorkspace();
@@ -1278,6 +1530,40 @@ channelsConnectInstagram.addEventListener("click",async()=>{
     }
   }
 });
+channelsConnectWhatsApp.addEventListener("click",()=>{
+  if(!whatsappEmbeddedV4Enabled||!channelsAllowed()||mode!=="dashboard"||
+    !csrfToken||!currentWorkspaceId)return;
+  const workspaceId=currentWorkspaceId;
+  channelsConnectWhatsApp.disabled=true;
+  // Meta's official Embedded Signup v4 JS SDK must launch from an actual
+  // user gesture on its dedicated first-party CSP page, not here after fetch.
+  window.location.assign("/app/auth/workspaces/"+
+    encodeURIComponent(workspaceId)+"/whatsapp/signup");
+});
+channelsConnectMessenger.addEventListener("click",async()=>{
+  if(!messengerConnectEnabled||!channelsAllowed()||mode!=="dashboard"||
+    !csrfToken||!currentWorkspaceId)return;
+  const workspaceId=currentWorkspaceId;
+  channelsConnectMessenger.disabled=true;
+  channelsStatus.textContent="Opening authorized Facebook Page login…";
+  try{
+    const response=await request("/app/auth/workspaces/"+
+      encodeURIComponent(workspaceId)+"/connections/messenger/start",{},csrfToken);
+    if(workspaceId!==currentWorkspaceId||mode!=="dashboard")return;
+    if(!response.ok)throw Error("Messenger Page authorization unavailable");
+    const data=await response.json();
+    const url=new URL(data.authorizationUrl);
+    if(url.origin!=="https://www.facebook.com"||
+      !new RegExp("^/v[0-9]{1,2}[.][0-9]{1,2}/dialog/oauth$","u").test(url.pathname))
+      throw Error("Unrecognized Meta login host");
+    window.location.assign(url.toString());
+  }catch{
+    if(workspaceId===currentWorkspaceId&&mode==="dashboard"){
+      channelsConnectMessenger.disabled=false;
+      channelsStatus.textContent="Messenger authorization could not start. Verify workspace access and Meta setup.";
+    }
+  }
+});
 channelsConnectTelegram.addEventListener("click",async()=>{
   if(!telegramConnectEnabled||!channelsAllowed()||mode!=="dashboard"||
      !csrfToken||!currentWorkspaceId)return;
@@ -1298,6 +1584,31 @@ channelsConnectTelegram.addEventListener("click",async()=>{
     if(workspaceId===currentWorkspaceId&&mode==="dashboard"){
       channelsConnectTelegram.disabled=false;
       channelsStatus.textContent="Telegram authorization could not start. Check your workspace role and try again.";
+    }
+  }
+});
+channelsConnectTikTok.addEventListener("click",async()=>{
+  if(!tiktokConnectEnabled||!channelsAllowed()||mode!=="dashboard"||
+     !csrfToken||!currentWorkspaceId)return;
+  const workspaceId=currentWorkspaceId;
+  channelsConnectTikTok.disabled=true;
+  channelsStatus.textContent="Opening TikTok account holder authorization…";
+  try{
+    const response=await request("/app/auth/workspaces/"+
+      encodeURIComponent(workspaceId)+"/connections/tiktok/start",{},csrfToken);
+    if(workspaceId!==currentWorkspaceId||mode!=="dashboard")return;
+    if(!response.ok)throw Error("TikTok authorization unavailable");
+    const data=await response.json();
+    const url=new URL(data.authorizationUrl);
+    if(url.protocol!=="https:"||
+       !["ads.tiktok.com","business-api.tiktok.com","www.tiktok.com"]
+         .includes(url.hostname)||url.username||url.password)
+      throw Error("Untrusted TikTok account authorization");
+    window.location.assign(url.toString());
+  }catch{
+    if(workspaceId===currentWorkspaceId&&mode==="dashboard"){
+      channelsConnectTikTok.disabled=false;
+      channelsStatus.textContent="TikTok account authorization could not start. Verify your permissions and retry.";
     }
   }
 });

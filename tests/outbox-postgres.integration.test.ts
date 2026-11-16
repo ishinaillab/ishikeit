@@ -175,6 +175,52 @@ describe.skipIf(database === undefined)("Meta durable outbox fence on isolated P
     })).toBe(false);
   });
 
+  it("refuses legacy ack, retry, dead-letter and renewal for a forged tenant lease",async()=>{
+    const saved=await store!.enqueueAction(action("tenant-legacy-lease-ack"));
+    const lease=randomUUID(),workspace=randomUUID(),connection=randomUUID();
+    await database!.query(
+      `UPDATE public.outbox
+         SET workspace_id=$2,connection_id=$3,connection_generation=4,
+             lease_token=$4,lease_expires_at=now()+interval '5 minutes'
+       WHERE id=$1`,[saved.id,workspace,connection,lease]
+    );
+    const job:OutboxJob={
+      id:saved.id,topic:ACTION_DISPATCH_TOPIC,partitionKey:"synthetic-partition",
+      payload:action("tenant-legacy-lease-ack"),attemptCount:0,leaseToken:lease
+    };
+    expect(await store!.renewLease(job,30000)).toBe(false);
+    expect(await store!.complete(job,"fake-provider-receipt")).toBe(false);
+    expect(await store!.retry(job,new Date())).toBe(false);
+    expect(await store!.deadLetter(job,"fake-legacy-failure")).toBe(false);
+    expect((await database!.query<{
+      published_at:Date|null;dead_lettered_at:Date|null;
+      lease_token:string;attempt_count:number
+    }>(
+      "SELECT published_at,dead_lettered_at,lease_token,attempt_count FROM public.outbox WHERE id=$1",
+      [saved.id]
+    )).rows[0]).toMatchObject({
+      published_at:null,dead_lettered_at:null,lease_token:lease,attempt_count:0
+    });
+    expect((await database!.query<{n:string}>(
+      "SELECT count(*)::text AS n FROM public.outbox_attempts WHERE outbox_id=$1",
+      [saved.id]
+    )).rows[0]?.n).toBe("0");
+  });
+
+  it("rejects stale lease mutations even without a concurrent claimant",async()=>{
+    await store!.enqueueAction(action("expired-lease-write"));
+    const job=await store!.claimNext(ACTION_DISPATCH_TOPIC,30000);
+    expect(job).toBeDefined();
+    await expireTestLease(job!);
+    expect(await store!.renewLease(job!,30000)).toBe(false);
+    expect(await store!.complete(job!,"stale-provider-receipt")).toBe(false);
+    expect(await store!.retry(job!,new Date())).toBe(false);
+    expect(await store!.deadLetter(job!,"stale-failure")).toBe(false);
+    expect((await database!.query<{n:string}>(
+      "SELECT count(*)::text AS n FROM public.outbox_attempts"
+    )).rows[0]?.n).toBe("0");
+  });
+
   it("parks tenant inbound-accepted work until a tenant-isolated inbound worker exists", async () => {
     const workspace=randomUUID();
     const connection=randomUUID();

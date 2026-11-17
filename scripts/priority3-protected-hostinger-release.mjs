@@ -279,6 +279,28 @@ export async function run({cfg,db,api,fetcher=globalThis.fetch,githubToken,
       log("Previously uncertain external Hostinger step verified and reconciled");
       return {mode:"reconciled",buildUuid:old.uuid};
     }
+    if(cfg.mode==="preflight"){
+      // Preflight never writes to PostgreSQL. It can only report whether a
+      // lease appears available; deploy itself must acquire the actual CAS lease.
+      const status=await db.query(
+        "SELECT count(*)::int AS busy FROM public.ishikeit_release_ownership "+
+        "WHERE scope=$1 AND (pending_external_step IS NOT NULL OR "+
+        "(holder_digest IS NOT NULL AND expires_at>clock_timestamp()))",
+        [SCOPE]);
+      insist(Number(status.rows[0]?.busy)===0,
+        "Protected release lease is held or an external action is unresolved");
+      await assertGitHeads(fetcher,githubToken,cfg);
+      await api.assertAutoOff();
+      await api.assertBuildSettings();
+      const checked=await api.latest();
+      assertBuildOrigin(checked);
+      insist(checked.uuid===cfg.oldUuid&&checked.sha===cfg.oldSha&&
+        checked.status==="completed",
+        "Hostinger deployment changed during admission");
+      finished=true;
+      log("Protected Hostinger read-only preflight passed; no DB writes or deployment");
+      return {mode:"preflight",buildUuid:null};
+    }
     await fence.acquire(cfg);
     await assertGitHeads(fetcher,githubToken,cfg);
     await fence.check(cfg);
@@ -288,11 +310,6 @@ export async function run({cfg,db,api,fetcher=globalThis.fetch,githubToken,
     assertBuildOrigin(oldAgain);
     insist(oldAgain.uuid===cfg.oldUuid&&oldAgain.sha===cfg.oldSha,
       "Hostinger deployment changed during admission");
-    if(cfg.mode==="preflight"){
-      await fence.releaseUnarmed(cfg);finished=true;
-      log("Protected Hostinger admission passed; NO DEPLOYMENT attempted");
-      return {mode:"preflight",buildUuid:null};
-    }
     // Persist a hard stop before POST; a timeout after this may have built.
     await fence.arm(cfg);didArm=true;
     await assertGitHeads(fetcher,githubToken,cfg);

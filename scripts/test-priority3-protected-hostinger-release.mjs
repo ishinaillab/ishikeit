@@ -21,12 +21,13 @@ function stubFetch(changed=false,health="ok"){
     return {status:200,json:async()=>({status:url.endsWith("/health/live")?health:"ready"})};
   };
 }
-function fakeDb({migration=44,native=0,lockAvailable=true,checkLive=true}={}){
+function fakeDb({migration=44,native=0,lockAvailable=true,checkLive=true,leaseBusy=false}={}){
   const queries=[],state={armed:false,acquired:false,released:false,resolved:false};
   return {queries,state,async query(sql,params){
     queries.push({sql,params});
     if(sql.includes("supabase_migrations"))return {rows:[{total:migration}]};
     if(sql.includes("AS links"))return {rows:[{links:native,cleanup:0}]};
+    if(sql.includes("AS busy"))return {rows:[{busy:leaseBusy?1:0}]};
     if(sql.startsWith("INSERT")){
       state.acquired=lockAvailable;
       return {rows:lockAvailable?[{generation:5}]:[]};
@@ -159,14 +160,17 @@ test("protected preflight verifies external heads, live build and DB but never P
     githubToken:ghToken,log:x=>out.push(x)});
   assert.equal(result.mode,"preflight");
   assert.equal(api.state.started,0);
-  assert.equal(db.state.released,true);
+  assert.equal(db.state.released,false);
+  assert.equal(db.state.acquired,false);
   assert.equal(db.state.armed,false);
+  assert.ok(db.queries.every(x=>x.sql.trimStart().startsWith("SELECT")),
+    "Preflight must never INSERT, UPDATE, DELETE or execute a production lease write");
   assert.equal(db.queries.filter(x=>x.sql.includes("pending_external_step='app_deploy'")).length,0);
 });
 for(const [name,opts,expect] of [
   ["migration drift",{migration:39},/44/],
   ["native active links",{native:1},/connections/],
-  ["no lease",{lockAvailable:false},/owned|lease|unresolved/i]
+  ["active or unresolved lease",{leaseBusy:true},/held|unresolved/i]
 ]){
   test("preflight refuses "+name,async()=>{
     const db=fakeDb(opts),api=fakeApi();
@@ -175,6 +179,16 @@ for(const [name,opts,expect] of [
     assert.equal(api.state.started,0);
   });
 }
+test("preflight requires no DB mutation rights; deployment still requires CAS",async()=>{
+  const db=fakeDb({lockAvailable:false}),api=fakeApi();
+  const outcome=await run({cfg,db,api,fetcher:stubFetch(),
+    githubToken:ghToken,log:()=>{}});
+  assert.equal(outcome.mode,"preflight");
+  assert.ok(db.queries.every(x=>/^SELECT\b/u.test(x.sql)),
+    "Even a read-only database user must be able to perform admission checks");
+  assert.equal(db.state.acquired,false);
+  assert.equal(api.state.started,0);
+});
 test("preflight refuses GitHub head mismatch without acquiring lease or building",async()=>{
   const db=fakeDb(),api=fakeApi();
   await assert.rejects(run({cfg,db,api,fetcher:stubFetch(true),
@@ -240,9 +254,10 @@ test("after arm even health failure leaves durable unresolved external step",asy
 });
 test("runtime lease is random digest and never passed as plaintext DB value",async()=>{
   const db=fakeDb(),api=fakeApi();
-  await run({cfg,db,api,fetcher:stubFetch(),githubToken:ghToken,log:()=>{}});
+  await run({cfg:{...cfg,mode:"deploy"},db,api,fetcher:stubFetch(),githubToken:ghToken,log:()=>{}});
   const first=db.queries.find(x=>x.sql.startsWith("INSERT"));
   assert.equal(Buffer.isBuffer(first.params[1]),true);
   assert.equal(first.params[1].length,32);
-  assert.equal(db.queries.some(x=>x.sql.includes("holder_digest=NULL")&&x.sql.includes("pending_external_step IS NULL")),true);
+  assert.equal(db.queries.some(x=>x.sql.includes("holder_digest=NULL")&&x.sql.includes("pending_external_step=NULL")&&x.sql.includes("verified_app_deploy_at=")),true);
+  assert.equal(db.state.resolved,true);
 });

@@ -32,6 +32,10 @@ jobs:
         run: node --test scripts/test-priority3-protected-schema-workflow.mjs
       - name: Verify owner-approved ciphertext-only Priority 3 backup workflow (negative regressions)
         run: node --test scripts/test-priority3-protected-database-backup.mjs
+      - name: Verify protected Priority 3 Hostinger release controller and workflow safety
+        run: |
+          node --test scripts/test-priority3-protected-hostinger-release.mjs
+          node --test scripts/test-priority3-protected-hostinger-workflow.mjs
       - name: Verify protected GitHub first-admin deployment environment guard (mock only)
         run: node --test scripts/test-verify-protected-provisioning-environment.mjs
       - name: Verify protected Supabase Auth SMTP, invitation redirect, and MFA configuration checks (mock only)
@@ -134,6 +138,19 @@ jobs:
         run: |
           npm run build
           node scripts/test-disposable-postgres-restart.mjs
+
+      - name: Check out exact reviewed DB migrations for protected release CAS tests
+        uses: actions/checkout@v7
+        with:
+          repository: ishinaillab/ishikeit-db
+          ref: 2bf7c2f6b2cc6245c4e0ea7660ed817654e2ad3e
+          path: _priority3_db
+          persist-credentials: false
+      - name: Prove protected Hostinger release CAS, expiry takeover and armed-step hold on disposable PG17
+        env:
+          PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
+          ISHIKEIT_PROTECTED_DB_MIGRATIONS_DIR: _priority3_db/supabase/migrations
+        run: node --test scripts/test-priority3-protected-hostinger-postgres.mjs
 
   php-lint:
     runs-on: ubuntu-latest

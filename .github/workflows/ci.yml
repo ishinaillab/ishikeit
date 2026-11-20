@@ -23,13 +23,17 @@ jobs:
           package-manager-cache: false
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - name: Verify exact-SHA protected Priority 3 GitHub app and DB release preflight (mock only)
+        run: node --test scripts/test-verify-priority3-github-release.mjs
+      - name: Verify protected owner-approved Hostinger release controller and rerun isolation (mock only)
+        run: node --test scripts/test-priority3-protected-hostinger-release.mjs scripts/test-priority3-protected-hostinger-workflow.mjs
       - name: Prove live authenticated Github release readback from hosted runner (no production credentials)
         if: github.event_name == 'pull_request'
         env:
           ISHIKEIT_GITHUB_READBACK_TOKEN: ${{ github.token }}
         run: node scripts/probe-priority3-github-readback.mjs
       - name: Verify protected Priority 3 SQL-only migration workflow safety (negative regressions)
-        run: node --test scripts/test-priority3-protected-schema-workflow.mjs
+        run: node --test scripts/test-priority3-protected-schema-workflow.mjs scripts/test-priority3-protected-schema-python.mjs scripts/test-priority3-protected-schema-lease.mjs
       - name: Verify owner-approved ciphertext-only Priority 3 backup workflow (negative regressions)
         run: node --test scripts/test-priority3-protected-database-backup.mjs
       - name: Verify protected GitHub first-admin deployment environment guard (mock only)
@@ -100,6 +104,25 @@ jobs:
         env:
           PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
         run: npx vitest run tests/outbox-postgres.integration.test.ts tests/oauth-postgres.integration.test.ts tests/postgres-idle-recovery.integration.test.ts tests/durable-worker-heartbeats-postgres.integration.test.ts tests/operational-incident-postgres.integration.test.ts tests/account-capability-facts-postgres.integration.test.ts tests/workspace-connections-postgres.integration.test.ts
+      - name: Verify app-scoped owner rights, cross-workspace transfer isolation, and monotonic Priority 3 release lease on disposable PostgreSQL 17
+        env:
+          PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
+        # These isolated fixtures own temporary private capability/lease
+        # tables. Do NOT run them concurrently with each other or with
+        # the legacy compatibility suites above.
+        run: npx vitest run tests/workspace-account-capabilities-postgres.integration.test.ts tests/priority3-release-fence-postgres.integration.test.ts --no-file-parallelism
+      - name: Prove active disconnect quarantine, tenant isolation, in-flight uncertainty, and retry ledger on disposable PostgreSQL 17
+        env:
+          PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
+        # Fixture owns disposable foundation, registry and outbox tables.
+        # Keep it separate from all other PG integration steps.
+        run: npx vitest run tests/active-disconnect-postgres.integration.test.ts tests/active-disconnect-finalizer-postgres.integration.test.ts tests/tenant-send-generation-postgres.integration.test.ts tests/priority3-native-outbox-write-fence-postgres.integration.test.ts --no-file-parallelism
+      - name: Verify 45-migration Hostinger release SQL guard, trigger safety and least privilege on disposable PostgreSQL 17
+        env:
+          PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
+        # Owns a synthetic outbox/registry schema; run sequentially after
+        # active-disconnect suites and before standalone provenance tests.
+        run: node --test scripts/test-priority3-protected-schema-postgres.mjs
       - name: Validate tenant provenance constraints on standalone disposable PostgreSQL 17 schema
         env:
           PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
@@ -127,6 +150,20 @@ jobs:
         env:
           PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
         run: node scripts/test-private-admin-migrations.mjs
+      - name: Prove exclusive schema-migration lease and expiration-safe owner reconciliation in disposable PostgreSQL 17
+        env:
+          PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
+        run: |
+          npm run build
+          node --test scripts/test-priority3-protected-schema-lease-postgres.mjs
+          node --test scripts/test-priority3-protected-schema-release-e2e-postgres.mjs
+      - name: Verify real Hostinger external-step lease and verified-only recovery against disposable PostgreSQL 17
+        env:
+          PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test
+        # Owns temporary release lease, connection registry and outbox
+        # tables. Must be after the schema release tests and before restart.
+        # No Hostinger API, GitHub credential, or real customer traffic.
+        run: node --test scripts/test-priority3-protected-hostinger-e2e-postgres.mjs
       - name: Restart isolated PostgreSQL 17 service and prove pool recovery
         env:
           PG_OUTBOX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ishikeit_outbox_test

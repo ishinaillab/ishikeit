@@ -13,11 +13,11 @@ on:
         required: true
         type: string
       operation:
-        description: 'preflight: no writes; apply: reviewed SQL; verify: readback'
+        description: 'preflight: no writes; apply: fenced SQL; verify: readback; reconcile: verified expired hold'
         required: true
         default: preflight
         type: choice
-        options: [preflight, apply, verify]
+        options: [preflight, apply, verify, reconcile]
 
 permissions:
   contents: read
@@ -30,11 +30,20 @@ concurrency:
 
 jobs:
   owner-approval:
-    if: github.actor == 'ishinaillab' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && github.actor == 'ishinaillab' && github.triggering_actor == 'ishinaillab' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: ishikeit-priority3-production
     steps:
+      - name: Fail closed unless first owner-authorized workflow attempt
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]
+          [[ "$GITHUB_ACTOR" == "ishinaillab" ]]
+          [[ "$GITHUB_TRIGGERING_ACTOR" == "ishinaillab" ]]
+          [[ "$GITHUB_RUN_ATTEMPT" == "1" ]]
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -56,7 +65,7 @@ jobs:
 
   production-migration:
     needs: owner-approval
-    if: needs.owner-approval.result == 'success'
+    if: needs.owner-approval.result == 'success' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && github.actor == 'ishinaillab' && github.triggering_actor == 'ishinaillab' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     # Existing owner-reviewed environment scopes the DB URL to a second
@@ -70,6 +79,15 @@ jobs:
       PGSSLMODE: require
       SUPABASE_ENV: production
     steps:
+      - name: Fail closed unless first owner-authorized workflow attempt
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]
+          [[ "$GITHUB_ACTOR" == "ishinaillab" ]]
+          [[ "$GITHUB_TRIGGERING_ACTOR" == "ishinaillab" ]]
+          [[ "$GITHUB_RUN_ATTEMPT" == "1" ]]
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -106,66 +124,117 @@ jobs:
           python3 - <<'PY'
           import os, re, subprocess
           from pathlib import Path
-          from urllib.parse import urlsplit
+          from urllib.parse import urlsplit, unquote
+          def require(ok, reason):
+              if not ok:
+                  raise SystemExit(reason)
           url=os.environ.get("DATABASE_URL", "")
           ref="vhmrliqemkfxblzsoyaz"
           u=urlsplit(url)
-          assert u.scheme in ("postgres","postgresql"), "Database URL missing"
+          require(u.scheme in ("postgres","postgresql"), "Database URL missing")
           host=u.hostname or ""
-          user=u.username or ""
-          assert host.endswith((".supabase.co",".supabase.com")), "Unexpected database host"
-          assert ref in host or user.endswith("."+ref), "Incorrect Supabase project"
-          assert u.password, "Database credential missing"
+          direct=(host=="db."+ref+".supabase.co")
+          pooler=bool(re.fullmatch(r"aws-[0-9]+-ap-southeast-1\.pooler\.supabase\.com",host))
+          require(direct or pooler, "Unexpected production database host")
+          user=unquote(u.username or "")
+          require(user==("postgres" if direct else "postgres."+ref), "Incorrect Supabase project")
+          require(u.password and u.path=="/postgres", "Database identity or credential missing")
+          require(u.port in (None,5432,6543) and not u.query and not u.fragment, "Unsafe DB URL options")
           versions=[]
           for path in Path("supabase/migrations").glob("*.sql"):
               match=re.fullmatch(r"([0-9]{14})_[^.]+\.sql",path.name)
-              assert match, "Malformed migration file"
+              require(match, "Malformed migration file")
               versions.append(match.group(1))
           versions.sort()
-          assert len(versions)==44 and len(set(versions))==44, "Unexpected migration history"
+          require(len(versions)==45 and len(set(versions))==45, "Unexpected migration history")
           expected=["20261115013500","20261115021500","20261115030147",
-                    "20261115040000","20261115040500"]
-          assert versions[39:]==expected, "Unexpected pending migrations"
+                    "20261115040000","20261115040500","20261118222000"]
+          require(versions[39:]==expected, "Unexpected pending migrations")
           remote=subprocess.check_output(["psql",url,"-X","-A","-t","-v",
               "ON_ERROR_STOP=1","-c",
               "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"],
               text=True).splitlines()
           mode=os.environ["OPERATION"]
-          assert mode in ("preflight","apply","verify"), "Unsupported operation"
-          assert len(remote)==(44 if mode=="verify" else 39), "Unexpected applied version count"
-          assert remote==versions[:len(remote)], "Remote migration history diverged"
+          require(mode in ("preflight","apply","verify","reconcile"), "Unsupported operation")
+          require(len(remote)==(45 if mode in ("verify","reconcile") else 44),
+                  "Unexpected applied version count")
+          require(remote==versions[:len(remote)], "Remote migration history diverged")
+          if mode in ("preflight","apply"):
+              # Shared release lease blocks another protected migration/deploy,
+              # including an expired but still-uncertain external operation.
+              busy_sql=(
+                  "SELECT EXISTS (SELECT 1 FROM public.ishikeit_release_ownership "
+                  "WHERE scope='ishikeit_priority3_production' "
+                  "AND (pending_external_step IS NOT NULL OR "
+                  "(holder_digest IS NOT NULL AND expires_at>clock_timestamp())))::text"
+              )
+              busy=subprocess.check_output(["psql",url,"-X","-A","-t","-v",
+                  "ON_ERROR_STOP=1","-c",busy_sql],text=True).strip()
+              require(busy in ("false","f"),
+                  "A protected release lease or unresolved hosted step blocks new migration")
           print("Exact protected Supabase project and versioned migration prefix verified")
           PY
       - uses: supabase/setup-cli@v3
         with:
-          version: '3.1.0'
+          version: '3.2.0'
       - name: Non-mutating official Supabase hosted migration plan
-        if: inputs.operation != 'verify'
+        if: inputs.operation == 'preflight' || inputs.operation == 'apply'
         working-directory: db-release
         run: |
           set -euo pipefail
           supabase migration list --remote="$DATABASE_URL"
           supabase db push --dry-run --skip-vault --remote="$DATABASE_URL"
-      - name: Apply exactly the approved migrations after both owner approvals
-        if: inputs.operation == 'apply'
-        working-directory: db-release
+      - name: Build the exact protected schema release controller (no lifecycle scripts)
+        if: inputs.operation == 'apply' || inputs.operation == 'reconcile'
         run: |
           set -euo pipefail
-          supabase db push --yes --skip-vault --remote="$DATABASE_URL"
-      - name: Independently read back all 44 applied migration versions
-        if: inputs.operation == 'apply' || inputs.operation == 'verify'
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+      - name: Apply migration only under durable exclusive lease and external-step hold
+        if: inputs.operation == 'apply'
+        env:
+          ISHIKEIT_GITHUB_READBACK_TOKEN: ${{ github.token }}
+        run: node scripts/priority3-protected-schema-lease.mjs
+      - name: Reconcile an expired schema-migration hold only after exact live readback
+        if: inputs.operation == 'reconcile'
+        env:
+          ISHIKEIT_GITHUB_READBACK_TOKEN: ${{ github.token }}
+        run: node scripts/priority3-protected-schema-lease.mjs
+      - name: Independently read back all 45 applied migration versions
+        if: inputs.operation == 'apply' || inputs.operation == 'verify' || inputs.operation == 'reconcile'
         working-directory: db-release
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import os, re, subprocess
           from pathlib import Path
+          def require(ok, reason):
+              if not ok:
+                  raise SystemExit(reason)
           versions=sorted(re.fullmatch(r"([0-9]{14})_[^.]+\.sql",p.name).group(1)
                           for p in Path("supabase/migrations").glob("*.sql"))
           remote=subprocess.check_output(["psql",os.environ["DATABASE_URL"],
               "-X","-A","-t","-v","ON_ERROR_STOP=1","-c",
               "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version"],
               text=True).splitlines()
-          assert len(remote)==44 and remote==versions, "Live migration acceptance failed"
-          print("Verified: all 44 SQL versions applied to protected Supabase database")
+          require(len(remote)==45 and remote==versions, "Live migration acceptance failed")
+          # A migration-history row alone is not a functioning send fence.
+          # A provider runtime deployment must never proceed with a missing,
+          # disabled or client-executable native queue admission trigger.
+          guard_sql=(
+              "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger t "
+              "JOIN pg_catalog.pg_proc p ON p.oid=t.tgfoid "
+              "WHERE t.tgrelid=to_regclass('public.outbox') "
+              "AND t.tgname='ishikeit_native_outbox_write_fence' "
+              "AND t.tgenabled='O' AND NOT t.tgisinternal "
+              "AND p.oid=to_regprocedure('public.ishikeit_guard_native_outbox_write()') "
+              "AND NOT p.prosecdef "
+              "AND NOT has_function_privilege('anon',p.oid,'EXECUTE') "
+              "AND NOT has_function_privilege('authenticated',p.oid,'EXECUTE'))::text"
+          )
+          active=subprocess.check_output(["psql",os.environ["DATABASE_URL"],
+              "-X","-A","-t","-v","ON_ERROR_STOP=1","-c",guard_sql],
+              text=True).strip()
+          require(active=="true" or active=="t", "Native outbox write fence missing or disabled")
+          print("Verified: all 45 SQL migrations and enabled native outbox trigger")
           PY

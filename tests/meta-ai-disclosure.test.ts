@@ -99,12 +99,18 @@ describe("Meta first-contact and re-entry bot disclosure", () => {
     const [historySql, historyArgs] = query.mock.calls[0]!;
     expect(historySql).toContain("partition_key = $1");
     expect(historySql).toContain("processed_at IS NOT NULL");
+    expect(historySql).toContain("workspace_id IS NULL");
+    expect(historySql).toContain("connection_id IS NULL");
+    expect(historySql).toContain("connection_generation IS NULL");
     expect(historySql).toContain("ORDER BY received_at DESC LIMIT 256");
     expect(historyArgs).toEqual(["partition-1", new Date(now),
       "11111111-1111-4111-8111-111111111111"]);
     const [deliverySql, deliveryArgs] = query.mock.calls[1]!;
     expect(deliverySql).toContain("id = ANY($1::uuid[])");
     expect(deliverySql).toContain("published_at IS NOT NULL");
+    expect(deliverySql).toContain("workspace_id IS NULL");
+    expect(deliverySql).toContain("connection_id IS NULL");
+    expect(deliverySql).toContain("connection_generation IS NULL");
     expect(deliverySql).toContain("partition_key = $2");
     expect(deliveryArgs[0]).toHaveLength(1);
     expect(deliveryArgs[1]).toBe("partition-1");

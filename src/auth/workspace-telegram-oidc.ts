@@ -2,6 +2,7 @@ import {randomUUID} from "node:crypto";
 import {createRemoteJWKSet,jwtVerify} from "jose";
 import {z} from "zod";
 import type {AuthenticatedWorkspaceConnectionIntents} from "./authenticated-workspace-connection.js";
+import type {PostgresAccountCapabilityFacts} from "../persistence/account-capability-facts.js";
 import type {
   PostgresWorkspaceConnectionRegistry,WorkspacePrincipal
 } from "../persistence/workspace-connections.js";
@@ -196,6 +197,7 @@ export class WorkspaceTelegramOIDCConnections{
     intents:Pick<AuthenticatedWorkspaceConnectionIntents,"begin"|"consume">;
     oidc:TelegramOIDCClientLike;
     business:TelegramNativeBusinessLike;
+    capabilityFacts?:Pick<PostgresAccountCapabilityFacts,"record">;
     registry:Pick<PostgresWorkspaceConnectionRegistry,
       "linkVerified"|"findForAdministrator"|"activateTelegramBusiness">;
   }){
@@ -283,14 +285,39 @@ export class WorkspaceTelegramOIDCConnections{
       throw new Error("Telegram owner binding unavailable");
     const provider=await this.deps.business.inspect(p.businessConnectionId);
     if(provider.ownerId!==pending.accountId||
+      provider.connectionId!==p.businessConnectionId||
       provider.enabled!==true||provider.canReply!==true)
       throw new Error("Telegram Business user/rights do not match verified OIDC owner");
+    const verifiedAt=new Date();
     const activated=await this.deps.registry.activateTelegramBusiness({
       workspaceId:p.workspaceId,connectionId:p.connectionId,actor:p.actor,
       providerApplicationKey:"telegram-oidc-"+this.#clientId,
       ownerId:provider.ownerId,businessConnectionId:provider.connectionId,
-      verifiedAt:new Date().toISOString()
+      verifiedAt:verifiedAt.toISOString()
     });
+    // A successfully authenticated native Bot API readback can provide a
+    // short-lived, app-scoped evidence preview. Never infer live tenant send
+    // enablement or treat failed evidence storage as failed activation.
+    if(this.deps.capabilityFacts!==undefined){
+      const observedAt=verifiedAt;
+      const validUntil=new Date(observedAt.getTime()+300000);
+      const fact=(key:string)=>({
+        provider:"telegram",accountId:provider.ownerId,
+        providerApplicationKey:"telegram-oidc-"+this.#clientId,
+        sourceConnectionId:activated.connectionId,key,
+        state:"granted" as const,
+        source:"provider_connection_readback" as const,
+        sourceReference:"getBusinessConnection",
+        observedAt:observedAt.toISOString(),validUntil:validUntil.toISOString()
+      });
+      try{
+        await this.deps.capabilityFacts.record([
+          fact("telegram.business_connection"),fact("telegram.rights.can_reply")
+        ]);
+      }catch{
+        // The preview remains unverified; the real activation is not retried.
+      }
+    }
     return {connectionId:activated.connectionId,status:"connected",
       generation:activated.generation};
   }

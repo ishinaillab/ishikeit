@@ -488,6 +488,117 @@ describe.skipIf(db===undefined)("private browser OTP and session persistence on 
     expect((await service!.get(stepped.cookieValue)).memberInvitationsEnabled).toBe(true);
   });
 
+  it("requires current AAL2 to finalize only safe tokenless pending links through the BFF",async()=>{
+    const connectionId=randomUUID();
+    const pending={
+      workspaceId,connectionId,provider:"telegram",accountId:"9001",
+      status:"disconnecting" as const,generation:2
+    };
+    const complete={...pending,status:"disconnected" as const,generation:3};
+    const connections={
+      listForAdministrator:vi.fn(()=>Promise.resolve({items:[]})),
+      capabilitiesForAdministrator:vi.fn(()=>Promise.reject(Error("not used"))),
+      requestUnactivatedDisconnect:vi.fn(()=>Promise.resolve(pending)),
+      completeTokenlessUnactivatedDisconnect:vi.fn(()=>Promise.resolve(complete))
+    };
+    const privateController=new PrivateBrowserAuthService({
+      projectUrl:"https://abcdefghijklmnopqrst.supabase.co",
+      db:db!,cipher,csrfKeyBase64:secret,
+      otp:otpClient,mfa,auth,portfolio,connections
+    });
+    const first=await privateController.verify(
+      await privateController.begin("invited@example.com","disconnect-ip"),
+      "123456","disconnect-ip"
+    );
+    await expect(privateController.requestPendingWorkspaceDisconnect(
+      first.cookieValue,workspaceId,connectionId
+    )).rejects.toThrow(/multi-factor/i);
+    expect(connections.requestUnactivatedDisconnect).not.toHaveBeenCalled();
+    await privateController.enrollTotp(first.cookieValue,"Test owner factor");
+    const verified=await privateController.verifyTotp(first.cookieValue,factorId,"123456");
+    const finished=await privateController.requestPendingWorkspaceDisconnect(
+      verified.cookieValue,workspaceId,connectionId
+    );
+    expect(finished).toEqual(complete);
+    expect(connections.requestUnactivatedDisconnect).toHaveBeenCalledWith({
+      workspaceId,connectionId,actor:{issuer:origin,subject:userId}
+    });
+    expect(connections.completeTokenlessUnactivatedDisconnect)
+      .toHaveBeenCalledWith({workspaceId,connectionId,
+        actor:{issuer:origin,subject:userId}});
+    connections.completeTokenlessUnactivatedDisconnect.mockRejectedValueOnce(
+      new Error("Provider cleanup must be confirmed")
+    );
+    expect(await privateController.requestPendingWorkspaceDisconnect(
+      verified.cookieValue,workspaceId,connectionId
+    )).toEqual(pending);
+    connections.requestUnactivatedDisconnect.mockRejectedValueOnce(
+      new Error("Workspace authorization denied")
+    );
+    await expect(privateController.requestPendingWorkspaceDisconnect(
+      verified.cookieValue,workspaceId,connectionId
+    )).rejects.toThrow(/authorization denied/i);
+  });
+
+  it("binds ACTIVE disconnect and status inspection to a fresh AAL2 browser session",async()=>{
+    const connectionId=randomUUID();
+    const hold={workspaceId,connectionId,frozenGeneration:3,state:"pending" as const,
+      quarantinedJobs:2,uncertainInflightJobs:1,cleanupAttempts:0};
+    const activeDisconnect={
+      request:vi.fn(()=>Promise.resolve(hold)),
+      inspect:vi.fn(()=>Promise.resolve(hold))
+    };
+    const privateController=new PrivateBrowserAuthService({
+      projectUrl:"https://abcdefghijklmnopqrst.supabase.co",
+      db:db!,cipher,csrfKeyBase64:secret,
+      otp:otpClient,mfa,auth,portfolio,activeDisconnect
+    });
+    const first=await privateController.verify(
+      await privateController.begin("invited@example.com","active-disconnect-ip"),
+      "123456","active-disconnect-ip"
+    );
+    await expect(privateController.requestActiveWorkspaceDisconnect(
+      first.cookieValue,workspaceId,connectionId
+    )).rejects.toThrow(/multi-factor/i);
+    await expect(privateController.inspectActiveWorkspaceDisconnect(
+      first.cookieValue,workspaceId,connectionId
+    )).rejects.toThrow(/multi-factor/i);
+    expect(activeDisconnect.request).not.toHaveBeenCalled();
+    expect(activeDisconnect.inspect).not.toHaveBeenCalled();
+    await privateController.enrollTotp(first.cookieValue,"Test owner factor");
+    const stepped=await privateController.verifyTotp(
+      first.cookieValue,factorId,"123456"
+    );
+    await expect(privateController.requestActiveWorkspaceDisconnect(
+      first.cookieValue,workspaceId,connectionId
+    )).rejects.toThrow(/session/i);
+    expect(await privateController.requestActiveWorkspaceDisconnect(
+      stepped.cookieValue,workspaceId,connectionId
+    )).toEqual(hold);
+    expect(await privateController.inspectActiveWorkspaceDisconnect(
+      stepped.cookieValue,workspaceId,connectionId
+    )).toEqual(hold);
+    const actor={issuer:origin,subject:userId};
+    expect(activeDisconnect.request).toHaveBeenCalledExactlyOnceWith({
+      workspaceId,connectionId,actor
+    });
+    expect(activeDisconnect.inspect).toHaveBeenCalledExactlyOnceWith({
+      workspaceId,connectionId,actor
+    });
+    auth.verifyPrivilegedAccessToken.mockRejectedValueOnce(
+      new Error("Multi-factor authentication required")
+    );
+    await expect(privateController.requestActiveWorkspaceDisconnect(
+      stepped.cookieValue,workspaceId,connectionId
+    )).rejects.toThrow(/multi-factor/i);
+    expect(activeDisconnect.request).toHaveBeenCalledTimes(1);
+    await db!.query("DELETE FROM auth.sessions WHERE id=$1",[authSessionId]);
+    await expect(privateController.inspectActiveWorkspaceDisconnect(
+      stepped.cookieValue,workspaceId,connectionId
+    )).rejects.toThrow(/session/i);
+    expect(activeDisconnect.inspect).toHaveBeenCalledTimes(1);
+  });
+
   it("enrolls only for a freshly verified workspace user, verifies TOTP and rotates tokens",async()=>{
     const nonce=await service!.begin("invited@example.com","one-ip");
     const session=await service!.verify(nonce,"123456","one-ip");

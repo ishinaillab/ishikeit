@@ -94,6 +94,15 @@ export class InboundProcessorWorker {
       throw new ProcessingFailure("failed to load inbound event", { retryable: true, cause: error });
     });
 
+    // Even if an injected queue violates the DB claim boundary, a native
+    // workspace event must never reach the legacy AI processor or generate
+    // unscoped Ishi Nail Lab provider sends. Preserve its queue state.
+    if (stored?.tenantBound === true) {
+      throw new ProcessingFailure("Native tenant inbound reached legacy worker", {
+        retryable: false
+      });
+    }
+
     if (stored === undefined) {
       await this.#queue.deadLetter(job, "inbound event no longer exists", {
         durationMs: performance.now() - attemptStartedAt,

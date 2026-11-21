@@ -126,9 +126,10 @@ describe("native tenant Instagram connect (server-only, no provider calls in tes
       putInTransaction:vi.fn(()=>Promise.resolve(undefined)),
       get:vi.fn()
     };
+    const facts={record:vi.fn((entries:unknown)=>{void entries;return Promise.resolve(1);})};
     const coordinator=new WorkspaceInstagramConnectionCoordinator({
       consent,appId,client,
-      registry,oauth
+      registry,oauth,capabilityFacts:facts
     });
     const result=await coordinator.complete(input);
     expect(result).toMatchObject({
@@ -148,6 +149,67 @@ describe("native tenant Instagram connect (server-only, no provider calls in tes
       })
     );
     expect(JSON.stringify(result)).not.toContain("long-private-token");
+    // The scope grant is observed at the OAuth exchange, not refreshed
+    // simply because a later call can still resolve the token owner.
+    expect(facts.record).toHaveBeenCalledTimes(1);
+    const grantFacts=facts.record.mock.calls[0]?.[0] as Array<{
+      key:string;source:string;observedAt:string;validUntil:string;
+    }>;
+    expect(grantFacts).toHaveLength(1);
+    expect(grantFacts[0]).toMatchObject({
+      key:"instagram.scope.instagram_business_manage_messages",source:"oauth_grant"
+    });
+    expect(Date.parse(grantFacts[0]!.validUntil)-
+      Date.parse(grantFacts[0]!.observedAt)).toBe(300000);
+  });
+
+  it("fresh Instagram account readback does not revalidate historic OAuth grant scopes",async()=>{
+    const {consent,client}=fake();
+    const connectionId=randomUUID();
+    const expected={
+      connectionId,workspaceId,provider:"instagram",
+      accountId:"17841438662359631",status:"verifying" as const,generation:1
+    };
+    const registry={
+      linkVerified:vi.fn(),
+      findForAdministrator:vi.fn(()=>Promise.resolve(expected)),
+      activateVerified:vi.fn(()=>Promise.resolve({
+        ...expected,status:"connected" as const,generation:2
+      }))
+    };
+    const oauth={
+      putInTransaction:vi.fn(),
+      get:vi.fn(()=>Promise.resolve({
+        provider:"workspace-instagram",accountId:connectionId,
+        accessToken:"private-token",
+        scopes:["instagram_business_basic","instagram_business_manage_messages"],
+        accessExpiresAt:new Date(Date.now()+3600000),tokenVersion:1
+      }))
+    };
+    const facts={record:vi.fn((records:unknown)=>{void records;return Promise.resolve(2);})};
+    const coordinator=new WorkspaceInstagramConnectionCoordinator({
+      consent,appId,client,registry,oauth,capabilityFacts:facts
+    });
+    const req={workspaceId,connectionId,actor};
+    client.resolveProfessionalAccountId.mockResolvedValueOnce("foreign");
+    await expect(coordinator.confirm(req)).rejects.toThrow();
+    expect(facts.record).not.toHaveBeenCalled();
+    await expect(coordinator.confirm(req)).resolves.toMatchObject({status:"connected"});
+    const observations=facts.record.mock.calls[0]?.[0] as Array<{
+      provider:string;accountId:string;providerApplicationKey:string;
+      key:string;state:string;source:string
+    }>;
+    expect(observations.map(o=>o.key)).toEqual(["instagram.oauth"]);
+    expect(observations.every(o=>
+      o.provider==="instagram" && o.accountId===expected.accountId &&
+      o.providerApplicationKey==="instagram-login-"+appId &&
+      o.state==="granted"
+    )).toBe(true);
+    expect(observations.find(o=>o.key==="instagram.oauth")?.source)
+      .toBe("provider_api");
+    expect(observations.some(o=>
+      o.key==="instagram.scope.instagram_business_manage_messages")).toBe(false);
+    expect(observations.some(o=>o.key==="instagram.app_access")).toBe(false);
   });
 
   it("refuses activation when original grant expired or live identity changed",async()=>{

@@ -184,6 +184,181 @@ describe.skipIf(db===undefined)("native Instagram grant custody under disposable
       .toMatchObject({accountId:linked.connectionId});
   });
 
+  it("binds WhatsApp phone and Messaging account in encrypted tenant grant and rejects takeover",async()=>{
+    const app="meta-wa-v4-1042452472116584-123456789012345";
+    const phoneId="123456789012345";
+    const messagingAccountId="987654321098765";
+    async function whIntent(workspaceId:string,actor:WorkspacePrincipal){
+      const sessionId=randomUUID();
+      const request={workspaceId,actor,sessionId,provider:"whatsapp",
+        providerApplicationKey:app,
+        redirectUri:"https://apps.ishinaillab.com/app/auth/connect/whatsapp/embedded-v4"};
+      const started=await intents!.begin(request);
+      const used=await intents!.consume({...request,
+        state:started.state,browserNonce:started.browserNonce});
+      if(!used)throw Error("Expected WhatsApp owner intent");
+      return {intentId:used.intentId,sessionId};
+    }
+    const first=await whIntent(workspaceA,ownerA);
+    const connectionId=randomUUID();
+    const sensitiveToken="whatsapp-business-grant-"+randomUUID();
+    const grant={provider:"workspace-whatsapp",accountId:connectionId,
+      accessToken:sensitiveToken,
+      scopes:["whatsapp_business_management","whatsapp_business_messaging"],
+      accessExpiresAt:expiry()};
+    const claim={...first,connectionId,workspaceId:workspaceA,actor:ownerA,
+      providerApplicationKey:app,providerConnectionId:messagingAccountId,
+      credentialAccountId:connectionId,
+      proof:{provider:"whatsapp",accountId:phoneId,
+        source:"oauth_grant" as const,sourceReference:app,
+        verifiedAt:new Date().toISOString()}
+    };
+    const record=await registry!.linkVerified(claim,tx=>
+      vault!.putInTransaction(tx,grant));
+    expect(record.status).toBe("verifying");
+    const read=await registry!.findBindingForAdministrator({
+      workspaceId:workspaceA,connectionId,actor:ownerA});
+    expect(read).toMatchObject({
+      provider:"whatsapp",accountId:phoneId,status:"verifying",
+      providerConnectionId:messagingAccountId,providerApplicationKey:app,
+      credentialAccountId:connectionId
+    });
+    const encrypted=await db!.query<{encoded:string}>(
+      "SELECT encode(access_token_ciphertext,'hex') AS encoded FROM public.oauth_credentials");
+    expect(encrypted.rows).toHaveLength(1);
+    expect(encrypted.rows[0]?.encoded).not.toContain(sensitiveToken);
+    expect((await vault!.get("workspace-whatsapp",connectionId))?.accessToken)
+      .toBe(sensitiveToken);
+    await expect(vault!.list("workspace-whatsapp")).rejects.toThrow(
+      /exact authorized connection scope/);
+    await expect(vault!.put(grant)).rejects.toThrow(
+      /exact authorized connection scope/);
+    expect(await registry!.findBindingForAdministrator({
+      workspaceId:workspaceB,connectionId,actor:ownerB
+    })).toBeUndefined();
+    const second=await whIntent(workspaceB,ownerB);
+    const otherConnection=randomUUID();
+    await expect(registry!.linkVerified({
+      ...claim,...second,connectionId:otherConnection,workspaceId:workspaceB,
+      actor:ownerB,credentialAccountId:otherConnection,
+      providerConnectionId:"111111111111111",
+      proof:{...claim.proof,verifiedAt:new Date().toISOString()}
+    },tx=>vault!.putInTransaction(tx,{
+      ...grant,accountId:otherConnection
+    }))).rejects.toThrow();
+    expect((await db!.query("SELECT 1 FROM public.ishikeit_account_connections")).rowCount).toBe(1);
+    expect(await vault!.get("workspace-whatsapp",otherConnection)).toBeUndefined();
+  });
+
+  it("keeps Messenger Page grant encrypted and unique across foreign workspaces",async()=>{
+    const accountId="987654321098765",applicationKey="meta-messenger-1042452472116584";
+    const redirectUri="https://apps.ishinaillab.com/app/auth/connect/messenger/callback";
+    async function messengerIntent(workspaceId:string,actor:WorkspacePrincipal){
+      const sessionId=randomUUID();
+      const request={workspaceId,actor,sessionId,provider:"messenger",
+        providerApplicationKey:applicationKey,redirectUri};
+      const started=await intents!.begin(request);
+      const consumed=await intents!.consume({...request,
+        state:started.state,browserNonce:started.browserNonce});
+      if(!consumed)throw Error("Expected owner Page claim intent");
+      return {intentId:consumed.intentId,sessionId};
+    }
+    const sessionA=await messengerIntent(workspaceA,ownerA);
+    const connectionA=randomUUID();
+    const metaCredential={provider:"workspace-messenger",accountId:connectionA,
+      accessToken:"confidential-messenger-page-"+connectionA,
+      scopes:["pages_show_list","pages_manage_metadata","pages_messaging",
+        "pages_read_engagement","business_management"],accessExpiresAt:expiry()};
+    const claim={
+      ...sessionA,connectionId:connectionA,workspaceId:workspaceA,actor:ownerA,
+      credentialAccountId:connectionA,providerApplicationKey:applicationKey,
+      proof:{provider:"messenger",accountId,source:"oauth_grant" as const,
+        sourceReference:applicationKey,verifiedAt:new Date().toISOString()}
+    };
+    const linked=await registry!.linkVerified(claim,tx=>
+      vault!.putInTransaction(tx,metaCredential));
+    expect(linked.status).toBe("verifying");
+    const rows=await db!.query<{provider:string;encoded:string}>(
+      "SELECT provider,encode(access_token_ciphertext,'hex') AS encoded FROM public.oauth_credentials");
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0]?.provider).toBe("workspace-messenger");
+    expect(rows.rows[0]?.encoded).not.toContain("confidential-messenger-page");
+    expect((await vault!.get("workspace-messenger",connectionA))?.accessToken)
+      .toBe(metaCredential.accessToken);
+    await expect(vault!.list("workspace-messenger"))
+      .rejects.toThrow(/exact authorized connection scope/);
+    await expect(vault!.put(metaCredential))
+      .rejects.toThrow(/exact authorized connection scope/);
+    expect(await registry!.findForAdministrator({
+      workspaceId:workspaceB,connectionId:connectionA,actor:ownerB
+    })).toBeUndefined();
+    const sessionB=await messengerIntent(workspaceB,ownerB);
+    const otherId=randomUUID();
+    await expect(registry!.linkVerified({
+      ...sessionB,connectionId:otherId,workspaceId:workspaceB,actor:ownerB,
+      credentialAccountId:otherId,providerApplicationKey:applicationKey,
+      proof:{...claim.proof,verifiedAt:new Date().toISOString()}
+    },tx=>vault!.putInTransaction(tx,{
+      ...metaCredential,accountId:otherId
+    }))).rejects.toThrow();
+    expect(await vault!.get("workspace-messenger",otherId)).toBeUndefined();
+    expect((await db!.query("SELECT 1 FROM public.ishikeit_account_connections")).rowCount).toBe(1);
+  });
+
+  it("isolates TikTok account-holder grants atomically without legacy token overwrite or cross-tenant claims",async()=>{
+    const clientApp="tiktok-holder-987654321";
+    async function linkTikTok(workspaceId:string,actor:WorkspacePrincipal,account:string){
+      const authSessionId=randomUUID(),connectionId=randomUUID();
+      const request={workspaceId,actor,sessionId:authSessionId,
+        provider:"tiktok",providerApplicationKey:clientApp,
+        redirectUri:"https://apps.ishinaillab.com/app/auth/connect/tiktok/callback/"};
+      const created=await intents!.begin(request);
+      const claim=await intents!.consume({...request,
+        state:created.state,browserNonce:created.browserNonce});
+      if(claim===undefined)throw Error("TikTok simulated owner grant not consumed");
+      return registry!.linkVerified({
+        workspaceId,actor,connectionId,
+        intentId:claim.intentId,sessionId:authSessionId,
+        providerApplicationKey:clientApp,credentialAccountId:connectionId,
+        proof:{provider:"tiktok",accountId:account,source:"oauth_grant",
+          sourceReference:clientApp,verifiedAt:new Date().toISOString()}
+      },tx=>vault!.putInTransaction(tx,{
+        provider:"workspace-tiktok",accountId:connectionId,
+        accessToken:"tenant-tiktok-private-"+connectionId,
+        refreshToken:"refresh-"+connectionId,
+        scopes:["biz.manage"],accessExpiresAt:expiry(),
+        refreshExpiresAt:new Date(Date.now()+31536000000)
+      }));
+    }
+    const first=await linkTikTok(workspaceA,ownerA,"tiktok-owner-a");
+    const second=await linkTikTok(workspaceB,ownerB,"tiktok-owner-b");
+    expect(first.status).toBe("verifying");
+    expect(second.status).toBe("verifying");
+    const rows=await db!.query<{provider:string;account_id:string;ciphertext:string}>(
+      "SELECT provider,account_id,encode(access_token_ciphertext,'hex') AS ciphertext FROM public.oauth_credentials"
+    );
+    expect(rows.rows).toHaveLength(2);
+    for(const row of rows.rows){
+      expect(row.provider).toBe("workspace-tiktok");
+      expect(row.ciphertext).not.toContain("tenant-tiktok-private");
+      expect((await vault!.get(row.provider,row.account_id))?.accessToken)
+        .toBe("tenant-tiktok-private-"+row.account_id);
+    }
+    await expect(vault!.latest("workspace-tiktok")).rejects.toThrow(/scope/);
+    await expect(vault!.list("workspace-tiktok")).rejects.toThrow(/scope/);
+    await expect(vault!.put({
+      provider:"workspace-tiktok",accountId:randomUUID(),
+      accessToken:"unsafe",scopes:["biz.manage"]
+    })).rejects.toThrow(/scope/);
+    await expect(linkTikTok(workspaceB,ownerB,"tiktok-owner-a")).rejects.toThrow();
+    expect((await db!.query(
+      "SELECT count(*)::integer AS n FROM public.oauth_credentials"
+    )).rows[0]?.n).toBe(2);
+    expect(await registry!.findForAdministrator({
+      workspaceId:workspaceA,connectionId:second.connectionId,actor:ownerA
+    })).toBeUndefined();
+  });
+
   it("rejects any writer attempt to store credentials in existing legacy provider namespace",async()=>{
     await expect(db!.transaction(tx=>vault!.putInTransaction(tx,{
       ...credential(randomUUID()),provider:"instagram"

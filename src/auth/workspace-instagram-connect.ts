@@ -1,3 +1,4 @@
+import {recordNativeAccountIdentityEvidence,type NativeAccountEvidenceSink} from "./native-account-evidence.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { INSTAGRAM_REVIEW_SCOPES, type InstagramOAuthClientLike } from "./instagram-oauth.js";
@@ -18,6 +19,7 @@ export class WorkspaceInstagramConnectionCoordinator {
     client:Pick<InstagramOAuthClientLike,"resolveProfessionalAccountId">;
     appId:string;
     now?:()=>Date;
+    capabilityFacts?:NativeAccountEvidenceSink;
   }){}
 
   async begin(accessToken:string,workspaceId:string) {
@@ -32,6 +34,7 @@ export class WorkspaceInstagramConnectionCoordinator {
     if(grant.intent.workspaceId!==input.workspaceId || grant.intent.provider!=="instagram")
       throw new Error("Workspace/provider grant binding mismatch");
     const connectionId=randomUUID();
+    const grantObservedAt=this.deps.now?.()??new Date();
     const connection=await this.deps.registry.linkVerified({
       connectionId,intentId:grant.intent.intentId,
       sessionId:grant.sessionId,workspaceId:grant.intent.workspaceId,
@@ -40,7 +43,7 @@ export class WorkspaceInstagramConnectionCoordinator {
       proof:{
         provider:"instagram",accountId:grant.accountId,
         source:"oauth_grant",sourceReference:grant.intent.providerApplicationKey,
-        verifiedAt:new Date().toISOString()
+        verifiedAt:grantObservedAt.toISOString()
       }
     },async tx=>{
       await this.deps.oauth.putInTransaction(tx,{
@@ -48,6 +51,19 @@ export class WorkspaceInstagramConnectionCoordinator {
         accessToken:grant.accessToken,
         scopes:grant.scopes,accessExpiresAt:grant.accessExpiresAt
       });
+    });
+    // The original OAuth scopes were verified during the authorization
+    // exchange; record their actual observation date now. A later
+    // identity-only readback cannot refresh this historical grant.
+    await recordNativeAccountIdentityEvidence({
+      sink:this.deps.capabilityFacts,observedAt:grantObservedAt,
+      provider:"instagram",accountId:grant.accountId,
+      providerApplicationKey:grant.intent.providerApplicationKey,
+      sourceConnectionId:connection.connectionId,
+      observations:[{
+        key:"instagram.scope.instagram_business_manage_messages",
+        source:"oauth_grant",sourceReference:"instagram-login"
+      }]
     });
     return {
       connectionId:connection.connectionId,workspaceId:connection.workspaceId,
@@ -82,6 +98,7 @@ export class WorkspaceInstagramConnectionCoordinator {
     const providerAccountId=await this.deps.client.resolveProfessionalAccountId(credential.accessToken);
     if(providerAccountId!==existing.accountId)
       throw new Error("Fresh Instagram identity no longer matches tenant link");
+    const verifiedAt=this.deps.now?.()??new Date();
     // The registry itself atomically re-verifies workspace role, status and
     // exact provider app/subject while updating generation and audit.
     const active=await this.deps.registry.activateVerified({
@@ -91,9 +108,20 @@ export class WorkspaceInstagramConnectionCoordinator {
       proof:{
         provider:"instagram",accountId:existing.accountId,
         source:"provider_api",sourceReference:"instagram-provider-readback",
-        verifiedAt:new Date().toISOString()
+        verifiedAt:verifiedAt.toISOString()
       }
     });
+    await recordNativeAccountIdentityEvidence({
+      sink:this.deps.capabilityFacts,observedAt:verifiedAt,
+      provider:"instagram",accountId:existing.accountId,
+      providerApplicationKey:"instagram-login-"+this.deps.appId,
+      sourceConnectionId:active.connectionId,
+      observations:[{
+        key:"instagram.oauth",source:"provider_api",
+        sourceReference:"instagram-provider-readback"
+      }]
+    });
+    // No inferred instagram.app_access, app-review entitlement or account kind.
     return {connectionId:active.connectionId,status:"connected",generation:active.generation};
   }
 }

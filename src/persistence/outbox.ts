@@ -256,6 +256,10 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
        SET lease_expires_at = now() + make_interval(secs => $3::double precision)
        WHERE id = $1::uuid
          AND lease_token = $2::uuid
+         AND lease_expires_at > now()
+         AND workspace_id IS NULL
+         AND connection_id IS NULL
+         AND connection_generation IS NULL
          AND published_at IS NULL
          AND dead_lettered_at IS NULL
        RETURNING id`,
@@ -283,6 +287,10 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
                )
              END
          WHERE id = $1::uuid AND lease_token = $2::uuid
+           AND lease_expires_at > now()
+           AND workspace_id IS NULL AND connection_id IS NULL
+           AND connection_generation IS NULL
+           AND published_at IS NULL AND dead_lettered_at IS NULL
          RETURNING id,topic,partition_key
        )
        INSERT INTO outbox_attempts
@@ -323,6 +331,10 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
                ELSE meta_send_started_at
              END
          WHERE id = $1::uuid AND lease_token = $2::uuid
+           AND lease_expires_at > now()
+           AND workspace_id IS NULL AND connection_id IS NULL
+           AND connection_generation IS NULL
+           AND published_at IS NULL AND dead_lettered_at IS NULL
          RETURNING id,topic,partition_key
        )
        INSERT INTO outbox_attempts
@@ -364,6 +376,10 @@ export class PostgresOutboxStore implements OutboxDeliveryStore {
              lease_expires_at = NULL,
              lease_token = NULL
          WHERE id = $1::uuid AND lease_token = $2::uuid
+           AND lease_expires_at > now()
+           AND workspace_id IS NULL AND connection_id IS NULL
+           AND connection_generation IS NULL
+           AND published_at IS NULL AND dead_lettered_at IS NULL
          RETURNING id,topic,partition_key
        )
        INSERT INTO outbox_attempts

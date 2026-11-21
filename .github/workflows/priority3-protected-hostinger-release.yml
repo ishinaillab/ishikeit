@@ -1,0 +1,125 @@
+name: Priority 3 protected Hostinger runtime release
+run-name: Priority 3 Hostinger ${{ inputs.operation }} ${{ inputs.app_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_sha:
+        description: Exact approved protected app main SHA
+        required: true
+        type: string
+      db_sha:
+        description: Exact approved protected DB main SHA
+        required: true
+        type: string
+      current_build_uuid:
+        description: Exact live Hostinger build UUID read back before approval
+        required: true
+        type: string
+      current_build_sha:
+        description: Exact previously deployed app SHA for preflight CAS
+        required: true
+        type: string
+      operation:
+        description: provider-preflight verifies Hostinger before SQL; deploy or reconcile require both approvals
+        required: true
+        default: preflight
+        type: choice
+        options: [provider-preflight, preflight, deploy, reconcile]
+
+permissions:
+  contents: read
+  actions: read
+
+# This is the same group used for the already-protected Supabase schema and
+# encrypted backup jobs. PostgreSQL also fences all cross-run external steps.
+concurrency:
+  group: ishikeit-priority3-privileged-release
+  cancel-in-progress: false
+
+jobs:
+  owner-approval:
+    if: github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && github.actor == 'ishinaillab' && github.triggering_actor == 'ishinaillab' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: ishikeit-priority3-production
+    timeout-minutes: 10
+    steps:
+      - name: Fail closed unless first owner-authorized workflow attempt
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]
+          [[ "$GITHUB_ACTOR" == "ishinaillab" ]]
+          [[ "$GITHUB_TRIGGERING_ACTOR" == "ishinaillab" ]]
+          [[ "$GITHUB_RUN_ATTEMPT" == "1" ]]
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Require exact current protected app and DB SHA, all CI and release rules
+        env:
+          ISHIKEIT_RELEASE_APP_SHA: ${{ inputs.app_sha }}
+          ISHIKEIT_RELEASE_DB_SHA: ${{ inputs.db_sha }}
+          ISHIKEIT_GITHUB_READBACK_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$ISHIKEIT_RELEASE_APP_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$ISHIKEIT_RELEASE_DB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$ISHIKEIT_RELEASE_APP_SHA" ]]
+          node scripts/verify-priority3-github-release.mjs
+          test -f scripts/priority3-protected-hostinger-release.mjs
+
+  hostinger-runtime-release:
+    needs: owner-approval
+    if: needs.owner-approval.result == 'success' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && github.actor == 'ishinaillab' && github.triggering_actor == 'ishinaillab' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: ishikeit-provisioning
+    timeout-minutes: 45
+    env:
+      ISHIKEIT_RELEASE_APP_SHA: ${{ inputs.app_sha }}
+      ISHIKEIT_RELEASE_DB_SHA: ${{ inputs.db_sha }}
+      ISHIKEIT_EXPECTED_HOSTINGER_BUILD_UUID: ${{ inputs.current_build_uuid }}
+      ISHIKEIT_EXPECTED_HOSTINGER_BUILD_SHA: ${{ inputs.current_build_sha }}
+      ISHIKEIT_RELEASE_OPERATION: ${{ inputs.operation }}
+      ISHIKEIT_DATABASE_URL: ${{ inputs.operation == 'provider-preflight' && 'not-required-for-provider-only' || secrets.ISHIKEIT_DATABASE_URL }}
+      ISHIKEIT_HOSTINGER_API_TOKEN: ${{ secrets.ISHIKEIT_HOSTINGER_API_TOKEN }}
+      ISHIKEIT_GITHUB_READBACK_TOKEN: ${{ github.token }}
+      NODE_ENV: production
+    steps:
+      - name: Fail closed unless first owner-authorized workflow attempt
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]
+          [[ "$GITHUB_ACTOR" == "ishinaillab" ]]
+          [[ "$GITHUB_TRIGGERING_ACTOR" == "ishinaillab" ]]
+          [[ "$GITHUB_RUN_ATTEMPT" == "1" ]]
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Recheck owner-approved exact main SHA pair and protected CI
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$ISHIKEIT_RELEASE_APP_SHA" ]]
+          node scripts/verify-priority3-github-release.mjs
+      - name: Install locked Postgres client without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Require only the approved operation's secrets after owner environment approval
+        run: |
+          set -euo pipefail
+          if [[ "$ISHIKEIT_RELEASE_OPERATION" != "provider-preflight" ]]; then
+            test -n "$ISHIKEIT_DATABASE_URL"
+          fi
+          test -n "$ISHIKEIT_HOSTINGER_API_TOKEN"
+          test -n "$ISHIKEIT_GITHUB_READBACK_TOKEN"
+      - name: Run single-owner fenced preflight or exact-SHA Hostinger release
+        run: node scripts/priority3-protected-hostinger-release.mjs

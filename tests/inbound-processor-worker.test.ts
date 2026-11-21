@@ -131,6 +131,27 @@ describe("InboundProcessorWorker", () => {
     expect(q.complete).toHaveBeenCalled();
   });
 
+  it("rejects a tenant-provenance event even from a misconfigured legacy queue", async () => {
+    const q = makeQueue();
+    const e = makeEvents();
+    e.get.mockResolvedValue({ ...stored, tenantBound: true });
+    const handlers = new EventHandlerRegistry();
+    const handle = vi.fn().mockResolvedValue({ actions: [], outcome: "handled" });
+    handlers.register({ canHandle: () => true, handle });
+    const worker = new InboundProcessorWorker({
+      queue: q.queue, events: e.events, handlers, logger: pino({ level: "silent" })
+    });
+
+    await expect(worker.runOnce()).rejects.toThrow(/Native tenant inbound reached legacy worker/);
+    expect(handle).not.toHaveBeenCalled();
+    expect(e.markProcessing).not.toHaveBeenCalled();
+    expect(e.complete).not.toHaveBeenCalled();
+    expect(e.recordFailure).not.toHaveBeenCalled();
+    expect(q.complete).not.toHaveBeenCalled();
+    expect(q.retry).not.toHaveBeenCalled();
+    expect(q.deadLetter).not.toHaveBeenCalled();
+  });
+
   it("marks unsupported event types processed without invoking an adapter", async () => {
     const q = makeQueue();
     const e = makeEvents();

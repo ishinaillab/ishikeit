@@ -7,7 +7,7 @@ if(typeof token!=="string"||token.length<10)
 const repos=["ishinaillab/ishikeit","ishinaillab/ishikeit-db"];
 const shas=[];
 for(const repo of repos){
-  const response=await fetch("https://api.github.com/repos/"+repo+"/commits/main",{
+  const response=await fetch("https://api.github.com/repos/"+repo+"/git/ref/heads/main",{
     method:"GET",redirect:"error",cache:"no-store",
     signal:AbortSignal.timeout(8000),
     headers:{"accept":"application/vnd.github+json",
@@ -19,9 +19,10 @@ for(const repo of repos){
     throw Error("Protected GitHub readback test blocked at "+repo+
       " main HEAD (HTTP "+response.status+")");
   const result=await response.json();
-  if(typeof result?.sha!=="string"||!/^[0-9a-f]{40}$/u.test(result.sha))
+  if(result?.ref!=="refs/heads/main"||result?.object?.type!=="commit"||
+     typeof result.object.sha!=="string"||!/^[0-9a-f]{40}$/u.test(result.object.sha))
     throw Error("Protected GitHub readback returned malformed revision");
-  shas.push(result.sha);
+  shas.push(result.object.sha);
 }
 const result=await verifyPriority3GithubBoundary({
   expectedAppMainSha:shas[0],expectedDbMainSha:shas[1],githubToken:token

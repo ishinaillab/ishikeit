@@ -17,7 +17,9 @@ function approvedOrigin(b,bad=false){return {...b,source:"git",
 function stubFetch(changed=false,health="ok"){
   return async url=>{
     if(url.includes("github.com")){
-      return {status:200,json:async()=>({sha:url.includes("ishikeit-db")?shaB:(changed?"d".repeat(40):shaA)})};
+      return {status:200,json:async()=>({ref:"refs/heads/main",
+        object:{type:"commit",sha:url.includes("ishikeit-db")?shaB:
+          (changed?"d".repeat(40):shaA)}})};
     }
     return {status:200,json:async()=>({status:url.endsWith("/health/live")?health:"ready"})};
   };

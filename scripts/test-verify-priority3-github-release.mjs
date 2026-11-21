@@ -41,7 +41,8 @@ function makeScenario(overrides={}){
       "/deployment-branch-policies?per_page=100",{
         total_count:1,branch_policies:[{name:"main",type:"branch"}]
       });
-    docs.set(api+"/commits/main",{sha:repo===APP?appSha:dbSha});
+    docs.set(api+"/git/ref/heads/main",{ref:"refs/heads/main",
+      object:{type:"commit",sha:repo===APP?appSha:dbSha}});
   }
   for(const [path,value] of Object.entries(overrides))docs.set(path,value);
   const seen=[];
@@ -133,7 +134,9 @@ test("rejects private, archived, unexpected owner and non-main default repositor
   }
 });
 test("refuses unexpected latest GitHub SHAs, 403, missing state and malformed caller revisions",async()=>{
-  await blocked({[u(DB,"/commits/main")]:{sha:"c".repeat(40)}},/revision changed/);
+  await blocked({[u(DB,"/git/ref/heads/main")]:{
+    ref:"refs/heads/main",object:{type:"commit",sha:"c".repeat(40)}
+  }},/revision changed/);
   await blocked({[u(APP,"/environments/"+environments[APP])]:"403"},/unavailable/);
   await assert.rejects(verifyPriority3GithubBoundary({
     expectedAppMainSha:"main",expectedDbMainSha:dbSha,
@@ -208,4 +211,48 @@ test("fails closed on network failures without exposing token",async()=>{
     expectedAppMainSha:appSha,expectedDbMainSha:dbSha,githubToken:token,
     fetchImpl:async()=>{throw Error(token);}
   }),e=>/network: app metadata/.test(e.message)&&!e.message.includes(token));
+});
+
+test("large-squash release readback uses bounded git refs, never commit patch endpoint",async()=>{
+  const scenario=makeScenario(),seen=[];
+  for(const [repo,sha] of [[APP,appSha],[DB,dbSha]])
+    scenario.docs.set(u(repo,"/git/ref/heads/main"),{
+      ref:"refs/heads/main",object:{type:"commit",sha}
+    });
+  await verifyPriority3GithubBoundary({
+    expectedAppMainSha:appSha,expectedDbMainSha:dbSha,
+    fetchImpl:async(url)=>{
+      seen.push(url);
+      if(url.endsWith("/commits/main"))
+        throw Error("Full commit API may exceed the 128KiB release limit");
+      return new Response(JSON.stringify(scenario.docs.get(url)),{status:200});
+    }
+  });
+  assert.equal(seen.filter(x=>x.endsWith("/git/ref/heads/main")).length,2);
+  assert.equal(seen.some(x=>x.endsWith("/commits/main")),false);
+});
+
+test("rejects malformed reference identity or noncommit ref even if SHA matches",async()=>{
+  for(const bad of [
+    {ref:"refs/tags/main",object:{type:"commit",sha:appSha}},
+    {ref:"refs/heads/main",object:{type:"tag",sha:appSha}},
+    {ref:"refs/heads/main",object:{type:"commit",sha:"c".repeat(40)}},
+    {ref:"refs/heads/main",object:null}
+  ]){
+    await blocked({[u(APP,"/git/ref/heads/main")]:bad},/revision changed/);
+  }
+});
+test("compact reference responses remain bounded and oversized bodies fail closed",async()=>{
+  const scenario=makeScenario();
+  await assert.rejects(verifyPriority3GithubBoundary({
+    expectedAppMainSha:appSha,expectedDbMainSha:dbSha,
+    fetchImpl:async(url)=>{
+      if(url===u(APP,"/git/ref/heads/main"))
+        return new Response(JSON.stringify({
+          ref:"refs/heads/main",object:{type:"commit",sha:appSha},
+          unexpectedPadding:"x".repeat(140000)
+        }),{status:200});
+      return new Response(JSON.stringify(scenario.docs.get(url)),{status:200});
+    }
+  }),/GitHub release verification unavailable/);
 });

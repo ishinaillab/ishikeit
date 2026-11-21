@@ -276,7 +276,7 @@ export async function reconcileCompletedExternalStep(query,cfg){
 export async function assertGitHeads(fetcher,token,cfg){
   insist(typeof token==="string"&&token.length>=16,"Readback GitHub token unavailable");
   for(const [name,expected] of [["ishikeit",cfg.appSha],["ishikeit-db",cfg.dbSha]]){
-    const res=await fetcher("https://api.github.com/repos/ishinaillab/"+name+"/commits/main",{
+    const res=await fetcher("https://api.github.com/repos/ishinaillab/"+name+"/git/ref/heads/main",{
       method:"GET",redirect:"error",signal:AbortSignal.timeout(20000),
       headers:{Authorization:"Bearer "+token,Accept:"application/vnd.github+json",
         "User-Agent":"ishikeit-protected-release",
@@ -284,7 +284,8 @@ export async function assertGitHeads(fetcher,token,cfg){
     });
     insist(res.status===200,"GitHub protected branch readback unavailable");
     const data=await res.json();
-    insist(data?.sha===expected,"Protected GitHub HEAD drifted: "+name);
+    insist(data?.ref==="refs/heads/main"&&data?.object?.type==="commit"&&
+      data.object.sha===expected,"Protected GitHub HEAD drifted: "+name);
   }
 }
 export async function assertHealth(fetcher){

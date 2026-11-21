@@ -33,7 +33,8 @@ if(url===undefined){
   let createdRoles=[];
   const db={query:(sql,args)=>pool.query(sql,args)};
   const fetcher=async url=>url.includes("api.github.com")?
-    {status:200,json:async()=>({sha:url.includes("ishikeit-db")?cfg.dbSha:cfg.appSha})}:
+    {status:200,json:async()=>({ref:"refs/heads/main",
+    object:{type:"commit",sha:url.includes("ishikeit-db")?cfg.dbSha:cfg.appSha}})}:
     {status:200,json:async()=>({status:url.endsWith("/health/live")?"ok":"ready"})};
   const githubToken="test-only-github-readback-token-not-real";
   function api(overrides={}){

@@ -43,7 +43,7 @@ async function boundedJson(url,fetchImpl,githubToken){
   if(url.includes("/rules/branches/"))endpoint="branch-rules";
   else if(url.includes("/deployment-branch-policies"))endpoint="deployment-branches";
   else if(url.includes("/environments/"))endpoint="environment";
-  else if(url.includes("/commits/"))endpoint="main-head";
+  else if(url.includes("/git/ref/heads/main"))endpoint="main-head";
   try{
     response=await fetchImpl(url,{
       method:"GET",redirect:"error",cache:"no-store",signal:AbortSignal.timeout(8000),
@@ -134,8 +134,9 @@ export async function verifyPriority3GithubBoundary({
         "/deployment-branch-policies?per_page=100",fetchImpl,githubToken);
     }
     checkEnvironment(environment,env,branchPolicies);
-    const head=await boundedJson(base+"/commits/main",fetchImpl,githubToken);
-    if(head?.sha!==expectedSha)
+    const head=await boundedJson(base+"/git/ref/heads/main",fetchImpl,githubToken);
+    if(head?.ref!=="refs/heads/main"||head?.object?.type!=="commit"||
+       head.object.sha!==expectedSha)
       throw Error("Protected GitHub main revision changed during release preflight");
     // Recheck the rule readback after the source revision lookup: neither
     // a branch head nor a ruleset permission is an immutable deployment lease.

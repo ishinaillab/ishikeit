@@ -6,7 +6,7 @@ const source=readFileSync(new URL("priority3-protected-hostinger-release.mjs",im
 function check(w){
   const essential=[
     "\non:\n  workflow_dispatch:\n",
-    "options: [preflight, deploy, reconcile]",
+    "options: [provider-preflight, preflight, deploy, reconcile]",
     "permissions:\n  contents: read\n  actions: read",
     "group: ishikeit-priority3-privileged-release",
     "cancel-in-progress: false",
@@ -19,7 +19,7 @@ function check(w){
     "ISHIKEIT_EXPECTED_HOSTINGER_BUILD_UUID:",
     "ISHIKEIT_EXPECTED_HOSTINGER_BUILD_SHA:",
     "ISHIKEIT_RELEASE_OPERATION:",
-    "ISHIKEIT_DATABASE_URL: $"+"{{ secrets.ISHIKEIT_DATABASE_URL }}",
+    "ISHIKEIT_DATABASE_URL: $"+"{{ inputs.operation == 'provider-preflight' && 'not-required-for-provider-only' || secrets.ISHIKEIT_DATABASE_URL }}",
     "ISHIKEIT_HOSTINGER_API_TOKEN: $"+"{{ secrets.ISHIKEIT_HOSTINGER_API_TOKEN }}",
     "ISHIKEIT_GITHUB_READBACK_TOKEN: $"+"{{ github.token }}",
     "node scripts/verify-priority3-github-release.mjs",
@@ -159,4 +159,26 @@ test("protected CI rejects omission of actual Hostinger PostgreSQL acceptance",(
     "echo skip-hostinger-real-pg-acceptance");
   assert.notEqual(changed,ciWorkflow);
   assert.throws(()=>assertRealPgHostingerAcceptance(changed));
+});
+
+test("provider-only preflight precedes SQL and honors protected approvals",()=>{
+  const gate='if(cfg.mode==="provider-preflight")';
+  const sql="await assertProtectedNativeSchema(db);";
+  assert.ok(source.includes(gate));
+  assert.ok(source.indexOf(gate)<source.indexOf(sql));
+  assert.ok(source.includes('db:null,api,'));
+  const main=source.slice(source.indexOf("export async function main("));
+  assert.ok(main.indexOf(gate)<main.indexOf(
+    "validateDatabaseUrl(env.ISHIKEIT_DATABASE_URL);"));
+  assert.ok(source.includes('return {mode:"provider-preflight",buildUuid:null};'));
+  assert.ok(workflow.includes(
+    'if [[ "$ISHIKEIT_RELEASE_OPERATION" != "provider-preflight" ]]; then'));
+});
+test("workflow rejects unmasking the DB secret in provider-only preflight",()=>{
+  const masked="ISHIKEIT_DATABASE_URL: $"+
+    "{{ inputs.operation == 'provider-preflight' && 'not-required-for-provider-only' || secrets.ISHIKEIT_DATABASE_URL }}";
+  const leaked="ISHIKEIT_DATABASE_URL: $"+ "{{ secrets.ISHIKEIT_DATABASE_URL }}";
+  const changed=workflow.replace(masked,leaked);
+  assert.notEqual(changed,workflow);
+  assert.throws(()=>check(changed));
 });

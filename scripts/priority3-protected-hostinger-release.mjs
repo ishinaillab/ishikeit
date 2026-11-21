@@ -29,7 +29,7 @@ export function validateConfig(cfg){
   insist(shaPattern.test(cfg.appSha)&&shaPattern.test(cfg.dbSha),"Protected commit identity invalid");
   insist(shaPattern.test(cfg.oldSha)&&uuidPattern.test(cfg.oldUuid),"Existing build identity invalid");
   insist(cfg.appSha!==cfg.oldSha,"Deployment target must differ from already deployed SHA");
-  insist(["preflight","deploy","reconcile"].includes(cfg.mode),
+  insist(["provider-preflight","preflight","deploy","reconcile"].includes(cfg.mode),
     "Unsupported protected release operation");
   return cfg;
 }
@@ -342,6 +342,25 @@ export async function run({cfg,db,api,fetcher=globalThis.fetch,githubToken,
       // Check before acquiring any release lease or preparing a hosted action.
       await assertHealth(fetcher);
     }
+    if(cfg.mode==="provider-preflight"){
+      // Before schema migration 45, prove the Hostinger API credential,
+      // owner-approved Git installation, saved build settings and immutable
+      // existing deployment. This read-only gate never touches PostgreSQL
+      // or attempts a Hostinger build.
+      await assertGitHeads(fetcher,githubToken,cfg);
+      await api.assertAutoOff();
+      await api.assertGitInstallationAccess();
+      await api.assertBuildSettings();
+      const current=await api.latest();
+      assertBuildOrigin(current);
+      insist(current.uuid===cfg.oldUuid&&current.sha===cfg.oldSha&&
+        current.status==="completed",
+        "Hostinger current build changed during provider-only preflight");
+      await assertHealth(fetcher);
+      finished=true;
+      log("Protected Hostinger provider-only preflight passed; no database access or deployment");
+      return {mode:"provider-preflight",buildUuid:null};
+    }
     await assertProtectedNativeSchema(db);
     const n=await db.query("SELECT "+
       "(SELECT count(*) FROM public.ishikeit_account_connections)::int AS links,"+
@@ -447,8 +466,16 @@ export async function main(env=process.env){
     oldSha:env.ISHIKEIT_EXPECTED_HOSTINGER_BUILD_SHA,
     mode:env.ISHIKEIT_RELEASE_OPERATION
   });
-  validateDatabaseUrl(env.ISHIKEIT_DATABASE_URL);
   const api=createHostingerClient(globalThis.fetch,env.ISHIKEIT_HOSTINGER_API_TOKEN);
+  if(cfg.mode==="provider-preflight"){
+    // An independent, read-only provider gate can run before the live
+    // 45th migration and does not need a production database credential.
+    const result=await run({cfg,db:null,api,
+      githubToken:env.ISHIKEIT_GITHUB_READBACK_TOKEN});
+    console.log("Priority 3 release outcome: "+result.mode);
+    return;
+  }
+  validateDatabaseUrl(env.ISHIKEIT_DATABASE_URL);
   const db=new pg.Client({connectionString:env.ISHIKEIT_DATABASE_URL,
     ssl:{rejectUnauthorized:true},connectionTimeoutMillis:10000,
     application_name:"ishikeit_priority3_hostinger_release"});

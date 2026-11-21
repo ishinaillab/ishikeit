@@ -422,3 +422,44 @@ test("runtime lease is random digest and never passed as plaintext DB value",asy
   assert.equal(db.queries.some(x=>x.sql.includes("holder_digest=NULL")&&x.sql.includes("pending_external_step=NULL")&&x.sql.includes("verified_app_deploy_at=")),true);
   assert.equal(db.state.resolved,true);
 });
+
+test("provider-only preflight validates exact release identity without allowing mutation",()=>{
+  assert.deepEqual(validateConfig({...cfg,mode:"provider-preflight"}),
+    {...cfg,mode:"provider-preflight"});
+  assert.throws(()=>validateConfig({...cfg,mode:"provider-deploy"}));
+});
+test("owner provider-only preflight works before migration 45 and never touches PostgreSQL",async()=>{
+  const db=fakeDb({migration:44}),api=fakeApi(),lines=[];
+  const result=await run({cfg:{...cfg,mode:"provider-preflight"},db,api,
+    fetcher:stubFetch(),githubToken:ghToken,log:x=>lines.push(x)});
+  assert.deepEqual(result,{mode:"provider-preflight",buildUuid:null});
+  assert.equal(db.queries.length,0,"Provider inspection must never read or write production SQL");
+  assert.equal(db.state.acquired,false);
+  assert.equal(db.state.armed,false);
+  assert.equal(api.state.started,0);
+  assert.ok(api.state.checked>=2&&api.state.install>=2&&
+    api.state.settings>=2&&api.state.old>=2,
+  "Perform both initial and final authenticated provider readbacks");
+  assert.ok(lines.some(x=>/provider-only/i.test(x)));
+});
+test("provider-only preflight fails closed on an unavailable installation without SQL or build",async()=>{
+  const db=fakeDb({migration:44}),api=fakeApi({installationDenied:true});
+  await assert.rejects(run({cfg:{...cfg,mode:"provider-preflight"},db,api,
+    fetcher:stubFetch(),githubToken:ghToken,log:()=>{}}),/installation unavailable/i);
+  assert.equal(db.queries.length,0);
+  assert.equal(api.state.started,0);
+});
+test("provider-only preflight rejects active auto deploy, wrong build and broken health",async()=>{
+  for(const [apiOptions,fetcher,expected] of [
+    [{autoEnabled:true},stubFetch(),/auto deployment/i],
+    [{wrongOrigin:true},stubFetch(),/source does not match/i],
+    [{oldSha:"d".repeat(40)},stubFetch(),/current live build/i],
+    [{},stubFetch(false,"unhealthy"),/health/i]
+  ]){
+    const db=fakeDb({migration:44}),api=fakeApi(apiOptions);
+    await assert.rejects(run({cfg:{...cfg,mode:"provider-preflight"},db,api,
+      fetcher,githubToken:ghToken,log:()=>{}}),expected);
+    assert.equal(db.queries.length,0);
+    assert.equal(api.state.started,0);
+  }
+});

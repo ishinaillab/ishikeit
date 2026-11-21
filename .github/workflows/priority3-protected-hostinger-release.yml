@@ -21,11 +21,11 @@ on:
         required: true
         type: string
       operation:
-        description: preflight is read-only; deploy or reconcile require both approvals
+        description: provider-preflight verifies Hostinger before SQL; deploy or reconcile require both approvals
         required: true
         default: preflight
         type: choice
-        options: [preflight, deploy, reconcile]
+        options: [provider-preflight, preflight, deploy, reconcile]
 
 permissions:
   contents: read
@@ -85,7 +85,7 @@ jobs:
       ISHIKEIT_EXPECTED_HOSTINGER_BUILD_UUID: ${{ inputs.current_build_uuid }}
       ISHIKEIT_EXPECTED_HOSTINGER_BUILD_SHA: ${{ inputs.current_build_sha }}
       ISHIKEIT_RELEASE_OPERATION: ${{ inputs.operation }}
-      ISHIKEIT_DATABASE_URL: ${{ secrets.ISHIKEIT_DATABASE_URL }}
+      ISHIKEIT_DATABASE_URL: ${{ inputs.operation == 'provider-preflight' && 'not-required-for-provider-only' || secrets.ISHIKEIT_DATABASE_URL }}
       ISHIKEIT_HOSTINGER_API_TOKEN: ${{ secrets.ISHIKEIT_HOSTINGER_API_TOKEN }}
       ISHIKEIT_GITHUB_READBACK_TOKEN: ${{ github.token }}
       NODE_ENV: production
@@ -113,10 +113,12 @@ jobs:
           node scripts/verify-priority3-github-release.mjs
       - name: Install locked Postgres client without lifecycle scripts
         run: npm ci --ignore-scripts
-      - name: Require both secrets only after second owner-environment approval
+      - name: Require only the approved operation's secrets after owner environment approval
         run: |
           set -euo pipefail
-          test -n "$ISHIKEIT_DATABASE_URL"
+          if [[ "$ISHIKEIT_RELEASE_OPERATION" != "provider-preflight" ]]; then
+            test -n "$ISHIKEIT_DATABASE_URL"
+          fi
           test -n "$ISHIKEIT_HOSTINGER_API_TOKEN"
           test -n "$ISHIKEIT_GITHUB_READBACK_TOKEN"
       - name: Run single-owner fenced preflight or exact-SHA Hostinger release

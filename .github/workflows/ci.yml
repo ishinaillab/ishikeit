@@ -23,6 +23,8 @@ jobs:
           package-manager-cache: false
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - name: Verify pinned Supabase PostgreSQL CA and owner release-controller TLS trust
+        run: node --test scripts/test-priority3-supabase-tls.mjs
       - name: Verify exact-SHA protected Priority 3 GitHub app and DB release preflight (mock only)
         run: node --test scripts/test-verify-priority3-github-release.mjs
       - name: Verify protected owner-approved Hostinger release controller and rerun isolation (mock only)

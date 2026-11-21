@@ -6,6 +6,7 @@ import {randomBytes,createHash} from "node:crypto";
 import {pathToFileURL} from "node:url";
 import {setTimeout as delay} from "node:timers/promises";
 import pg from "pg";
+import {verifiedSupabaseSsl} from "./priority3-supabase-tls.mjs";
 
 const PROJECT="vhmrliqemkfxblzsoyaz", USER="u328762438",
   DOMAIN="apps.ishinaillab.com", INSTALL="01a1e342-947f-70f3-b65e-144a94b21856";
@@ -478,7 +479,7 @@ export async function main(env=process.env){
   }
   validateDatabaseUrl(env.ISHIKEIT_DATABASE_URL);
   const db=new pg.Client({connectionString:env.ISHIKEIT_DATABASE_URL,
-    ssl:{rejectUnauthorized:true},connectionTimeoutMillis:10000,
+    ssl:verifiedSupabaseSsl(),connectionTimeoutMillis:10000,
     application_name:"ishikeit_priority3_hostinger_release"});
   await db.connect();
   try{

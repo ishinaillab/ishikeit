@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## 2026-11-22 — Priority 3 protected Supabase TLS trust repair (owner-directed)
+
+- The owner-approved #44940850687 migration-45 `apply` run failed closed before lease acquisition: live 44/45 migrations and zero lease rows were independently verified. Independent PostgreSQL STARTTLS to the project's real Supavisor pooler failed without the Supabase root CA (`self-signed certificate in certificate chain`). An authenticated download of the public `prod-ca-2021.crt` from project Database Settings followed by an OpenSSL TLS 1.3 chain AND hostname check succeeded (`Verification: OK`, wildcard `*.pooler.supabase.com`). Its SHA256 X.509 fingerprint is `80:70:25:AD:50:D4:ED:21:9D:2C:9C:7D:29:9C:00:4F:82:4E:B0:0C:F7:F6:5A:FE:F6:07:D0:7B:72:E6:CA:FA`.
+- This narrowly scoped source change adds the public pinned 2021 root CA and validates its fingerprint/CA status/time range, then configures BOTH owner-only PostgreSQL release controllers to use `ssl:{ca, rejectUnauthorized:true}`. Strict chain and hostname verification remain required; no `rejectUnauthorized:false`, credential exposure, live SQL bypass or Hostinger build. Protected CI and disposable Node24/PG17 acceptance must pass before PR/merge. Requires a fresh first-attempt owner-reviewed migration apply only after new app SHA and both environment approvals; do not rerun the failed job. Meta App Review NO SUBMISSION remains in effect.
+
+
+
 ## 2026-11-15 — Priority 3 external-release admission and provider readback audit (isolated only)
 
 - GitHub public REST effective `main` rules were re-read: app and DB now each enforce one current PR approval and strict status checks; the app four check contexts are pinned to GitHub Actions integration 15368, while the DB `migration-ci` status has no pinned integration ID. Both protected owner-reviewed GitHub deployment environments exist; these controls alone do **not** prevent Hostinger Git auto-deploy, direct Supabase migrations, or a competing privileged operator. A real local release preflight correctly returned exit 1 at the DB source check.

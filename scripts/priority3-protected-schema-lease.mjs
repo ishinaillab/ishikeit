@@ -10,6 +10,7 @@ import {resolve} from "node:path";
 import {pathToFileURL} from "node:url";
 import {spawn} from "node:child_process";
 import pg from "pg";
+import {verifiedSupabaseSsl} from "./priority3-supabase-tls.mjs";
 import {assertGitHeads,assertProtectedNativeSchema,validateDatabaseUrl}
   from "./priority3-protected-hostinger-release.mjs";
 
@@ -182,7 +183,7 @@ export async function main(env=process.env){
   const dbReleaseDir=resolve(process.cwd(),"db-release");
   const versions=await expectedMigrationVersions(dbReleaseDir);
   const db=new pg.Client({connectionString:env.DATABASE_URL,
-    ssl:{rejectUnauthorized:true},connectionTimeoutMillis:10000,
+    ssl:verifiedSupabaseSsl(),connectionTimeoutMillis:10000,
     application_name:"ishikeit_priority3_schema_release"});
   await db.connect();
   try{

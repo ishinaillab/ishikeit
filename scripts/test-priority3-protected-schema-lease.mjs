@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {EventEmitter} from "node:events";
 import {
   validateSchemaReleaseConfig,assertExactRemotePrefix,assertLiveMigrationAccepted,
-  runProtectedSchemaRelease
+  runProtectedSchemaRelease,migrationCliEnvironment,pushReviewedMigration
 } from "./priority3-protected-schema-lease.mjs";
 
 const cfg={
@@ -203,4 +204,70 @@ test("refuses untrusted or partial migration catalog",async()=>{
   await assert.doesNotReject(assertExactRemotePrefix(f.db,versions,44));
   await assert.rejects(assertExactRemotePrefix(f.db,versions,45),
     /prefix mismatched/i);
+});
+
+test("Supabase CLI subprocess receives only runtime essentials and no owner credentials",async()=>{
+  const parent={
+    PATH:"/usr/local/bin:/usr/bin",HOME:"/tmp/home",CI:"true",
+    PGSSLMODE:"disable",GITHUB_TOKEN:"redacted-unrelated",
+    ISHIKEIT_GITHUB_READBACK_TOKEN:"redacted-github",
+    ISHIKEIT_HOSTINGER_API_TOKEN:"redacted-hostinger",
+    ISHIKEIT_DATABASE_URL:"redacted-db",
+    DATABASE_URL:"redacted-parent-db",
+    SUPABASE_ACCESS_TOKEN:"redacted-supabase",
+    SUPABASE_SECRET_KEY:"redacted-service",
+    NODE_ENV:"production",ISHIKEIT_RELEASE_APP_SHA:"redacted-app-sha",
+    PGUSER:"unapproved",PGPASSWORD:"redacted-pg-password"
+  };
+  const target="postgres://test:synthetic@localhost:5432/postgres";
+  let call;
+  const fakeSpawn=(command,args,options)=>{
+    call={command,args,options};
+    const emitter=new EventEmitter();
+    process.nextTick(()=>emitter.emit("close",0,null));
+    return emitter;
+  };
+  await pushReviewedMigration("db-release",target,{
+    spawnProcess:fakeSpawn,environment:parent
+  });
+  assert.equal(call.command,"supabase");
+  assert.deepEqual(call.args,[
+    "db","push","--yes","--skip-vault","--remote="+target
+  ]);
+  assert.equal(call.options.cwd,"db-release");
+  assert.equal(call.options.shell,false);
+  assert.equal(call.options.stdio,"ignore");
+  assert.equal(call.options.env.PGSSLMODE,"require");
+  assert.equal(call.options.env.PATH,parent.PATH);
+  assert.equal(call.options.env.HOME,parent.HOME);
+  assert.equal(call.options.env.CI,"true");
+  assert.deepEqual(Object.keys(call.options.env).sort(),
+    ["PATH","HOME","CI","PGSSLMODE"].sort());
+  for(const secret of [
+    "GITHUB_TOKEN","ISHIKEIT_GITHUB_READBACK_TOKEN",
+    "ISHIKEIT_HOSTINGER_API_TOKEN","DATABASE_URL","ISHIKEIT_DATABASE_URL",
+    "SUPABASE_ACCESS_TOKEN","SUPABASE_SECRET_KEY","PGPASSWORD",
+    "ISHIKEIT_RELEASE_APP_SHA"
+  ])assert.equal(Object.hasOwn(call.options.env,secret),false);
+});
+test("Supabase CLI environment refuses inherited credentials and forces TLS",()=>{
+  const env=migrationCliEnvironment({
+    PATH:"/usr/bin",PGSSLMODE:"disable",SUPABASE_ACCESS_TOKEN:"hidden",
+    GITHUB_ACTIONS:"true",TMPDIR:"/tmp",NODE_OPTIONS:"--require malicious.js"
+  });
+  assert.deepEqual(env,{PATH:"/usr/bin",TMPDIR:"/tmp",
+    GITHUB_ACTIONS:"true",PGSSLMODE:"require"});
+});
+test("Supabase CLI failed or ambiguous subprocess exit is never accepted",async()=>{
+  const target="postgres://test:synthetic@localhost:5432/postgres";
+  for(const [code,signal] of [[1,null],[null,"SIGTERM"]]){
+    const fakeSpawn=()=>{
+      const emitter=new EventEmitter();
+      process.nextTick(()=>emitter.emit("close",code,signal));
+      return emitter;
+    };
+    await assert.rejects(pushReviewedMigration("db-release",target,{
+      spawnProcess:fakeSpawn,environment:{PATH:"/usr/bin"}
+    }),/result unknown/);
+  }
 });

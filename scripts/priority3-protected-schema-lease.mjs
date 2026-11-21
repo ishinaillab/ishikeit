@@ -139,13 +139,31 @@ export async function runProtectedSchemaRelease({
 // Only the externally owner-approved GitHub Actions runner invokes this.
 // The Supabase CLI command itself has no source write permissions and never
 // prints credentials or provider response bodies into the release log.
-export function pushReviewedMigration(dbReleaseDir,databaseUrl){
+// A child process must not inherit other privileged owner credentials.
+// The explicit already-validated --remote argument is its only DB target.
+export function migrationCliEnvironment(parent=process.env){
+  const allowed=[
+    "PATH","Path","HOME","USERPROFILE","TMP","TEMP","TMPDIR",
+    "LANG","LC_ALL","SSL_CERT_FILE","SSL_CERT_DIR",
+    "CI","GITHUB_ACTIONS","RUNNER_TEMP","RUNNER_TOOL_CACHE","SystemRoot"
+  ];
+  const child={};
+  for(const key of allowed){
+    if(typeof parent[key]==="string"&&parent[key].length>0)
+      child[key]=parent[key];
+  }
+  child.PGSSLMODE="require";
+  return child;
+}
+export function pushReviewedMigration(dbReleaseDir,databaseUrl,{
+  spawnProcess=spawn,environment=process.env
+}={}){
   return new Promise((resolveDone,reject)=>{
-    const child=spawn("supabase",
+    const child=spawnProcess("supabase",
       ["db","push","--yes","--skip-vault","--remote="+databaseUrl],{
         cwd:dbReleaseDir,shell:false,windowsHide:true,
         stdio:"ignore",signal:AbortSignal.timeout(14*60*1000),
-        env:{...process.env,PGSSLMODE:"require"}
+        env:migrationCliEnvironment(environment)
       });
     child.once("error",()=>reject(Error("Protected Supabase CLI execution failed")));
     child.once("close",(code,signal)=>{

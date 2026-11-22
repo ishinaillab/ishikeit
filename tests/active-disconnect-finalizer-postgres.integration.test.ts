@@ -120,7 +120,7 @@ describe.skipIf(db===undefined)("Priority 3 verified active disconnect finalizat
         return Promise.resolve(proof(b,"telegram_business_disabled"));
       }
     });
-    const input={workspaceId:workspaceA,connectionId:id,
+    const input={workspaceId:workspaceA,connectionId:id,actor,
       frozenGeneration:frozen.frozenGeneration};
     const done=await finalizer.finalize(input);
     expect(done).toMatchObject({
@@ -155,6 +155,7 @@ describe.skipIf(db===undefined)("Priority 3 verified active disconnect finalizat
       verifyDisconnected:b=>Promise.resolve(proof(b,"tiktok_business_holder_revoked"))
     });
     await verifier.finalize({
+      actor,
       workspaceId:workspaceA,connectionId:id,frozenGeneration:frozen.frozenGeneration
     });
     const rows=await db!.query<{provider:string;account_id:string}>(
@@ -177,7 +178,7 @@ describe.skipIf(db===undefined)("Priority 3 verified active disconnect finalizat
       "INSERT INTO public.oauth_credentials(provider,account_id) VALUES('workspace-tiktok',$1)",
       [id]);
     const frozen=await requested(id);
-    const input={workspaceId:workspaceA,connectionId:id,
+    const input={workspaceId:workspaceA,connectionId:id,actor,
       frozenGeneration:frozen.frozenGeneration};
     const bad=[
       (b:ProviderDisconnectBinding)=>({...proof(b,"tiktok_business_holder_revoked"),
@@ -224,6 +225,7 @@ describe.skipIf(db===undefined)("Priority 3 verified active disconnect finalizat
       verifyDisconnected:b=>{checked++;return Promise.resolve(proof(b,"telegram_business_disabled"))}
     });
     await expect(gate.finalize({
+      actor,
       workspaceId:workspaceA,connectionId:id,frozenGeneration:frozen.frozenGeneration
     })).rejects.toThrow(/in-flight/i);
     expect(checked).toBe(0);
@@ -237,6 +239,7 @@ describe.skipIf(db===undefined)("Priority 3 verified active disconnect finalizat
        VALUES($1,'test','p','{}'::jsonb,$2,$3,2)`,
       [randomUUID(),workspaceA,safeId]);
     await expect(gate.finalize({
+      actor,
       workspaceId:workspaceA,connectionId:safeId,frozenGeneration:other.frozenGeneration
     })).rejects.toThrow(/unquarantined/i);
     expect(checked).toBe(1);
@@ -260,11 +263,79 @@ describe.skipIf(db===undefined)("Priority 3 verified active disconnect finalizat
       verifyDisconnected:b=>Promise.resolve(proof(b,"telegram_business_disabled"))
     });
     await expect(finalizer.finalize({
+      actor,
       workspaceId:workspaceA,connectionId:id,frozenGeneration:frozen.frozenGeneration
     })).rejects.toThrow(/uncertain|unquarantined|unresolved/i);
     expect((await db!.query(
       "SELECT status FROM public.ishikeit_account_connections WHERE connection_id=$1",
       [id])).rows[0]?.status).toBe("disconnecting");
+  });
+
+  it("never reads provider or completes cleanup for a foreign, viewer or revoked owner",async()=>{
+    const id=await connection("telegram","telegram-owner-auth",undefined,{
+      providerConnectionId:"business-auth"});
+    const frozen=await requested(id);
+    let calls=0;
+    const fin=new PostgresActiveDisconnectFinalizer(db!,{
+      verifyDisconnected:b=>{
+        calls++;
+        return Promise.resolve(proof(b,"telegram_business_disabled"));
+      }
+    });
+    const input={workspaceId:workspaceA,connectionId:id,
+      frozenGeneration:frozen.frozenGeneration};
+    for(const rejected of [
+      {issuer:actor.issuer,subject:"different-owner"},
+      {issuer:"foreign-issuer",subject:actor.subject}
+    ]){
+      await expect(fin.finalize({...input,actor:rejected}))
+        .rejects.toThrow(/owner\/admin authorization/i);
+    }
+    expect(calls).toBe(0);
+    await db!.query(
+      "UPDATE public.ishikeit_workspace_memberships SET role='viewer' "+
+      "WHERE workspace_id=$1 AND auth_issuer=$2 AND auth_subject=$3",
+      [workspaceA,actor.issuer,actor.subject]);
+    await expect(fin.finalize({...input,actor}))
+      .rejects.toThrow(/owner\/admin authorization/i);
+    expect(calls).toBe(0);
+    const row=(await db!.query(
+      "SELECT status FROM public.ishikeit_account_connections WHERE connection_id=$1",
+      [id])).rows[0];
+    expect(row?.status).toBe("disconnecting");
+  });
+
+  it("rejects owner-role revocation during provider readback before credential deletion",async()=>{
+    const id=await connection("tiktok","tiktok-owner-revoked");
+    await db!.query(
+      "INSERT INTO public.oauth_credentials(provider,account_id) "+
+      "VALUES('workspace-tiktok',$1)",[id]);
+    const frozen=await requested(id);
+    let calls=0;
+    const finalizer=new PostgresActiveDisconnectFinalizer(db!,{
+      verifyDisconnected:async b=>{
+        calls++;
+        await db!.query(
+          "UPDATE public.ishikeit_workspace_memberships SET role='viewer' "+
+          "WHERE workspace_id=$1 AND auth_issuer=$2 AND auth_subject=$3",
+          [workspaceA,actor.issuer,actor.subject]);
+        return proof(b,"tiktok_business_holder_revoked");
+      }
+    });
+    await expect(finalizer.finalize({
+      workspaceId:workspaceA,connectionId:id,
+      frozenGeneration:frozen.frozenGeneration,actor
+    })).rejects.toThrow(/owner\/admin authorization/i);
+    expect(calls).toBe(1);
+    expect((await db!.query(
+      "SELECT status FROM public.ishikeit_account_connections WHERE connection_id=$1",
+      [id])).rows[0]?.status).toBe("disconnecting");
+    expect((await db!.query(
+      "SELECT 1 FROM public.oauth_credentials WHERE provider='workspace-tiktok' "+
+      "AND account_id=$1",[id])).rowCount).toBe(1);
+    expect((await db!.query(
+      "SELECT 1 FROM public.oauth_revocations WHERE provider='workspace-tiktok' "+
+      "AND account_id=$1",[id])).rowCount).toBe(0);
   });
 
   it("rejects unsupported Instagram/WhatsApp readbacks and foreign shared-credential custody",async()=>{
@@ -277,6 +348,7 @@ describe.skipIf(db===undefined)("Priority 3 verified active disconnect finalizat
     for(const id of [insta,phone]){
       const frozen=await requested(id);
       await expect(arbitrary.finalize({
+        actor,
         workspaceId:workspaceA,connectionId:id,frozenGeneration:frozen.frozenGeneration
       })).rejects.toThrow(/no verified safe provider-specific/i);
     }
@@ -290,6 +362,7 @@ describe.skipIf(db===undefined)("Priority 3 verified active disconnect finalizat
       verifyDisconnected:b=>Promise.resolve(proof(b,"tiktok_business_holder_revoked"))
     });
     await expect(legit.finalize({
+      actor,
       workspaceId:workspaceA,connectionId:shared,
       frozenGeneration:holdState.frozenGeneration
     })).rejects.toThrow(/shared or foreign/i);

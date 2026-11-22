@@ -60,10 +60,17 @@ function fakeDb({migration=45,guardVersion=true,guardEnabled=true,
 function fakeApi({oldSha=shaOld,oldUuidValue=oldUuid,autoEnabled=false,failBuild=false,
   mismatchNew=false,latestMismatched=false,unverified=false,
   settingsDrift=false,wrongOrigin=false,installationDenied=false,
-  wrongBuildInstallation=false,oldBuildInstallation=oldUuid}={}){
-  const state={started:0,checked:0,install:0,settings:0,get:0,old:0};
+  wrongBuildInstallation=false,oldBuildInstallation=oldUuid,
+  enableAutoOnStart=false,enableAutoOnGet=false,denyDisable=false}={}){
+  const state={started:0,checked:0,install:0,settings:0,get:0,old:0,
+    autoOn:autoEnabled,autoDisabled:0};
   return {state,
-    async assertAutoOff(){state.checked++;if(autoEnabled)throw Error("auto deployment active")},
+    async assertAutoOff(){state.checked++;
+      if(state.autoOn)throw Error("auto deployment active")},
+    async disableAutoDeploy(){state.autoDisabled++;
+      if(denyDisable)throw Error("Hostinger auto-deployment deletion denied");
+      state.autoOn=false;
+    },
     async assertGitInstallationAccess(){state.install++;
       if(installationDenied)throw Error("Hostinger Git installation unavailable")},
     async assertBuildSettings(){state.settings++;if(settingsDrift)throw Error("Hostinger saved build setting drifted")},
@@ -75,10 +82,17 @@ function fakeApi({oldSha=shaOld,oldUuidValue=oldUuid,autoEnabled=false,failBuild
       return approvedOrigin({uuid:oldUuidValue,sha:oldSha,status:"completed",
         originInstallation:oldBuildInstallation},wrongOrigin);
     },
-    async start(){state.started++;if(unverified)throw Error("Hostinger timeout after POST");return newUuid},
-    async get(){state.get++;return approvedOrigin({status:failBuild?"failed":"completed",
-      uuid:newUuid,sha:mismatchNew?shaOld:shaA,
-      originInstallation:wrongBuildInstallation?oldUuid:newUuid},wrongOrigin)}
+    async start(){state.started++;
+      if(enableAutoOnStart)state.autoOn=true;
+      if(unverified)throw Error("Hostinger timeout after POST");
+      return newUuid;
+    },
+    async get(){state.get++;
+      if(enableAutoOnGet)state.autoOn=true;
+      return approvedOrigin({status:failBuild?"failed":"completed",
+        uuid:newUuid,sha:mismatchNew?shaOld:shaA,
+        originInstallation:wrongBuildInstallation?oldUuid:newUuid},wrongOrigin);
+    }
   };
 }
 test("admission rejects unknown operation, malformed SHA, malformed old build",()=>{
@@ -220,6 +234,25 @@ test("Hostinger API POST pins branch and UUID readback, without exposing token",
   assert.equal(payloads[0].source_options.branch,"main");
   assert.equal(JSON.stringify(payloads).includes("p".repeat(40)),false);
 });
+test("Hostinger auto-deploy removal uses exact authenticated DELETE with strict post-readback",async()=>{
+  const calls=[];
+  const root={installation_uuid:null,is_enabled:null,owner:null,
+    repository:null,branch:null,directory:null};
+  const api=createHostingerClient(async(url,opts)=>{
+    calls.push({url,method:opts.method});
+    if(opts.method==="DELETE")return {ok:true,status:200,
+      json:async()=>({message:"Request accepted"})};
+    return {ok:true,status:200,json:async()=>root};
+  },"v".repeat(40));
+  await api.disableAutoDeploy();
+  await api.assertAutoOff();
+  assert.equal(calls[0].method,"DELETE");
+  assert.match(calls[0].url,/\/git\/auto-deployments\/settings$/u);
+  assert.equal(calls[1].method,"GET");
+  assert.equal(calls[1].url,calls[0].url);
+  const reject=createHostingerClient(async()=>({ok:false,status:503}),"v".repeat(40));
+  await assert.rejects(reject.disableAutoDeploy(),/HTTP 503/u);
+});
 test("protected preflight verifies external heads, live build and DB but never POSTs",async()=>{
   const db=fakeDb(),api=fakeApi(),out=[];
   const result=await run({cfg,db,api,fetcher:stubFetch(),
@@ -334,6 +367,27 @@ test("deploy records external hold before host POST and clears only after verifi
   assert.equal(armedBeforePost,true);
   assert.equal(db.state.resolved,true);
   assert.equal(db.state.armed,false);
+  assert.equal(api.state.autoDisabled,2,
+    "A provider build may enable auto-deploy during submission and completion");
+});
+test("build-induced auto-deployment is disabled twice before accepting release",async()=>{
+  const db=fakeDb(),api=fakeApi({enableAutoOnStart:true,enableAutoOnGet:true});
+  const result=await run({cfg:{...cfg,mode:"deploy"},db,api,
+    fetcher:stubFetch(),githubToken:ghToken,log:()=>{}});
+  assert.equal(result.mode,"deployed");
+  assert.equal(api.state.started,1);
+  assert.equal(api.state.autoDisabled,2);
+  assert.equal(api.state.autoOn,false);
+  assert.equal(db.state.resolved,true);
+});
+test("auto-deploy closure failure after Hostinger POST retains the external hold",async()=>{
+  const db=fakeDb(),api=fakeApi({enableAutoOnStart:true,denyDisable:true});
+  await assert.rejects(run({cfg:{...cfg,mode:"deploy"},db,api,
+    fetcher:stubFetch(),githubToken:ghToken,log:()=>{}}),/deletion denied/u);
+  assert.equal(api.state.started,1,"Never submit a duplicate Hostinger build");
+  assert.equal(db.state.armed,true);
+  assert.equal(db.state.released,false);
+  assert.equal(db.state.resolved,false);
 });
 test("failed final GitHub readback before Hostinger POST releases only the unarmed lease",async()=>{
   const db=fakeDb(),api=fakeApi(),original=stubFetch();

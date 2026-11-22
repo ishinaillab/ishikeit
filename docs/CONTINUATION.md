@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## 2026-11-23 — Telegram OIDC callback fixed-stage diagnostics (ISOLATED SOURCE ONLY)
+
+- Genuine Ishi Nail Lab owner approved Telegram Login in authenticated Telegram Desktop twice. Telegram returned to Ishikeit, but callback displayed `Telegram identity was not verified`. Supabase readback found 3 Telegram intents, 2 consumed and 0 claimed native connections; source-level failures occur downstream from one-use intent consumption. No provider identity, session, code or credential is written into the diagnostics.
+- BotFather `IshiBot` client ID and secret were compared to the matching Hostinger production OIDC settings privately in the Windows owner session; they MATCHED exactly. Clipboard cleared immediately. OIDC code already sends both `state` and `nonce`, so nonce omission is NOT the cause; keep existing strict RS256 / issuer / audience / signed numeric `id` validation unchanged.
+- This isolated change adds ONLY bounded fixed-enum diagnostics for Telegram OIDC token transport, provider rejection, response shape, ID-token validation, and final database link. It does not add a new login grant, activate Telegram Business, mutate provider settings, or grant native send/route permissions. No token/code/nonce/account ID, provider error body, secret, browser cookie, or raw exception may enter logs.
+- Production latest Git commit on 2026-11-23 was `90fa444f60ae09893feeb825b4385fc0484e5961` (#312), and Hostinger unexpectedly completed a Git-triggered build from that SHA while auto-deploy had been re-enabled by a prior environment change. Official Hostinger API disabled Git auto-deploy again, independent readback `gitAutoDeployment:null`, but this does NOT replace protected acceptance of the unexpected build. Preserve the shared-write hold and issue #284 coordination; no duplicate deploy or Meta App Review submission.
+
 ## 2026-11-23 — Telegram Business shadow identity normalization (ISOLATED SOURCE REVIEW)
 
 - Production native Telegram OIDC links use `provider_application_key='telegram-oidc-'+botId`. The read-only Telegram Business shadow inspector previously compared this against the bare numeric `botId`, causing a genuine, correct owner/Business connection to be falsely labeled `unclaimed`. This isolated change normalizes the bot identity exactly and updates real PG17 and unit tests; shadow observations remain NON-AUTHORIZING and cannot send, route, activate, or freeze a connection.

@@ -295,6 +295,60 @@ describe("Telegram native owner OIDC and Business evidence",()=>{
     expect(body).not.toContain("signed-token-test");
   });
 
+  it("emits only bounded failure stage enums after a consumed Telegram intent",async()=>{
+    const {intents,oidc,business,registry}=harness();
+    const diagnostics:string[]=[];
+    const coordinator=new WorkspaceTelegramOIDCConnections({
+      clientId,redirectUri:callback,intents,oidc,business,registry,
+      onDiagnostic:stage=>diagnostics.push(stage)
+    });
+    const privateError="a-token-must-never-appear-in-diagnostics";
+    oidc.exchange.mockRejectedValueOnce(new Error(privateError));
+    await expect(coordinator.complete(input)).rejects.toThrow(privateError);
+    expect(diagnostics.splice(0)).toEqual(["exchange_stage"]);
+    oidc.verify.mockRejectedValueOnce(new Error(privateError));
+    await expect(coordinator.complete(input)).rejects.toThrow(privateError);
+    expect(diagnostics.splice(0)).toEqual(["signature_claim_stage"]);
+    registry.linkVerified.mockRejectedValueOnce(new Error(privateError));
+    await expect(coordinator.complete(input)).rejects.toThrow(privateError);
+    expect(diagnostics.splice(0)).toEqual(["registry_claim_stage"]);
+    expect(diagnostics).not.toContain(privateError);
+  });
+
+  it("reports fixed token-exchange failure reasons without provider body or credentials",async()=>{
+    const diagnostics:string[]=[];
+    const clientOpts={clientId,clientSecret:"test-client-secret-long",
+      redirectUri:callback,onDiagnostic:(stage:string)=>diagnostics.push(stage)};
+    const rejected=new TelegramOIDCClient({...clientOpts,
+      fetchImpl:vi.fn(()=>Promise.resolve(new Response(
+        JSON.stringify({error_description:"secret-other-user"}),
+        {status:401,headers:{"content-type":"application/json"}})))});
+    await expect(rejected.exchange("telegram-code-123","V".repeat(43)))
+      .rejects.toThrow(/provider rejected/i);
+    expect(diagnostics.splice(0)).toEqual(["exchange_http_rejected"]);
+
+    const unavailable=new TelegramOIDCClient({...clientOpts,
+      fetchImpl:vi.fn(()=>Promise.reject(new Error("secret-network-failure")))});
+    await expect(unavailable.exchange("telegram-code-123","V".repeat(43)))
+      .rejects.toThrow(/exchange unavailable/i);
+    expect(diagnostics.splice(0)).toEqual(["exchange_transport"]);
+
+    const malformed=new TelegramOIDCClient({...clientOpts,
+      fetchImpl:vi.fn(()=>Promise.resolve(new Response(
+        JSON.stringify({token_type:"bearer",id_token:"private-token",expires_in:"3600"}),
+        {status:200,headers:{"content-type":"application/json"}})))});
+    await expect(malformed.exchange("telegram-code-123","V".repeat(43)))
+      .rejects.toThrow(/token response invalid/i);
+    expect(diagnostics.splice(0)).toEqual(["exchange_response_invalid"]);
+
+    const throwingObserver=new TelegramOIDCClient({...clientOpts,
+      onDiagnostic:()=>{throw new Error("observer failed")},
+      fetchImpl:vi.fn(()=>Promise.reject(new Error("unavailable")))});
+    await expect(throwingObserver.exchange("telegram-code-123","V".repeat(43)))
+      .rejects.toThrow(/exchange unavailable/i);
+    expect(JSON.stringify(diagnostics)).not.toContain("secret");
+  });
+
   it("trusts only exact Bot API Business connection and never username/text claims",async()=>{
     const fakeFetch=vi.fn((url:RequestInfo|URL,init?:RequestInit)=>{
       expect(url).toContain("/getBusinessConnection");

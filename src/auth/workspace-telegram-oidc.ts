@@ -39,6 +39,19 @@ async function smallJson(response:Response,maxBytes=32768):Promise<Record<string
   const data:unknown=JSON.parse(Buffer.concat(chunks,size).toString("utf8"));
   return asRecord(data)??{};
 }
+export type TelegramOIDCDiagnostic =
+  "exchange_transport"|"exchange_http_rejected"|"exchange_response_invalid"|
+  "exchange_stage"|"signature_claim_stage"|"registry_claim_stage";
+
+/** Emits only fixed event identifiers. A logging failure must never bypass
+ * the actual provider verification or alter the connection state.
+ */
+function diagnosticSafe(
+  callback:((stage:TelegramOIDCDiagnostic)=>void)|undefined,
+  stage:TelegramOIDCDiagnostic
+):void{
+  try{callback?.(stage)}catch{/* Observability must remain fail-closed. */}
+}
 export interface TelegramOIDCClientLike{
   exchange(code:string,verifier:string):Promise<string>;
   verify(idToken:string,nonce:string):Promise<string>;
@@ -48,8 +61,10 @@ export class TelegramOIDCClient implements TelegramOIDCClientLike{
   readonly #secret:string;
   readonly #redirectUri:string;
   readonly #fetch:typeof fetch;
+  readonly #onDiagnostic:((stage:TelegramOIDCDiagnostic)=>void)|undefined;
   constructor(options:{
-    clientId:string;clientSecret:string;redirectUri:string;fetchImpl?:typeof fetch
+    clientId:string;clientSecret:string;redirectUri:string;fetchImpl?:typeof fetch;
+    onDiagnostic?:(stage:TelegramOIDCDiagnostic)=>void
   }){
     this.#clientId=telegramUser.parse(options.clientId);
     this.#secret=z.string().min(16).max(1024).parse(options.clientSecret);
@@ -59,6 +74,7 @@ export class TelegramOIDCClient implements TelegramOIDCClientLike{
       throw new Error("Telegram OIDC redirect requires exact registered HTTPS URI");
     this.#redirectUri=options.redirectUri;
     this.#fetch=options.fetchImpl??fetch;
+    this.#onDiagnostic=options.onDiagnostic;
   }
   async exchange(authorizationCode:string,codeVerifier:string):Promise<string>{
     code.parse(authorizationCode);
@@ -80,17 +96,26 @@ export class TelegramOIDCClient implements TelegramOIDCClientLike{
         }).toString(),
         signal:AbortSignal.timeout(8000)
       });
-    }catch{throw new Error("Telegram OIDC exchange unavailable");}
-    if(!response.ok)throw new Error("Telegram OIDC provider rejected code exchange");
+    }catch{
+      diagnosticSafe(this.#onDiagnostic,"exchange_transport");
+      throw new Error("Telegram OIDC exchange unavailable");
+    }
+    if(!response.ok){
+      diagnosticSafe(this.#onDiagnostic,"exchange_http_rejected");
+      throw new Error("Telegram OIDC provider rejected code exchange");
+    }
     let data:Record<string,unknown>;
     try{data=await smallJson(response);}catch{
+      diagnosticSafe(this.#onDiagnostic,"exchange_response_invalid");
       throw new Error("Telegram OIDC token response invalid");
     }
     if(data.token_type!=="Bearer"||
       typeof data.id_token!=="string"||data.id_token.length>8192||
       typeof data.expires_in!=="number"||data.expires_in<60||
-      data.expires_in>86400)
+      data.expires_in>86400){
+      diagnosticSafe(this.#onDiagnostic,"exchange_response_invalid");
       throw new Error("Telegram OIDC token response invalid");
+    }
     return data.id_token;
   }
 
@@ -198,6 +223,7 @@ export class WorkspaceTelegramOIDCConnections{
     oidc:TelegramOIDCClientLike;
     business:TelegramNativeBusinessLike;
     capabilityFacts?:Pick<PostgresAccountCapabilityFacts,"record">;
+    onDiagnostic?:(stage:TelegramOIDCDiagnostic)=>void;
     registry:Pick<PostgresWorkspaceConnectionRegistry,
       "linkVerified"|"findForAdministrator"|"activateTelegramBusiness">;
   }){
@@ -245,22 +271,40 @@ export class WorkspaceTelegramOIDCConnections{
     if(intent===undefined||intent.provider!=="telegram"||
       intent.workspaceId!==parsed.workspaceId)
       throw new Error("Telegram owner connection intent denied/replayed");
-    const idToken=await this.deps.oidc.exchange(
-      parsed.authorizationCode,intent.codeVerifier
-    );
+    let idToken:string;
+    try{
+      idToken=await this.deps.oidc.exchange(
+        parsed.authorizationCode,intent.codeVerifier
+      );
+    }catch(error){
+      diagnosticSafe(this.deps.onDiagnostic,"exchange_stage");
+      throw error;
+    }
     // The verified ID is the signed numeric "id" claim supplied with the
     // owner's explicitly consented "profile" scope, NEVER OIDC sub.
-    const accountId=telegramUser.parse(
-      await this.deps.oidc.verify(idToken,parsed.state)
-    );
-    const linked=await this.deps.registry.linkVerified({
+    let accountId:string;
+    try{
+      accountId=telegramUser.parse(
+        await this.deps.oidc.verify(idToken,parsed.state)
+      );
+    }catch(error){
+      diagnosticSafe(this.deps.onDiagnostic,"signature_claim_stage");
+      throw error;
+    }
+    let linked;
+    try{
+      linked=await this.deps.registry.linkVerified({
       connectionId:randomUUID(),workspaceId:intent.workspaceId,
       sessionId:intent.sessionId,intentId:intent.intentId,
       actor:intent.actor,providerApplicationKey:"telegram-oidc-"+this.#clientId,
       proof:{provider:"telegram",accountId,source:"oauth_grant",
         sourceReference:"telegram-oidc-"+this.#clientId,
         verifiedAt:new Date().toISOString()}
-    });
+      });
+    }catch(error){
+      diagnosticSafe(this.deps.onDiagnostic,"registry_claim_stage");
+      throw error;
+    }
     return {connectionId:linked.connectionId,workspaceId:linked.workspaceId,
       accountId:linked.accountId,status:"verifying"};
   }

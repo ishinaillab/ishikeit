@@ -87,7 +87,11 @@ async function authorize(tx:SqlExecutor,actor:WorkspacePrincipal,workspaceId:str
   if(authorized.rowCount!==1)throw Error("Workspace authorization denied");
 }
 export class PostgresActiveDisconnectHold {
-  constructor(private readonly db:Pick<PostgresDatabase,"transaction">){}
+  constructor(
+    private readonly db:Pick<PostgresDatabase,"transaction">,
+    private readonly permittedProviders?:readonly string[]
+  ){}
+
 
   /** Idempotent owner/admin request: freeze verified ACTIVE claim first,
    * quarantine ALL unpublished tenant outbox jobs (including leased jobs),
@@ -108,6 +112,12 @@ export class PostgresActiveDisconnectHold {
       );
       const connection=current.rows[0];
       if(!connection)throw Error("Active connection not found in this workspace");
+      // The live BFF may have only ONE independently verified provider
+      // finalizer. Do not freeze a different provider into an unfinishable
+      // disconnect merely because the generic quarantine primitive exists.
+      if(this.permittedProviders!==undefined &&
+         !this.permittedProviders.includes(connection.provider))
+        throw Error("Provider disconnect finalization unavailable");
       if(connection.status==="disconnecting"){
         const existing=await tx.query<CleanupRow>(
           `SELECT frozen_generation,cleanup_state,quarantined_jobs,

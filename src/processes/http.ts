@@ -75,6 +75,8 @@ import { SupabaseAdminInviteClient } from "../auth/supabase-admin-invite.js";
 import { PostgresWorkspaceInvitations } from "../auth/workspace-member-invitations.js";
 import { PrivateBrowserAuthService } from "../auth/private-browser-auth.js";
 import { PostgresActiveDisconnectHold } from "../persistence/active-disconnect.js";
+import { PostgresActiveDisconnectFinalizer } from "../persistence/active-disconnect-finalizer.js";
+import { TelegramBusinessDisconnectVerifier } from "../auth/workspace-telegram-disconnect.js";
 import { PostgresBrowserAuthMaintenance } from "../auth/private-browser-auth-maintenance.js";
 import { PostgresOAuthCredentialStore } from "../auth/oauth-store.js";
 import { PostgresAccountCapabilityFacts } from "../persistence/account-capability-facts.js";
@@ -688,7 +690,10 @@ const messengerNativeConnector=(!messengerNativeConfigured||oauthStore===undefin
   });
 // The modern Telegram OIDC client ID and secret are independent of the Bot
 // API token. Start only with explicit owner opt-in and BotFather URL allowlist.
-const telegramNativeConnector=!env.BROWSER_TELEGRAM_OIDC_ENABLED?undefined
+const telegramNativeBusinessReader=!env.BROWSER_TELEGRAM_OIDC_ENABLED
+  ?undefined
+  :new TelegramNativeBusinessReader({botToken:env.TELEGRAM_BOT_TOKEN!});
+const telegramNativeConnector=telegramNativeBusinessReader===undefined?undefined
   :new WorkspaceTelegramOIDCConnections({
     clientId:env.TELEGRAM_OIDC_CLIENT_ID!,
     redirectUri:new URL("/app/auth/connect/telegram/callback",
@@ -706,9 +711,7 @@ const telegramNativeConnector=!env.BROWSER_TELEGRAM_OIDC_ENABLED?undefined
       redirectUri:new URL("/app/auth/connect/telegram/callback",
         env.BROWSER_AUTH_ORIGIN).toString()
     }),
-    business:new TelegramNativeBusinessReader({
-      botToken:env.TELEGRAM_BOT_TOKEN!
-    }),
+    business:telegramNativeBusinessReader,
     capabilityFacts,
     registry:privateWorkspaceRegistry
   });
@@ -760,7 +763,15 @@ const browserAuth = env.BROWSER_AUTH_ENABLED ? new PrivateBrowserAuthService({
   // Private read-only inventory; no provider connections can be created here.
   connections:privateWorkspaceRegistry,
   // Staged only. No active browser disconnect route is exposed in production.
-  activeDisconnect:new PostgresActiveDisconnectHold(db),
+  // Once explicitly enabled, native cleanup can freeze ONLY Telegram
+  // Business connections with an exact provider verifier; other providers
+  // remain untouched rather than stuck in an unfinalizable hold.
+  activeDisconnect:new PostgresActiveDisconnectHold(db,["telegram"]),
+  ...(telegramNativeBusinessReader===undefined?{}:{
+    activeDisconnectFinalizer:new PostgresActiveDisconnectFinalizer(db,
+      new TelegramBusinessDisconnectVerifier(telegramNativeBusinessReader,
+        env.TELEGRAM_OIDC_CLIENT_ID!))
+  }),
   ...(instagramNativeConnector===undefined?{}:{instagramConnections:instagramNativeConnector}),
   ...(whatsappV4NativeConnector===undefined?{}:{whatsappEmbeddedV4:whatsappV4NativeConnector}),
   ...(messengerNativeConnector===undefined?{}:{messengerConnections:messengerNativeConnector}),

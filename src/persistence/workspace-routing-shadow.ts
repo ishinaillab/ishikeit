@@ -109,7 +109,7 @@ export class PostgresWorkspaceShadowInspector {
           AND c.provider_connection_id=$2 AND c.provider_application_key=$3
           AND c.status <> 'disconnected'
         LIMIT 2`,
-      [proof.ownerId, proof.connectionId, proof.botId]
+      [proof.ownerId, proof.connectionId, "telegram-oidc-"+proof.botId]
     );
     return decisionForClaims(result.rows);
   }

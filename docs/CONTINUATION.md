@@ -1,5 +1,11 @@
 # Ishikeit continuation handoff
 
+## 2026-11-23 — Telegram Business shadow identity normalization (ISOLATED SOURCE REVIEW)
+
+- Production native Telegram OIDC links use `provider_application_key='telegram-oidc-'+botId`. The read-only Telegram Business shadow inspector previously compared this against the bare numeric `botId`, causing a genuine, correct owner/Business connection to be falsely labeled `unclaimed`. This isolated change normalizes the bot identity exactly and updates real PG17 and unit tests; shadow observations remain NON-AUTHORIZING and cannot send, route, activate, or freeze a connection.
+- Production now has the three Telegram OIDC environment keys, but provider owner login still requires legitimate Telegram Desktop/mobile authentication and a genuine Telegram Business connection; native routing, native worker sends, and active disconnect remain OFF pending provider acceptance. The last Hostinger environment update triggered an extra same-SHA Node.js build and re-enabled auto-deployment; it was immediately disabled via the official Hostinger API and health returned HTTP 200. The new environment-triggered build did not pass through the protected GitHub release lease; do not claim universal protected production publication.
+- No Meta App Review submission; preserve original seven unpublished files, three MFA factors, legacy messaging, and all owner-held provider permissions.
+
 ## 2026-11-22 — Staged Telegram Business provider-verified disconnect completion (ISOLATED CODE, NO LIVE ENABLEMENT)
 
 - Created isolated review branch `fix/priority3-telegram-disconnect-finalization-staged-20261122` at protected app main `e42da7d559eefa60c07126eea08ee90816df885b`. This is source-only: no provider settings, owner grants, production SQL, Hostinger build or live account state changed. Existing canonical seven unpublished edits and all three MFA factors stay untouched.

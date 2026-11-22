@@ -709,10 +709,16 @@ const telegramNativeConnector=telegramNativeBusinessReader===undefined?undefined
       clientId:env.TELEGRAM_OIDC_CLIENT_ID!,
       clientSecret:env.TELEGRAM_OIDC_CLIENT_SECRET!,
       redirectUri:new URL("/app/auth/connect/telegram/callback",
-        env.BROWSER_AUTH_ORIGIN).toString()
+        env.BROWSER_AUTH_ORIGIN).toString(),
+      onDiagnostic:stage=>logger.warn(
+        "Telegram native owner OIDC rejected fixed-stage="+stage
+      )
     }),
     business:telegramNativeBusinessReader,
     capabilityFacts,
+    onDiagnostic:stage=>logger.warn(
+      "Telegram native owner OIDC rejected fixed-stage="+stage
+    ),
     registry:privateWorkspaceRegistry
   });
 const tiktokOwnerConnector=(!tiktokHolderConfigured||oauthStore===undefined)

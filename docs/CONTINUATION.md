@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## 2026-11-22 — Staged Telegram Business provider-verified disconnect completion (ISOLATED CODE, NO LIVE ENABLEMENT)
+
+- Created isolated review branch `fix/priority3-telegram-disconnect-finalization-staged-20261122` at protected app main `e42da7d559eefa60c07126eea08ee90816df885b`. This is source-only: no provider settings, owner grants, production SQL, Hostinger build or live account state changed. Existing canonical seven unpublished edits and all three MFA factors stay untouched.
+- The browser AAL2 controller now has a separate finalization method and an origin+CSRF-protected `verify-provider-disconnect` POST. It never trusts a browser claim of revocation: the existing real provider verifier must establish an exact identity-bound, fresh disabled grant after the account was quarantined; the finalizer rechecks current owner/admin role and uncertain worker sends under PostgreSQL locks before deleting only the native credential.
+- Runtime constructs a Telegram `getBusinessConnection` readback verifier using only the exact server-configured OIDC bot ID and token, and restricts the active quarantine pilot to `telegram` so unverified Meta, TikTok or WhatsApp connections cannot be frozen without a supported finalizer. The ENTIRE browser disconnect feature retains `allowActiveWorkspaceDisconnect:false` and native onboarding remains disabled in Hostinger pending genuine owner-provider consent and protected configuration.
+- Full disposable Docker Node.js 24 + PostgreSQL 17 acceptance PASS **1,071/1,071 tests across 132 files**, including AAL2/CSRF route negatives and provider allowlist, ESLint, TypeScript and build. This proves isolated source guards, NOT live provider revocation or in-flight production worker isolation. Do not bypass real owner consent, shared provider assets, or Meta App Review NO_SUBMISSION.
+
 ## 2026-11-22 — Priority 3 current-owner disconnect finalization (ISOLATED CODE REVIEW ONLY)
 
 - The prior protected Hostinger reconciliation run #45010628905 accepted the exact existing completed deployment with no new build, leaving production schema 45/45 and release ownership generation 4, with no pending app_deploy hold. Hostinger still serves completed application SHA 8d31163af791f8bf252ec6384246fdc7fa00aeef with Git auto-deployment absent; protected main source advanced to 1ec819b81dad845094789becc34bbe93a31c1422 after source-only PR #309.

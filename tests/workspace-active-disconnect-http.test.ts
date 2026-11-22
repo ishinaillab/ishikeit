@@ -8,26 +8,31 @@ const workspaceId="123e4567-e89b-42d3-a456-426614174000";
 const connectionId="123e4567-e89b-42d3-a456-426614174001";
 const session="S".repeat(43),csrf="C".repeat(43);
 const prefix="/app/auth/workspaces/"+workspaceId+"/connections/"+connectionId;
-const path=prefix+"/disconnect-active",statusPath=prefix+"/disconnect-status";
+const path=prefix+"/disconnect-active",statusPath=prefix+"/disconnect-status",
+  verifyPath=prefix+"/verify-provider-disconnect";
 const headers={host,origin,"sec-fetch-site":"same-origin",
   "content-type":"application/json","x-ishikeit-csrf":csrf,
   cookie:"__Host-ishikeit-session="+session};
 const hold={connectionId,workspaceId,frozenGeneration:3,state:"pending" as const,
   quarantinedJobs:4,uncertainInflightJobs:1,cleanupAttempts:0};
+const verified={connectionId,workspaceId,frozenGeneration:3,
+  disconnectedGeneration:4,method:"telegram_business_disabled"};
 
-function setup(enabled:boolean,missingInspector=false){
+function setup(enabled:boolean,missingInspector=false,missingFinalizer=false){
   const app=fastify({logger:false});
   const controller={
     assertCsrf:vi.fn((_cookie:string,proof:string|undefined)=>{
       if(proof!==csrf)throw Error("Invalid browser CSRF token");
     }),
     requestActiveWorkspaceDisconnect:vi.fn(()=>Promise.resolve(hold)),
-    inspectActiveWorkspaceDisconnect:vi.fn(()=>Promise.resolve(hold))
+    inspectActiveWorkspaceDisconnect:vi.fn(()=>Promise.resolve(hold)),
+    finalizeActiveWorkspaceDisconnect:vi.fn(()=>Promise.resolve(verified))
   };
   registerPrivateBrowserAuthRoutes(app,{
     origin,controller:{
       ...controller,
-      ...(missingInspector?{inspectActiveWorkspaceDisconnect:undefined}:{})
+      ...(missingInspector?{inspectActiveWorkspaceDisconnect:undefined}:{}),
+      ...(missingFinalizer?{finalizeActiveWorkspaceDisconnect:undefined}:{})
     } as unknown as BrowserAuthController,
     allowWorkspaceConnections:true,
     allowActiveWorkspaceDisconnect:enabled
@@ -49,10 +54,14 @@ function get(app:FastifyInstance,opts:{
 
 describe("staged, authenticated ACTIVE connection disconnect browser boundary",()=>{
   it("does not register either endpoint without an explicit gate and both handlers",async()=>{
-    for(const [enabled,missingInspector] of [[false,false],[true,true]] as const){
-      const {app,controller}=setup(enabled,missingInspector);
+    for(const [enabled,missingInspector,missingFinalizer] of [
+      [false,false,false],[true,true,false],[true,false,true]
+    ] as const){
+      const {app,controller}=setup(enabled,missingInspector,missingFinalizer);
       expect((await post(app)).statusCode).toBe(404);
       expect((await get(app)).statusCode).toBe(404);
+      expect((await post(app,{url:verifyPath,body:{frozenGeneration:3}}))
+        .statusCode).toBe(404);
       expect(controller.requestActiveWorkspaceDisconnect).not.toHaveBeenCalled();
       await app.close();
     }
@@ -95,6 +104,43 @@ describe("staged, authenticated ACTIVE connection disconnect browser boundary",(
     expect(response.body).not.toContain("providerAccountId");
     await app.close();
   });
+  it("verifies provider disconnect only through AAL2, CSRF and a frozen generation",async()=>{
+    const {app,controller}=setup(true);
+    const finish=(opts:{headers?:Record<string,string>;body?:unknown;url?:string}={})=>
+      post(app,{url:opts.url??verifyPath,headers:opts.headers??headers,
+        body:opts.body??{frozenGeneration:3}});
+    expect((await finish({headers:{...headers,origin:"https://evil.example"}}))
+      .statusCode).toBe(403);
+    expect((await finish({headers:{...headers,cookie:""}})).statusCode).toBe(401);
+    expect((await finish({headers:{...headers,"x-ishikeit-csrf":""}}))
+      .statusCode).toBe(403);
+    for(const body of [{},{disconnected:true},{frozenGeneration:1},
+      {frozenGeneration:"3"},{frozenGeneration:3,force:true}]){
+      expect((await finish({body})).statusCode).toBe(400);
+    }
+    expect((await finish({url:verifyPath.replace(connectionId,"foreign")})).statusCode)
+      .toBe(400);
+    expect(controller.finalizeActiveWorkspaceDisconnect).not.toHaveBeenCalled();
+    const response=await finish();
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({status:"disconnected",...verified});
+    expect(controller.finalizeActiveWorkspaceDisconnect)
+      .toHaveBeenCalledExactlyOnceWith(session,workspaceId,connectionId,3);
+    await app.close();
+  });
+
+  it("does not release a frozen claim when provider readback or owner AAL2 fails",async()=>{
+    const {app,controller}=setup(true);
+    controller.finalizeActiveWorkspaceDisconnect.mockRejectedValueOnce(
+      new Error("provider token for account 10001 is still subscribed"));
+    const response=await post(app,{url:verifyPath,body:{frozenGeneration:3}});
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({status:"provider_cleanup_unverified"});
+    expect(response.body).not.toContain("10001");
+    expect(response.body).not.toContain("token");
+    await app.close();
+  });
+
   it("provides scoped sanitized read-only status, not arbitrary provider state",async()=>{
     const {app,controller}=setup(true);
     const response=await get(app);

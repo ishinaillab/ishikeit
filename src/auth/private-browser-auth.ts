@@ -15,6 +15,7 @@ import type { WorkspaceMessengerPageConnections } from "./workspace-messenger-co
 import type { WorkspaceTelegramOIDCConnections } from "./workspace-telegram-oidc.js";
 import type { WorkspaceTikTokOwnerConnections } from "./workspace-tiktok-connect.js";
 import type { PostgresActiveDisconnectHold } from "../persistence/active-disconnect.js";
+import type { PostgresActiveDisconnectFinalizer } from "../persistence/active-disconnect-finalizer.js";
 
 const bearer = z.string().min(20).max(4096).regex(/^[A-Za-z0-9_-]+$/u);
 const normalizedEmail = z.email().min(3).max(320).transform(x=>x.trim().toLowerCase());
@@ -175,6 +176,7 @@ export class PrivateBrowserAuthService {
     telegramConnections?:Pick<WorkspaceTelegramOIDCConnections,"begin"|"complete"|"confirm">;
     tiktokConnections?:Pick<WorkspaceTikTokOwnerConnections,"begin"|"complete"|"confirm">;
     activeDisconnect?:Pick<PostgresActiveDisconnectHold,"request"|"inspect">;
+    activeDisconnectFinalizer?:Pick<PostgresActiveDisconnectFinalizer,"finalize">;
     csrfKeyBase64:string;
     onOtpFailure?: (diagnostic:BrowserOtpFailureDiagnostic)=>void;
     /** Fixed enums only. Never log raw provider errors or any TOTP secret. */
@@ -592,6 +594,21 @@ export class PrivateBrowserAuthService {
     const trusted=await this.#privilegedForProvider(cookie);
     return this.deps.activeDisconnect.inspect({
       workspaceId,connectionId,actor:trusted.principal
+    });
+  }
+
+  /** Explicit owner AAL2 proof on EACH verified cleanup attempt. The provider
+   * verifier independently reads the EXACT revoked/disconnected grant and the
+   * database finalizer rechecks live owner/admin membership after that readback.
+   * Never accept a client assertion that provider consent was revoked.
+   */
+  async finalizeActiveWorkspaceDisconnect(cookie:string,workspaceId:string,
+    connectionId:string,frozenGeneration:number){
+    if(this.deps.activeDisconnectFinalizer===undefined)
+      throw Error("Verified provider cleanup unavailable");
+    const trusted=await this.#privilegedForProvider(cookie);
+    return this.deps.activeDisconnectFinalizer.finalize({
+      workspaceId,connectionId,frozenGeneration,actor:trusted.principal
     });
   }
 

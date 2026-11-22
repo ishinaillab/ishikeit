@@ -225,6 +225,35 @@ describe.skipIf(db===undefined)("Priority 3 active disconnect quarantine (dispos
        WHERE connection_id=$1`,[connectionId])).rows[0]?.disconnected_at).toBeNull();
   });
 
+  it("provider-specific pilot never freezes an account without an enabled finalizer",async()=>{
+    const scoped=new PostgresActiveDisconnectHold(db!,["telegram"]);
+    const telegram=await fixture("owner-telegram-allowed");
+    const result=await scoped.request({
+      workspaceId:workspaceA,connectionId:telegram,actor:ownerA});
+    expect(result.frozenGeneration).toBe(3);
+    const accountId="tiktok-owner-unfinalizable";
+    const id=randomUUID();
+    await db!.query(
+      `INSERT INTO public.ishikeit_provider_accounts
+         (provider,provider_account_id,verification_source,verification_reference,verified_at)
+       VALUES('tiktok',$1,'provider_api','verified-test-owner',now())`,
+      [accountId]);
+    await db!.query(
+      `INSERT INTO public.ishikeit_account_connections
+         (connection_id,workspace_id,provider,provider_account_id,
+          provider_application_key,status,generation,activated_at)
+       VALUES($1,$2,'tiktok',$3,'tiktok-test-app','connected',2,now())`,
+      [id,workspaceA,accountId]);
+    await expect(scoped.request({workspaceId:workspaceA,connectionId:id,actor:ownerA}))
+      .rejects.toThrow(/finalization unavailable/i);
+    expect((await db!.query(
+      "SELECT status,generation FROM public.ishikeit_account_connections WHERE connection_id=$1",
+      [id])).rows[0]).toMatchObject({status:"connected",generation:"2"});
+    expect((await db!.query(
+      "SELECT 1 FROM public.ishikeit_active_disconnect_cleanup WHERE connection_id=$1",
+      [id])).rowCount).toBe(0);
+  });
+
   it("fails closed and rolls back a freeze when its private migration is missing",async()=>{
     const connectionId=await fixture("owner-3006");
     const jobId=await enqueue(connectionId);

@@ -31,6 +31,7 @@ export interface BrowserAuthController {
   requestPendingWorkspaceDisconnect?:PrivateBrowserAuthService["requestPendingWorkspaceDisconnect"];
   requestActiveWorkspaceDisconnect?:PrivateBrowserAuthService["requestActiveWorkspaceDisconnect"];
   inspectActiveWorkspaceDisconnect?:PrivateBrowserAuthService["inspectActiveWorkspaceDisconnect"];
+  finalizeActiveWorkspaceDisconnect?:PrivateBrowserAuthService["finalizeActiveWorkspaceDisconnect"];
   beginInstagramConnection?:PrivateBrowserAuthService["beginInstagramConnection"];
   beginWhatsAppEmbeddedV4?:PrivateBrowserAuthService["beginWhatsAppEmbeddedV4"];
   completeWhatsAppEmbeddedV4?:PrivateBrowserAuthService["completeWhatsAppEmbeddedV4"];
@@ -442,7 +443,8 @@ export function registerPrivateBrowserAuthRoutes(
   if(deps.allowWorkspaceConnections===true &&
     deps.allowActiveWorkspaceDisconnect===true &&
     deps.controller.requestActiveWorkspaceDisconnect!==undefined &&
-    deps.controller.inspectActiveWorkspaceDisconnect!==undefined){
+    deps.controller.inspectActiveWorkspaceDisconnect!==undefined &&
+    deps.controller.finalizeActiveWorkspaceDisconnect!==undefined){
     const identity=z.object({
       workspaceId:z.string().uuid(),connectionId:z.string().uuid()
     }).strict();
@@ -479,6 +481,32 @@ export function registerPrivateBrowserAuthRoutes(
           if(hold===undefined)return deny(reply,404).send({status:"not_found"});
           return reply.code(200).send({status:"disconnecting",...hold});
         }catch{return deny(reply,403).send({status:"active_disconnect_unavailable"});}
+      });
+    // This does NOT accept a browser "revoked" flag. Fresh authenticated
+    // provider readback, exact account binding, no uncertain in-flight work
+    // and a SECOND live owner/admin check are mandatory inside the finalizer.
+    server.post<{Params:{workspaceId:string;connectionId:string}}>(
+      "/app/auth/workspaces/:workspaceId/connections/:connectionId/verify-provider-disconnect",
+      {bodyLimit:128},async(req,reply)=>{
+        privateResponse(reply);
+        if(!mutation(req,reply))return reply;
+        const value=session(req,reply);
+        if(value===undefined)return deny(reply).send({status:"unauthenticated"});
+        if(!csrf(req,reply,value))return reply;
+        const params=identity.safeParse(req.params);
+        const proof=z.object({
+          frozenGeneration:z.number().int().safe().min(2)
+        }).strict().safeParse(req.body);
+        if(!params.success||!proof.success)
+          return deny(reply,400).send({status:"invalid_request"});
+        try{
+          const done=await deps.controller.finalizeActiveWorkspaceDisconnect!(
+            value,params.data.workspaceId,params.data.connectionId,
+            proof.data.frozenGeneration);
+          return reply.code(200).send({status:"disconnected",...done});
+        }catch{
+          return deny(reply,403).send({status:"provider_cleanup_unverified"});
+        }
       });
   }
 

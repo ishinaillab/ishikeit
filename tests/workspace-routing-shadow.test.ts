@@ -53,7 +53,7 @@ describe("workspace shadow comparison (no tenant cutover)", () => {
     expect(await probe.inspectVerifiedTelegramBusiness(proof)).toBe("candidate_active");
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining("c.provider_application_key=$3"),
-      [proof.ownerId,proof.connectionId,proof.botId]
+      [proof.ownerId,proof.connectionId,"telegram-oidc-"+proof.botId]
     );
     expect(await probe.inspectVerifiedTelegramBusiness({...proof,ownerId:"@username"}))
       .toBe("identity_unresolved");

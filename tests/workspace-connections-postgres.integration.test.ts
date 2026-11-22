@@ -132,25 +132,25 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     const proofIdentity = {botId:"1245678",ownerId:"66778899",connectionId:"business-A"};
     const other = {botId:"9876543",ownerId:"66778888",connectionId:"business-B"};
     const linkedA = await registry!.linkVerified({
-      ...await authorizedIntent(workspaceA,ownerA,"telegram",proofIdentity.botId),
+      ...await authorizedIntent(workspaceA,ownerA,"telegram","telegram-oidc-"+proofIdentity.botId),
       connectionId:randomUUID(),workspaceId:workspaceA,actor:ownerA,
-      providerApplicationKey:proofIdentity.botId,
+      providerApplicationKey:"telegram-oidc-"+proofIdentity.botId,
       providerConnectionId:proofIdentity.connectionId,
       proof:proof("telegram",proofIdentity.ownerId)
     });
     const linkedB = await registry!.linkVerified({
-      ...await authorizedIntent(workspaceB,ownerB,"telegram",other.botId),
+      ...await authorizedIntent(workspaceB,ownerB,"telegram","telegram-oidc-"+other.botId),
       connectionId:randomUUID(),workspaceId:workspaceB,actor:ownerB,
-      providerApplicationKey:other.botId,
+      providerApplicationKey:"telegram-oidc-"+other.botId,
       providerConnectionId:other.connectionId,
       proof:proof("telegram",other.ownerId)
     });
     expect(await shadow.inspectVerifiedTelegramBusiness(proofIdentity)).toBe("inactive");
     await activate(linkedA.connectionId,workspaceA,ownerA,"telegram",proofIdentity.ownerId,{
-      providerApplicationKey:proofIdentity.botId,providerConnectionId:proofIdentity.connectionId
+      providerApplicationKey:"telegram-oidc-"+proofIdentity.botId,providerConnectionId:proofIdentity.connectionId
     });
     await activate(linkedB.connectionId,workspaceB,ownerB,"telegram",other.ownerId,{
-      providerApplicationKey:other.botId,providerConnectionId:other.connectionId
+      providerApplicationKey:"telegram-oidc-"+other.botId,providerConnectionId:other.connectionId
     });
     expect(await shadow.inspectVerifiedTelegramBusiness(proofIdentity))
       .toBe("candidate_active");

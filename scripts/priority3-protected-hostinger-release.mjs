@@ -167,6 +167,13 @@ export function createHostingerClient(fetcher,token){
       insist(uuidPattern.test(uuid),"Hostinger build UUID invalid");
       return parseBuild(await call("GET",BUILDS+"/"+uuid));
     },
+    async disableAutoDeploy(){
+      // Hostinger may re-enable push-triggered auto-deploy as a side effect
+      // of Git-sourced Node.js build admission. A protected runtime release
+      // must restore manual-only mode BEFORE accepting its hosted outcome.
+      // The documented DELETE preserves the already deployed files.
+      await call("DELETE",AUTODEPLOY);
+    },
     async start(){
       const b=await call("POST",BUILDS,releaseBuildSettings());
       const item=b.build??b.data??b;
@@ -428,7 +435,11 @@ export async function run({cfg,db,api,fetcher=globalThis.fetch,githubToken,
     // Persist a hard stop before POST; a timeout after this may have built.
     await fence.arm(cfg);didArm=true;
     const uuid=await api.start();
-    log("Hostinger build admitted; external step remains fenced");
+    // The build endpoint may turn on Git push auto-deploy. Disable immediately
+    // under this exclusive lease; any error keeps the armed external-step hold.
+    await api.disableAutoDeploy();
+    await api.assertAutoOff();
+    log("Hostinger build admitted; auto-deploy disabled; step remains fenced");
     for(let i=0;i<maxPolls;i++){
       await fence.renew(cfg);
       const b=await api.get(uuid);
@@ -442,9 +453,13 @@ export async function run({cfg,db,api,fetcher=globalThis.fetch,githubToken,
         insist(active.uuid===uuid&&active.sha===cfg.appSha&&active.status==="completed",
           "Latest deployed Hostinger build does not match authorized source");
         await assertHealth(fetcher);
+        // Hostinger may restore Git push auto-deploy on build completion.
+        // Disable under the still-armed lease BEFORE asserting it is off.
+        await api.disableAutoDeploy();
         await api.assertAutoOff();
         await api.assertGitInstallationAccess();
         await api.assertBuildSettings();
+        await api.assertAutoOff();
         await fence.resolve(cfg);finished=true;
         log("Hostinger exact deployment verified and lease reconciled");
         return {mode:"deployed",buildUuid:uuid};

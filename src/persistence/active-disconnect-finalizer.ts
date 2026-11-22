@@ -21,9 +21,14 @@ import type {PostgresDatabase,SqlExecutor} from "./postgres.js";
  * a native tenant disconnect.
  */
 const uid=z.string().uuid();
+const actorSchema=z.object({
+  issuer:z.string().min(1).max(200),
+  subject:z.string().min(1).max(256)
+}).strict();
 const action=z.object({
   workspaceId:uid,connectionId:uid,
-  frozenGeneration:z.number().int().safe().min(2)
+  frozenGeneration:z.number().int().safe().min(2),
+  actor:actorSchema
 }).strict();
 const verified=z.object({
   disconnected:z.literal(true),
@@ -81,6 +86,22 @@ interface Row extends pg.QueryResultRow {
   requested_at:Date;
 }
 interface CountRow extends pg.QueryResultRow { n:string }
+async function assertCurrentOwner(
+  tx:SqlExecutor,p:z.infer<typeof action>
+):Promise<void>{
+  // Match freeze's lock ordering: membership and workspace before connection.
+  const authorized=await tx.query(
+    `SELECT 1
+       FROM public.ishikeit_workspace_memberships m
+       JOIN public.ishikeit_workspaces w ON w.workspace_id=m.workspace_id
+      WHERE m.workspace_id=$1 AND m.auth_issuer=$2 AND m.auth_subject=$3
+        AND m.role IN ('owner','admin') AND m.state='active' AND w.state='active'
+      FOR SHARE OF m,w`,
+    [p.workspaceId,p.actor.issuer,p.actor.subject]
+  );
+  if(authorized.rowCount!==1)
+    throw Error("Current workspace owner/admin authorization required");
+}
 export interface CompletedDisconnect {
   workspaceId:string;connectionId:string;
   frozenGeneration:number;disconnectedGeneration:number;
@@ -168,12 +189,18 @@ export class PostgresActiveDisconnectFinalizer {
    */
   async finalize(input:z.infer<typeof action>):Promise<CompletedDisconnect>{
     const p=action.parse(input);
-    const preliminary=await this.db.transaction(tx=>readRow(tx,p,"SHARE"));
+    const preliminary=await this.db.transaction(async tx=>{
+      await assertCurrentOwner(tx,p);
+      return readRow(tx,p,"SHARE");
+    });
     if(preliminary.cleanup_state==="complete")return completed(preliminary);
     const expected=binding(preliminary);
     const proof=verified.parse(await this.provider.verifyDisconnected(expected));
     checkProof(proof,expected,preliminary.requested_at);
     return this.db.transaction(async tx=>{
+      // AAL2 entrypoint authorization cannot survive a provider-API round trip.
+      // Recheck current owner/admin rights under a row lock before any writes.
+      await assertCurrentOwner(tx,p);
       // Prevent concurrent cleanup or ownership-generation switch during the
       // final credential deletion, status update and ledger completion.
       const current=await readRow(tx,p,"UPDATE");

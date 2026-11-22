@@ -41,6 +41,7 @@ if(url===undefined){
     const state={started:0,apiReadbacks:0};
     return {...state,
       async assertAutoOff(){state.apiReadbacks++},
+      async disableAutoDeploy(){state.apiReadbacks++},
       async assertGitInstallationAccess(){state.apiReadbacks++},
       async assertBuildSettings(){state.apiReadbacks++},
       async latest(){return state.started?newStatus():oldStatus()},

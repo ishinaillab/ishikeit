@@ -20,12 +20,16 @@ on:
         description: Exact previously deployed app SHA for preflight CAS
         required: true
         type: string
+      held_app_sha:
+        description: Expired pending step app SHA, only for historical reconcile
+        required: false
+        type: string
       operation:
         description: provider-preflight verifies Hostinger before SQL; deploy or reconcile require both approvals
         required: true
         default: preflight
         type: choice
-        options: [provider-preflight, preflight, deploy, reconcile]
+        options: [provider-preflight, preflight, deploy, reconcile, reconcile-historical]
 
 permissions:
   contents: read
@@ -85,6 +89,7 @@ jobs:
       ISHIKEIT_EXPECTED_HOSTINGER_BUILD_UUID: ${{ inputs.current_build_uuid }}
       ISHIKEIT_EXPECTED_HOSTINGER_BUILD_SHA: ${{ inputs.current_build_sha }}
       ISHIKEIT_RELEASE_OPERATION: ${{ inputs.operation }}
+      ISHIKEIT_HISTORICAL_HELD_APP_SHA: ${{ inputs.held_app_sha }}
       ISHIKEIT_DATABASE_URL: ${{ inputs.operation == 'provider-preflight' && 'not-required-for-provider-only' || secrets.ISHIKEIT_DATABASE_URL }}
       ISHIKEIT_HOSTINGER_API_TOKEN: ${{ secrets.ISHIKEIT_HOSTINGER_API_TOKEN }}
       ISHIKEIT_GITHUB_READBACK_TOKEN: ${{ github.token }}

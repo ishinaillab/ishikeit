@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import {Buffer} from "node:buffer";
 import {
   validateConfig,validateDatabaseUrl,parseBuild,assertBuildOrigin,releaseBuildSettings,
-  createHostingerClient,assertGitHeads,assertHealth,run
+  createHostingerClient,assertGitHeads,assertHealth,run,
+  assertHistoricalGitAncestry
 } from "./priority3-protected-hostinger-release.mjs";
 
 const shaA="a".repeat(40),shaB="b".repeat(40),shaOld="c".repeat(40);
@@ -14,8 +15,14 @@ const ghToken="g".repeat(38);
 function approvedOrigin(b,bad=false){return {...b,source:"git",
   originOwner:bad?"unapproved":"ishinaillab",originRepo:"ishikeit",
   originBranch:"main",originInstallation:b.originInstallation};}
-function stubFetch(changed=false,health="ok"){
+function stubFetch(changed=false,health="ok",historicalParents=null){
   return async url=>{
+    if(url.includes("/git/commits/")){
+      const sha=url.split("/").at(-1);
+      const parents=historicalParents?.[sha]??(sha===shaA?[shaOld]:[]);
+      return {status:200,json:async()=>({sha,
+        parents:parents.map(sha=>({sha}))})};
+    }
     if(url.includes("github.com")){
       return {status:200,json:async()=>({ref:"refs/heads/main",
         object:{type:"commit",sha:url.includes("ishikeit-db")?shaB:
@@ -61,7 +68,8 @@ function fakeApi({oldSha=shaOld,oldUuidValue=oldUuid,autoEnabled=false,failBuild
   mismatchNew=false,latestMismatched=false,unverified=false,
   settingsDrift=false,wrongOrigin=false,installationDenied=false,
   wrongBuildInstallation=false,oldBuildInstallation=oldUuid,
-  enableAutoOnStart=false,enableAutoOnGet=false,denyDisable=false}={}){
+  enableAutoOnStart=false,enableAutoOnGet=false,denyDisable=false,
+  oldCreatedAt=undefined}={}){
   const state={started:0,checked:0,install:0,settings:0,get:0,old:0,
     autoOn:autoEnabled,autoDisabled:0};
   return {state,
@@ -80,7 +88,8 @@ function fakeApi({oldSha=shaOld,oldUuidValue=oldUuid,autoEnabled=false,failBuild
         originInstallation:wrongBuildInstallation?oldUuid:newUuid},wrongOrigin);
     }
       return approvedOrigin({uuid:oldUuidValue,sha:oldSha,status:"completed",
-        originInstallation:oldBuildInstallation},wrongOrigin);
+        originInstallation:oldBuildInstallation,
+        ...(oldCreatedAt===undefined?{}:{createdAt:oldCreatedAt})},wrongOrigin);
     },
     async start(){state.started++;
       if(enableAutoOnStart)state.autoOn=true;
@@ -338,6 +347,112 @@ test("preflight refuses Hostinger build identity drift without admitting build",
   await assert.rejects(run({cfg,db,api,fetcher:stubFetch(),
     githubToken:ghToken,log:()=>{}}),/current live build/);
   assert.equal(db.state.acquired,false);
+});
+const historicalCreatedAt="2026-11-22T17:40:12Z";
+const historicalArmedAt="2026-11-22T17:40:12.122779Z";
+const historicalCfg={...cfg,mode:"reconcile-historical",heldAppSha:shaOld};
+function historicalDb({pendingApp=shaOld,pendingDb=shaB,
+  expired=true,step="app_deploy",armedAt=historicalArmedAt,casWins=true}={}){
+  const base=fakeDb();
+  const state={readCount:0,updateCount:0};
+  return {...base,historical:state,async query(sql,params){
+    if(sql.startsWith("SELECT generation,app_main_sha,db_main_sha")){
+      state.readCount++;
+      return {rows:[{generation:"7",app_main_sha:pendingApp,
+        db_main_sha:pendingDb,pending_external_step:step,
+        pending_external_step_at:new Date(armedAt),expired}]};
+    }
+    if(sql.startsWith("UPDATE public.ishikeit_release_ownership SET "+
+      "pending_external_step=NULL")){
+      state.updateCount++;
+      assert.match(sql,/generation=\$4 AND pending_external_step_at=\$5/u);
+      assert.match(sql,/expires_at<=clock_timestamp\(\)/u);
+      assert.deepEqual(params,[SCOPE_HIST,shaOld,shaB,7,new Date(armedAt)]);
+      base.state.resolved=casWins;
+      return {rows:casWins?[{generation:8}]:[]};
+    }
+    return base.query(sql,params);
+  }};
+}
+const SCOPE_HIST="ishikeit_priority3_production";
+test("historical reconciliation requires matching deployed SHA and current approved main",()=>{
+  assert.deepEqual(validateConfig(historicalCfg),historicalCfg);
+  for(const item of [
+    {heldAppSha:undefined},{heldAppSha:"0".repeat(40)},
+    {oldSha:"f".repeat(40)},{appSha:shaOld},
+    {mode:"deploy",heldAppSha:shaOld},
+    {mode:"preflight",heldAppSha:shaOld}
+  ])assert.throws(()=>validateConfig({...historicalCfg,...item}));
+});
+test("historical protected main ancestry rejects forks, missing parents and unsafe ranges",async()=>{
+  const safe={...historicalCfg};
+  await assertHistoricalGitAncestry(stubFetch(),ghToken,safe);
+  await assertHistoricalGitAncestry(stubFetch(false,"ok",{
+    [shaA]:["d".repeat(40)],["d".repeat(40)]:[shaOld]
+  }),ghToken,safe);
+  await assert.rejects(assertHistoricalGitAncestry(stubFetch(false,"ok",{
+    [shaA]:["0".repeat(40),shaOld]
+  }),ghToken,safe),/ancestry unverified/u);
+  await assert.rejects(assertHistoricalGitAncestry(stubFetch(false,"ok",{
+    [shaA]:["d".repeat(40)],["d".repeat(40)]:[shaA]
+  }),ghToken,safe),/cycle/u);
+  const chain={};for(let i=0;i<18;i++)chain[i.toString(16).padStart(40,"0")]=
+    [(i+1).toString(16).padStart(40,"0")];
+  chain[shaA]=["0".repeat(40)];
+  await assert.rejects(assertHistoricalGitAncestry(stubFetch(false,"ok",chain),
+    ghToken,safe),/not reachable/u);
+});
+test("owner-reviewed historical Hostinger reconciliation never posts another build",async()=>{
+  const db=historicalDb();
+  const api=fakeApi({oldSha:shaOld,oldUuidValue:oldUuid,
+    oldBuildInstallation:newUuid,oldCreatedAt:historicalCreatedAt});
+  const outcome=await run({cfg:historicalCfg,db,api,fetcher:stubFetch(),
+    githubToken:ghToken,log:()=>{}});
+  assert.deepEqual(outcome,{mode:"reconciled-historical",buildUuid:oldUuid});
+  assert.equal(api.state.started,0);
+  assert.equal(db.state.acquired,false);
+  assert.equal(db.state.armed,false);
+  assert.equal(db.state.resolved,true);
+  assert.equal(db.historical.readCount,1);
+  assert.equal(db.historical.updateCount,1);
+});
+for(const [label,opts,pattern] of [
+  ["unexpired hold",{expired:false},/exact expired/u],
+  ["other provider deployment",{pendingApp:"d".repeat(40)},/exact expired/u],
+  ["wrong database source",{pendingDb:"d".repeat(40)},/exact expired/u],
+  ["unarmed operation",{step:null},/exact expired/u],
+  ["build created long before arm",{armedAt:"2026-11-22T17:20:12Z"},/timestamp/u],
+  ["raced concurrent hold update",{casWins:false},/CAS changed/u]
+]){
+  test("historical reconciliation refuses "+label+" without clearing hold",async()=>{
+    const db=historicalDb(opts);
+    const api=fakeApi({oldSha:shaOld,oldUuidValue:oldUuid,
+      oldBuildInstallation:newUuid,oldCreatedAt:historicalCreatedAt});
+    await assert.rejects(run({cfg:historicalCfg,db,api,
+      fetcher:stubFetch(),githubToken:ghToken,log:()=>{}}),pattern);
+    assert.equal(api.state.started,0,"Never issue Hostinger POST");
+    assert.equal(db.state.resolved,false,"Must leave unresolved hold");
+  });
+}
+test("historical readback denies wrong deployment installation, missing timestamp and Git drift",async()=>{
+  for(const opts of [
+    {oldBuildInstallation:oldUuid,oldCreatedAt:historicalCreatedAt},
+    {oldBuildInstallation:newUuid},
+    {oldBuildInstallation:newUuid,oldCreatedAt:"2026-11-22T16:40:12Z"}
+  ]){
+    const db=historicalDb(),api=fakeApi({
+      oldSha:shaOld,oldUuidValue:oldUuid,...opts});
+    await assert.rejects(run({cfg:historicalCfg,db,api,
+      fetcher:stubFetch(),githubToken:ghToken,log:()=>{}}));
+    assert.equal(db.historical.updateCount,0);
+    assert.equal(api.state.started,0);
+  }
+  const db=historicalDb(),api=fakeApi({oldSha:shaOld,oldUuidValue:oldUuid,
+    oldBuildInstallation:newUuid,oldCreatedAt:historicalCreatedAt});
+  await assert.rejects(run({cfg:historicalCfg,db,api,
+    fetcher:stubFetch(true),githubToken:ghToken,log:()=>{}}),/drifted/u);
+  assert.equal(db.historical.updateCount,0);
+  assert.equal(api.state.started,0);
 });
 test("reconcile accepts an expired pending release only with the approved Git installation",async()=>{
   const db=fakeDb(),api=fakeApi({oldSha:shaA,oldUuidValue:newUuid,

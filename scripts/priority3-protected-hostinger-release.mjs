@@ -324,7 +324,8 @@ export async function reconcileHistoricalExternalStep(query,cfg,build){
     "Historical Hostinger build creation timestamp missing");
   const read=await query(
     "SELECT generation,app_main_sha,db_main_sha,pending_external_step,"+
-    "pending_external_step_at,expires_at<=clock_timestamp() AS expired "+
+    "pending_external_step_at,pending_external_step_at::text AS pending_external_step_at_exact,"+
+    "expires_at<=clock_timestamp() AS expired "+
     "FROM public.ishikeit_release_ownership WHERE scope=$1",[SCOPE]);
   insist(read.rows.length===1,"Historical release hold unavailable");
   const hold=read.rows[0];
@@ -332,6 +333,13 @@ export async function reconcileHistoricalExternalStep(query,cfg,build){
     hold.pending_external_step==="app_deploy"&&hold.expired===true,
     "Historical release hold is not the exact expired app_deploy step");
   const generation=Number(hold.generation);
+  // node-postgres parses timestamptz into JS Date at millisecond resolution,
+  // silently truncating PostgreSQL's microseconds. Use that Date ONLY for
+  // the 15-second time-window check; bind the server's exact ::text value
+  // back as timestamptz in the immutable CAS to retain all six digits.
+  const pendingAtExact=hold.pending_external_step_at_exact;
+  insist(typeof pendingAtExact==="string"&&pendingAtExact.length>19,
+    "Historical pending timestamp precision unavailable");
   const pendingAt=Date.parse(hold.pending_external_step_at);
   insist(Number.isSafeInteger(generation)&&generation>0&&
     Number.isFinite(pendingAt)&&
@@ -344,10 +352,10 @@ export async function reconcileHistoricalExternalStep(query,cfg,build){
     "generation=generation+1,expires_at=clock_timestamp(),"+
     "updated_at=clock_timestamp() "+
     "WHERE scope=$1 AND app_main_sha=$2 AND db_main_sha=$3 "+
-    "AND generation=$4 AND pending_external_step_at=$5 "+
+    "AND generation=$4 AND pending_external_step_at=$5::timestamptz "+
     "AND pending_external_step='app_deploy' "+
     "AND expires_at<=clock_timestamp() RETURNING generation",
-    [SCOPE,cfg.heldAppSha,cfg.dbSha,generation,hold.pending_external_step_at]);
+    [SCOPE,cfg.heldAppSha,cfg.dbSha,generation,pendingAtExact]);
   insist(updated.rows.length===1,
     "Historical external-step CAS changed; retain pending release hold");
 }

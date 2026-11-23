@@ -6,7 +6,7 @@ const source=readFileSync(new URL("priority3-protected-hostinger-release.mjs",im
 function check(w){
   const essential=[
     "\non:\n  workflow_dispatch:\n",
-    "options: [provider-preflight, preflight, deploy, reconcile]",
+    "options: [provider-preflight, preflight, deploy, reconcile, reconcile-historical]",
     "permissions:\n  contents: read\n  actions: read",
     "group: ishikeit-priority3-privileged-release",
     "cancel-in-progress: false",
@@ -19,6 +19,8 @@ function check(w){
     "ISHIKEIT_EXPECTED_HOSTINGER_BUILD_UUID:",
     "ISHIKEIT_EXPECTED_HOSTINGER_BUILD_SHA:",
     "ISHIKEIT_RELEASE_OPERATION:",
+    "ISHIKEIT_HISTORICAL_HELD_APP_SHA:",
+    "held_app_sha:",
     "ISHIKEIT_DATABASE_URL: $"+"{{ inputs.operation == 'provider-preflight' && 'not-required-for-provider-only' || secrets.ISHIKEIT_DATABASE_URL }}",
     "ISHIKEIT_HOSTINGER_API_TOKEN: $"+"{{ secrets.ISHIKEIT_HOSTINGER_API_TOKEN }}",
     "ISHIKEIT_GITHUB_READBACK_TOKEN: $"+"{{ github.token }}",

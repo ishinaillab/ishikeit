@@ -30,8 +30,18 @@ export function validateConfig(cfg){
   insist(shaPattern.test(cfg.appSha)&&shaPattern.test(cfg.dbSha),"Protected commit identity invalid");
   insist(shaPattern.test(cfg.oldSha)&&uuidPattern.test(cfg.oldUuid),"Existing build identity invalid");
   insist(cfg.appSha!==cfg.oldSha,"Deployment target must differ from already deployed SHA");
-  insist(["provider-preflight","preflight","deploy","reconcile"].includes(cfg.mode),
+  insist(["provider-preflight","preflight","deploy","reconcile",
+    "reconcile-historical"].includes(cfg.mode),
     "Unsupported protected release operation");
+  if(cfg.mode==="reconcile-historical"){
+    insist(shaPattern.test(cfg.heldAppSha)&&cfg.heldAppSha===cfg.oldSha,
+      "Historical held SHA must exactly match the currently deployed build");
+    insist(cfg.heldAppSha!==cfg.appSha,
+      "Historical hold must precede current protected main");
+  }else{
+    insist(cfg.heldAppSha===undefined,
+      "Historical source may be supplied only for historical reconciliation");
+  }
   return cfg;
 }
 export function validateDatabaseUrl(value){
@@ -61,7 +71,8 @@ export function parseBuild(raw){
     sha:src.commit?.hash??b.commit?.hash,
     source:b.options?.source_type??b.source_type,
     originOwner:src.owner,originRepo:src.repository,originBranch:src.branch,
-    originInstallation:src.installation_uuid
+    originInstallation:src.installation_uuid,
+    ...(typeof b.created_at==="string"?{createdAt:b.created_at}:{})
   };
 }
 export function assertBuildOrigin(b,requireApprovedInstallation=false){
@@ -265,6 +276,82 @@ export function createReleaseFence(query){
     }
   };
 }
+/** A historical Hostinger build may have completed immediately before a
+ * protected pull-request merge changed main. We NEVER relax current HEAD
+ * validation. Instead check a bounded, single-parent immutable Git history
+ * from the current authenticated main SHA to the exact historical held SHA.
+ */
+export async function assertHistoricalGitAncestry(fetcher,token,cfg){
+  insist(typeof token==="string"&&token.length>=16,
+    "GitHub historical ancestry credential unavailable");
+  insist(shaPattern.test(cfg.heldAppSha)&&cfg.heldAppSha!==cfg.appSha,
+    "Historical held source identity invalid");
+  let sha=cfg.appSha;
+  const seen=new Set();
+  for(let i=0;i<16;i++){
+    insist(!seen.has(sha),"GitHub ancestry cycle detected");
+    seen.add(sha);
+    const res=await fetcher(
+      "https://api.github.com/repos/ishinaillab/ishikeit/git/commits/"+sha,{
+        method:"GET",redirect:"error",signal:AbortSignal.timeout(20000),
+        headers:{Authorization:"Bearer "+token,Accept:"application/vnd.github+json",
+          "User-Agent":"ishikeit-protected-release",
+          "X-GitHub-Api-Version":"2022-11-28"}
+      });
+    insist(res.status===200,"Protected GitHub ancestry readback unavailable");
+    const commit=await res.json();
+    insist(commit?.sha===sha&&Array.isArray(commit.parents)&&
+      commit.parents.length===1&&shaPattern.test(commit.parents[0]?.sha),
+      "Protected historical GitHub ancestry unverified");
+    const parent=commit.parents[0].sha;
+    if(parent===cfg.heldAppSha)return;
+    sha=parent;
+  }
+  throw Error("Historical held SHA not reachable within protected GitHub main history");
+}
+
+/** The only allowed historical hold settlement is a fully verified exact
+ * hosted build: same SHA, Git installation, completion and build timestamp
+ * immediately following the original external-step arm. Never "fix" the
+ * hold by changing its app SHA to the current main branch.
+ */
+export async function reconcileHistoricalExternalStep(query,cfg,build){
+  insist(build?.uuid===cfg.oldUuid&&build?.sha===cfg.heldAppSha&&
+    build?.status==="completed","Historical Hostinger build identity mismatch");
+  assertBuildOrigin(build,true);
+  insist(typeof build.createdAt==="string"&&
+    Number.isFinite(Date.parse(build.createdAt)),
+    "Historical Hostinger build creation timestamp missing");
+  const read=await query(
+    "SELECT generation,app_main_sha,db_main_sha,pending_external_step,"+
+    "pending_external_step_at,expires_at<=clock_timestamp() AS expired "+
+    "FROM public.ishikeit_release_ownership WHERE scope=$1",[SCOPE]);
+  insist(read.rows.length===1,"Historical release hold unavailable");
+  const hold=read.rows[0];
+  insist(hold.app_main_sha===cfg.heldAppSha&&hold.db_main_sha===cfg.dbSha&&
+    hold.pending_external_step==="app_deploy"&&hold.expired===true,
+    "Historical release hold is not the exact expired app_deploy step");
+  const generation=Number(hold.generation);
+  const pendingAt=Date.parse(hold.pending_external_step_at);
+  insist(Number.isSafeInteger(generation)&&generation>0&&
+    Number.isFinite(pendingAt)&&
+    Math.abs(Date.parse(build.createdAt)-pendingAt)<=15000,
+    "Historical build creation did not match the armed external-step timestamp");
+  const updated=await query(
+    "UPDATE public.ishikeit_release_ownership SET "+
+    "pending_external_step=NULL,pending_external_step_at=NULL,"+
+    "verified_app_deploy_at=clock_timestamp(),holder_digest=NULL,"+
+    "generation=generation+1,expires_at=clock_timestamp(),"+
+    "updated_at=clock_timestamp() "+
+    "WHERE scope=$1 AND app_main_sha=$2 AND db_main_sha=$3 "+
+    "AND generation=$4 AND pending_external_step_at=$5 "+
+    "AND pending_external_step='app_deploy' "+
+    "AND expires_at<=clock_timestamp() RETURNING generation",
+    [SCOPE,cfg.heldAppSha,cfg.dbSha,generation,hold.pending_external_step_at]);
+  insist(updated.rows.length===1,
+    "Historical external-step CAS changed; retain pending release hold");
+}
+
 // A previously armed external operation is never cleared just by lease expiry.
 // Only an exact verified hosted deployment, under fresh protected owner
 // approvals, permits reconciliation; active release holders cannot be bypassed.
@@ -343,7 +430,7 @@ export async function run({cfg,db,api,fetcher=globalThis.fetch,githubToken,
     await api.assertGitInstallationAccess();
     await api.assertBuildSettings();
     const old=await api.latest();
-    assertBuildOrigin(old,cfg.mode==="reconcile");
+    assertBuildOrigin(old,["reconcile","reconcile-historical"].includes(cfg.mode));
     if(cfg.mode!=="reconcile"){
       insist(old.uuid===cfg.oldUuid&&old.sha===cfg.oldSha&&old.status==="completed",
         "Hostinger current live build does not match expected old source");
@@ -376,6 +463,25 @@ export async function run({cfg,db,api,fetcher=globalThis.fetch,githubToken,
       "(SELECT count(*) FROM public.ishikeit_active_disconnect_cleanup)::int AS cleanup");
     insist(Number(n.rows[0]?.links)===0&&Number(n.rows[0]?.cleanup)===0,
       "Live native connections/cleanup require separate release treatment");
+    if(cfg.mode==="reconcile-historical"){
+      insist(old.uuid===cfg.oldUuid&&old.sha===cfg.heldAppSha&&
+        old.status==="completed","Historical completed hosted build mismatch");
+      await assertHistoricalGitAncestry(fetcher,githubToken,cfg);
+      await assertHealth(fetcher);
+      await assertGitHeads(fetcher,githubToken,cfg);
+      await api.assertAutoOff();
+      await api.assertGitInstallationAccess();
+      await api.assertBuildSettings();
+      const after=await api.latest();
+      assertBuildOrigin(after,true);
+      insist(after.status==="completed"&&after.uuid===old.uuid&&
+        after.sha===cfg.heldAppSha&&after.createdAt===old.createdAt,
+        "Historical Hostinger build changed during protected readback");
+      await reconcileHistoricalExternalStep((...args)=>db.query(...args),cfg,after);
+      finished=true;
+      log("Historical protected Hostinger external step independently verified and reconciled");
+      return {mode:"reconciled-historical",buildUuid:after.uuid};
+    }
     if(cfg.mode==="reconcile"){
       insist(old.status==="completed"&&old.sha===cfg.appSha,
         "No completed deployed Hostinger build matching protected SHA");
@@ -481,7 +587,9 @@ export async function main(env=process.env){
     appSha:env.ISHIKEIT_RELEASE_APP_SHA,dbSha:env.ISHIKEIT_RELEASE_DB_SHA,
     oldUuid:env.ISHIKEIT_EXPECTED_HOSTINGER_BUILD_UUID,
     oldSha:env.ISHIKEIT_EXPECTED_HOSTINGER_BUILD_SHA,
-    mode:env.ISHIKEIT_RELEASE_OPERATION
+    mode:env.ISHIKEIT_RELEASE_OPERATION,
+    ...(env.ISHIKEIT_RELEASE_OPERATION==="reconcile-historical"
+      ?{heldAppSha:env.ISHIKEIT_HISTORICAL_HELD_APP_SHA}:{})
   });
   const api=createHostingerClient(globalThis.fetch,env.ISHIKEIT_HOSTINGER_API_TOKEN);
   if(cfg.mode==="provider-preflight"){

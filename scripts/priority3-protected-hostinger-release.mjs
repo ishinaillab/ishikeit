@@ -424,11 +424,22 @@ export async function run({cfg,db,api,fetcher=globalThis.fetch,githubToken,
   sleep=pause,maxPolls=160,log=console.log}){
   const fence=createReleaseFence((...args)=>db.query(...args));
   let didArm=false,finished=false;
+  // Fixed, non-sensitive stage identifiers only. Never log provider or DB
+  // error text, bearer credentials, OAuth codes or response bodies.
+  const historicalStage=stage=>{
+    if(cfg.mode==="reconcile-historical")
+      log("Priority 3 historical reconciliation stage: "+stage);
+  };
   try{
+    historicalStage("github_ref_initial");
     await assertGitHeads(fetcher,githubToken,cfg);
+    historicalStage("hostinger_auto_deploy_initial");
     await api.assertAutoOff();
+    historicalStage("hostinger_installation_initial");
     await api.assertGitInstallationAccess();
+    historicalStage("hostinger_settings_initial");
     await api.assertBuildSettings();
+    historicalStage("hostinger_latest_initial");
     const old=await api.latest();
     assertBuildOrigin(old,["reconcile","reconcile-historical"].includes(cfg.mode));
     if(cfg.mode!=="reconcile"){
@@ -436,6 +447,7 @@ export async function run({cfg,db,api,fetcher=globalThis.fetch,githubToken,
         "Hostinger current live build does not match expected old source");
       // Admission must not report success when the existing service is down.
       // Check before acquiring any release lease or preparing a hosted action.
+      historicalStage("health_admission");
       await assertHealth(fetcher);
     }
     if(cfg.mode==="provider-preflight"){
@@ -457,7 +469,9 @@ export async function run({cfg,db,api,fetcher=globalThis.fetch,githubToken,
       log("Protected Hostinger provider-only preflight passed; no database access or deployment");
       return {mode:"provider-preflight",buildUuid:null};
     }
+    historicalStage("schema_readback");
     await assertProtectedNativeSchema(db);
+    historicalStage("native_account_counts");
     const n=await db.query("SELECT "+
       "(SELECT count(*) FROM public.ishikeit_account_connections)::int AS links,"+
       "(SELECT count(*) FROM public.ishikeit_active_disconnect_cleanup)::int AS cleanup");
@@ -466,18 +480,27 @@ export async function run({cfg,db,api,fetcher=globalThis.fetch,githubToken,
     if(cfg.mode==="reconcile-historical"){
       insist(old.uuid===cfg.oldUuid&&old.sha===cfg.heldAppSha&&
         old.status==="completed","Historical completed hosted build mismatch");
+      historicalStage("git_ancestry");
       await assertHistoricalGitAncestry(fetcher,githubToken,cfg);
+      historicalStage("health_final");
       await assertHealth(fetcher);
+      historicalStage("github_ref_final");
       await assertGitHeads(fetcher,githubToken,cfg);
+      historicalStage("hostinger_auto_deploy_final");
       await api.assertAutoOff();
+      historicalStage("hostinger_installation_final");
       await api.assertGitInstallationAccess();
+      historicalStage("hostinger_settings_final");
       await api.assertBuildSettings();
+      historicalStage("hostinger_latest_final");
       const after=await api.latest();
       assertBuildOrigin(after,true);
       insist(after.status==="completed"&&after.uuid===old.uuid&&
         after.sha===cfg.heldAppSha&&after.createdAt===old.createdAt,
         "Historical Hostinger build changed during protected readback");
+      historicalStage("hold_cas");
       await reconcileHistoricalExternalStep((...args)=>db.query(...args),cfg,after);
+      historicalStage("hold_reconciled");
       finished=true;
       log("Historical protected Hostinger external step independently verified and reconciled");
       return {mode:"reconciled-historical",buildUuid:after.uuid};
@@ -604,7 +627,11 @@ export async function main(env=process.env){
   const db=new pg.Client({connectionString:env.ISHIKEIT_DATABASE_URL,
     ssl:verifiedSupabaseSsl(),connectionTimeoutMillis:10000,
     application_name:"ishikeit_priority3_hostinger_release"});
+  if(cfg.mode==="reconcile-historical")
+    console.log("Priority 3 historical reconciliation stage: postgres_connect");
   await db.connect();
+  if(cfg.mode==="reconcile-historical")
+    console.log("Priority 3 historical reconciliation stage: postgres_connected");
   try{
     const result=await run({cfg,db,api,
       githubToken:env.ISHIKEIT_GITHUB_READBACK_TOKEN});

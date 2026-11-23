@@ -375,6 +375,39 @@ function historicalDb({pendingApp=shaOld,pendingDb=shaB,
   }};
 }
 const SCOPE_HIST="ishikeit_priority3_production";
+test("historical release diagnostics expose only fixed stage identifiers",async()=>{
+  const outputs=[];
+  const db=historicalDb(),api=fakeApi({
+    oldSha:shaOld,oldUuidValue:oldUuid,
+    oldBuildInstallation:newUuid,oldCreatedAt:historicalCreatedAt
+  });
+  await run({cfg:historicalCfg,db,api,fetcher:stubFetch(),
+    githubToken:ghToken,log:stage=>outputs.push(stage)});
+  const stages=outputs.filter(x=>x.startsWith(
+    "Priority 3 historical reconciliation stage: "));
+  assert.deepEqual(stages,[
+    "github_ref_initial","hostinger_auto_deploy_initial",
+    "hostinger_installation_initial","hostinger_settings_initial",
+    "hostinger_latest_initial","health_admission","schema_readback",
+    "native_account_counts","git_ancestry","health_final",
+    "github_ref_final","hostinger_auto_deploy_final",
+    "hostinger_installation_final","hostinger_settings_final",
+    "hostinger_latest_final","hold_cas","hold_reconciled"
+  ].map(x=>"Priority 3 historical reconciliation stage: "+x));
+  assert.equal(api.state.started,0);
+  const failed=[];
+  await assert.rejects(run({cfg:historicalCfg,db:historicalDb({
+    casWins:false}),api:fakeApi({
+    oldSha:shaOld,oldUuidValue:oldUuid,
+    oldBuildInstallation:newUuid,oldCreatedAt:historicalCreatedAt}),
+    fetcher:stubFetch(),githubToken:ghToken,
+    log:x=>failed.push(x)}),/CAS changed/u);
+  assert.equal(failed.at(-1),
+    "Priority 3 historical reconciliation stage: hold_cas");
+  for(const x of [...outputs,...failed]){
+    assert.doesNotMatch(x,/bearer|authorization:|postgres:\/\/|token=|secret=/iu);
+  }
+});
 test("historical reconciliation requires matching deployed SHA and current approved main",()=>{
   assert.deepEqual(validateConfig(historicalCfg),historicalCfg);
   for(const item of [

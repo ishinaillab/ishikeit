@@ -348,7 +348,15 @@ describe("Telegram native owner OIDC and Business evidence",()=>{
         stage:"exchange_error_envelope"},
       {data:{token_type:"Bearer",expires_in:3600},
         stage:"exchange_id_token_invalid"},
-      {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:"3600"},
+      {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:"0"},
+        stage:"exchange_expiry_invalid"},
+      {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:"03600"},
+        stage:"exchange_expiry_invalid"},
+      {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:"1e3"},
+        stage:"exchange_expiry_invalid"},
+      {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:null},
+        stage:"exchange_expiry_invalid"},
+      {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:86401},
         stage:"exchange_expiry_invalid"},
       {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:0},
         stage:"exchange_expiry_invalid"}
@@ -363,6 +371,21 @@ describe("Telegram native owner OIDC and Business evidence",()=>{
         .rejects.toThrow(/token response invalid/i);
       expect(diagnostics.splice(0)).toEqual([item.stage]);
     }
+    // RFC 6749 treats expires_in as recommended, not mandatory. An exact
+    // signed ID token is still verified separately for exp/iat/nonce.
+    // Telegram provider interop may serialize a bounded decimal as a string.
+    for(const expiry of [undefined,3600,"3600"]){
+      const data={token_type:"Bearer",id_token:"J".repeat(100),
+        ...(expiry===undefined?{}:{expires_in:expiry})};
+      const client=new TelegramOIDCClient({...clientOpts,
+        fetchImpl:vi.fn(()=>Promise.resolve(new Response(
+          JSON.stringify(data),{status:200,headers:{"content-type":"application/json"}}
+        )))});
+      await expect(client.exchange("telegram-code-123","V".repeat(43)))
+        .resolves.toBe("J".repeat(100));
+      expect(diagnostics.splice(0)).toEqual([]);
+    }
+
     const invalidJson=new TelegramOIDCClient({...clientOpts,
       fetchImpl:vi.fn(()=>Promise.resolve(new Response("<private-bad-data>",
         {status:200,headers:{"content-type":"application/json"}})))});

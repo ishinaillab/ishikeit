@@ -127,8 +127,17 @@ export class TelegramOIDCClient implements TelegramOIDCClientLike{
       diagnosticSafe(this.#onDiagnostic,"exchange_id_token_invalid");
       throw new Error("Telegram OIDC token response invalid");
     }
-    if(typeof data.expires_in!=="number"||!Number.isFinite(data.expires_in)||
-      data.expires_in<60||data.expires_in>86400){
+    // OAuth 2.0 RFC 6749 §5.1 recommends expires_in but does not require it.
+    // The signed ID token's exp/iat are always verified independently below.
+    // Accept an optional, bounded numeric or ASCII-decimal seconds value;
+    // reject coercion, whitespace, negatives, scientific notation or overflow.
+    const expiry=data.expires_in;
+    const seconds=typeof expiry==="number"?expiry:
+      (typeof expiry==="string"&&/^[1-9][0-9]{1,4}$/u.test(expiry)
+        ?Number(expiry):undefined);
+    if(expiry!==undefined&&(
+      seconds===undefined||!Number.isSafeInteger(seconds)||
+      seconds<60||seconds>86400)){
       diagnosticSafe(this.#onDiagnostic,"exchange_expiry_invalid");
       throw new Error("Telegram OIDC token response invalid");
     }

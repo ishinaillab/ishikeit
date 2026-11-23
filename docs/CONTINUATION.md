@@ -1,5 +1,13 @@
 # Ishikeit continuation handoff
 
+## 2026-11-24 — Telegram OIDC access-token TTL interoperability (review source only)
+
+- First-party Hostinger application logs for the owner-approved native Telegram OIDC attempt at 2026-11-23T20:05:34.229Z report only the fixed safe enum `exchange_expiry_invalid`, then `exchange_stage`. The matching PostgreSQL connection intent was consumed but not claimed; native connection count remains zero. No token, authorization code, client secret, account identity or raw provider response was logged or used to make this finding.
+- RFC 6749 §5.1 marks access-token `expires_in` as RECOMMENDED rather than mandatory, while OIDC requires separately verified signed ID-token `exp`. The narrow change permits absent `expires_in` or bounded canonical ASCII decimal seconds, retaining the existing strict Bearer type, JWT RS256 signature, exact issuer/audience/nonce/iat/exp, replay protection, and rejection of malformed/oversized token payloads. It does not grant or revoke provider consent, send any native messages, change queue/workers or enable any production routes.
+- Independent disposable Docker Node.js 24 and real PostgreSQL 17 acceptance of the **exact two modified source/test files** passed all 1,073 tests in 132 files, ESLint, TypeScript and production build with exit code 0. Its uniquely named Docker test containers, network and test volume were removed. Original dirty Telegram worktrees, seven canonical unpublished files and three MFA factors were preserved; only the exact tested file contents were copied to an independent GitHub review branch.
+- No live native account link, provider-level revocation or active-account disconnect was accepted by these tests. The active-account evidence and manual Hostinger hPanel direct-write fencing remain unverified. Require protected CI, exclusive release ownership and owner-approved preflight + fenced deployment before exactly one further genuine Telegram owner authorization attempt. Never submit Meta App Review without specific separate permission.
+
+
 ## 2026-11-23 — Telegram OIDC token exchange fixed-enum response diagnostics (ISOLATED REVIEW)
 
 - Live authenticated Hostinger runtime log at 2026-11-23 09:11:57Z recorded a Telegram native owner login token exchange response failure as fixed enum `exchange_response_invalid` then `exchange_stage`. No current native Telegram workspace account was linked: 9 intents, 8 consumed, 0 claimed. Do NOT guess at response contents or weaken the signed OIDC validation; never log an access token, ID token, authorization code, account identity, provider response, OTP, or client secret.

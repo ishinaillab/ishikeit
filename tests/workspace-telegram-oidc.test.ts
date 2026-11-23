@@ -339,6 +339,35 @@ describe("Telegram native owner OIDC and Business evidence",()=>{
         {status:200,headers:{"content-type":"application/json"}})))});
     await expect(malformed.exchange("telegram-code-123","V".repeat(43)))
       .rejects.toThrow(/token response invalid/i);
+    expect(diagnostics.splice(0)).toEqual(["exchange_token_type_invalid"]);
+
+    // A live approved Telegram login can return HTTP 200 with a nonstandard
+    // envelope. Distinguish exact shape classes, NEVER log unknown contents.
+    const shapeCases=[
+      {data:{error:"very-private-provider-message"},
+        stage:"exchange_error_envelope"},
+      {data:{token_type:"Bearer",expires_in:3600},
+        stage:"exchange_id_token_invalid"},
+      {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:"3600"},
+        stage:"exchange_expiry_invalid"},
+      {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:0},
+        stage:"exchange_expiry_invalid"}
+    ] as const;
+    for(const item of shapeCases){
+      const client=new TelegramOIDCClient({...clientOpts,
+        fetchImpl:vi.fn(()=>Promise.resolve(new Response(
+          JSON.stringify(item.data),
+          {status:200,headers:{"content-type":"application/json"}}
+        )))});
+      await expect(client.exchange("telegram-code-123","V".repeat(43)))
+        .rejects.toThrow(/token response invalid/i);
+      expect(diagnostics.splice(0)).toEqual([item.stage]);
+    }
+    const invalidJson=new TelegramOIDCClient({...clientOpts,
+      fetchImpl:vi.fn(()=>Promise.resolve(new Response("<private-bad-data>",
+        {status:200,headers:{"content-type":"application/json"}})))});
+    await expect(invalidJson.exchange("telegram-code-123","V".repeat(43)))
+      .rejects.toThrow(/token response invalid/i);
     expect(diagnostics.splice(0)).toEqual(["exchange_response_invalid"]);
 
     const throwingObserver=new TelegramOIDCClient({...clientOpts,

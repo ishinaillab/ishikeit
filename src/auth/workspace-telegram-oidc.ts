@@ -41,6 +41,8 @@ async function smallJson(response:Response,maxBytes=32768):Promise<Record<string
 }
 export type TelegramOIDCDiagnostic =
   "exchange_transport"|"exchange_http_rejected"|"exchange_response_invalid"|
+  "exchange_error_envelope"|"exchange_token_type_invalid"|
+  "exchange_id_token_invalid"|"exchange_expiry_invalid"|
   "exchange_stage"|"signature_claim_stage"|"registry_claim_stage";
 
 /** Emits only fixed event identifiers. A logging failure must never bypass
@@ -109,11 +111,25 @@ export class TelegramOIDCClient implements TelegramOIDCClientLike{
       diagnosticSafe(this.#onDiagnostic,"exchange_response_invalid");
       throw new Error("Telegram OIDC token response invalid");
     }
-    if(data.token_type!=="Bearer"||
-      typeof data.id_token!=="string"||data.id_token.length>8192||
-      typeof data.expires_in!=="number"||data.expires_in<60||
-      data.expires_in>86400){
-      diagnosticSafe(this.#onDiagnostic,"exchange_response_invalid");
+    // Field-by-field, bounded diagnostics expose ONLY a static reason enum.
+    // Never record a provider error body, token, ID, request URL or credential.
+    // Keep successful OIDC token validation just as strict as before.
+    if(typeof data.error==="string"||typeof data.error_description==="string"){
+      diagnosticSafe(this.#onDiagnostic,"exchange_error_envelope");
+      throw new Error("Telegram OIDC token response invalid");
+    }
+    if(data.token_type!=="Bearer"){
+      diagnosticSafe(this.#onDiagnostic,"exchange_token_type_invalid");
+      throw new Error("Telegram OIDC token response invalid");
+    }
+    if(typeof data.id_token!=="string"||data.id_token.length<80||
+      data.id_token.length>8192){
+      diagnosticSafe(this.#onDiagnostic,"exchange_id_token_invalid");
+      throw new Error("Telegram OIDC token response invalid");
+    }
+    if(typeof data.expires_in!=="number"||!Number.isFinite(data.expires_in)||
+      data.expires_in<60||data.expires_in>86400){
+      diagnosticSafe(this.#onDiagnostic,"exchange_expiry_invalid");
       throw new Error("Telegram OIDC token response invalid");
     }
     return data.id_token;

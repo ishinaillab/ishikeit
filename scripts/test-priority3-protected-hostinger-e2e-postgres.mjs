@@ -2,7 +2,7 @@ import test,{before,after,beforeEach} from "node:test";
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 import pg from "pg";
-import {run,createReleaseFence} from "./priority3-protected-hostinger-release.mjs";
+import {run,createReleaseFence,reconcileHistoricalExternalStep} from "./priority3-protected-hostinger-release.mjs";
 
 // This suite owns and deletes disposable PostgreSQL tables/roles. Never allow
 // a shared or hosted URL, even when invoked outside the protected CI runner.
@@ -163,6 +163,70 @@ if(url===undefined){
     assert.equal(row?.pending_external_step,null);
     assert.equal(row?.verified,true);
     assert.equal(row?.released,true);
+  });
+
+  test("historical completion preserves six-digit microsecond CAS in real PG17",async()=>{
+    const precise="2026-11-22 17:40:12.122779+00";
+    const heldCfg={...cfg,appSha:"d".repeat(40),mode:"reconcile-historical",
+      heldAppSha:cfg.oldSha};
+    const build={...oldStatus(),originInstallation:install,
+      createdAt:"2026-11-22T17:40:12Z"};
+    await pool.query(
+      "INSERT INTO public.ishikeit_release_ownership "+
+      "(scope,generation,holder_digest,app_main_sha,db_main_sha,expires_at,"+
+      "pending_external_step,pending_external_step_at) "+
+      "VALUES($1,7,decode(repeat('ab',32),'hex'),$2,$3,"+
+      "clock_timestamp()-interval '10 seconds','app_deploy',$4::timestamptz)",
+      [scope,cfg.oldSha,cfg.dbSha,precise]);
+    const pre=await pool.query(
+      "SELECT pending_external_step_at::text AS exact,"+
+      "pending_external_step_at=date_trunc('milliseconds',pending_external_step_at) "+
+      "AS truncated_matches FROM public.ishikeit_release_ownership "+
+      "WHERE scope=$1",[scope]);
+    assert.equal(pre.rows[0].exact,precise);
+    assert.equal(pre.rows[0].truncated_matches,false,
+      "This regression must require microseconds beyond JS Date precision");
+    await reconcileHistoricalExternalStep(db.query,heldCfg,build);
+    const accepted=await record();
+    assert.equal(Number(accepted.generation),8);
+    assert.equal(accepted.released,true);
+    assert.equal(accepted.pending_external_step,null);
+    assert.equal(accepted.verified,true);
+  });
+
+  test("historical microsecond CAS rejects a concurrent one-microsecond change",async()=>{
+    const precise="2026-11-22 17:40:12.122779+00";
+    const heldCfg={...cfg,appSha:"d".repeat(40),mode:"reconcile-historical",
+      heldAppSha:cfg.oldSha};
+    const build={...oldStatus(),originInstallation:install,
+      createdAt:"2026-11-22T17:40:12Z"};
+    await pool.query(
+      "INSERT INTO public.ishikeit_release_ownership "+
+      "(scope,generation,holder_digest,app_main_sha,db_main_sha,expires_at,"+
+      "pending_external_step,pending_external_step_at) "+
+      "VALUES($1,7,decode(repeat('ab',32),'hex'),$2,$3,"+
+      "clock_timestamp()-interval '10 seconds','app_deploy',$4::timestamptz)",
+      [scope,cfg.oldSha,cfg.dbSha,precise]);
+    let updates=0;
+    const concurrent=async(sql,args)=>{
+      if(sql.startsWith("UPDATE public.ishikeit_release_ownership SET "+
+        "pending_external_step=NULL")){
+        updates++;
+        await pool.query(
+          "UPDATE public.ishikeit_release_ownership "+
+          "SET pending_external_step_at=pending_external_step_at+"+
+          "interval '1 microsecond' WHERE scope=$1",[scope]);
+      }
+      return pool.query(sql,args);
+    };
+    await assert.rejects(reconcileHistoricalExternalStep(concurrent,heldCfg,build),
+      /CAS changed/u);
+    assert.equal(updates,1);
+    const rejected=await record();
+    assert.equal(Number(rejected.generation),7);
+    assert.equal(rejected.released,false);
+    assert.equal(rejected.pending_external_step,"app_deploy");
+    assert.equal(rejected.verified,false);
   });
 
   test("expired hold cannot be cleared when hosted deployment has not been verified",async()=>{

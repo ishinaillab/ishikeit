@@ -360,14 +360,18 @@ function historicalDb({pendingApp=shaOld,pendingDb=shaB,
       state.readCount++;
       return {rows:[{generation:"7",app_main_sha:pendingApp,
         db_main_sha:pendingDb,pending_external_step:step,
-        pending_external_step_at:new Date(armedAt),expired}]};
+        pending_external_step_at:new Date(armedAt),
+         // PostgreSQL's ::text preserves the six-digit stored microseconds.
+         pending_external_step_at_exact:armedAt.replace('T',' ').replace(/Z$/u,'+00'),
+         expired}]};
     }
     if(sql.startsWith("UPDATE public.ishikeit_release_ownership SET "+
       "pending_external_step=NULL")){
       state.updateCount++;
-      assert.match(sql,/generation=\$4 AND pending_external_step_at=\$5/u);
+      assert.match(sql,/generation=\$4 AND pending_external_step_at=\$5::timestamptz/u);
       assert.match(sql,/expires_at<=clock_timestamp\(\)/u);
-      assert.deepEqual(params,[SCOPE_HIST,shaOld,shaB,7,new Date(armedAt)]);
+      assert.deepEqual(params,[SCOPE_HIST,shaOld,shaB,7,
+         armedAt.replace('T',' ').replace(/Z$/u,'+00')]);
       base.state.resolved=casWins;
       return {rows:casWins?[{generation:8}]:[]};
     }

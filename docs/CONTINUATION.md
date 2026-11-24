@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## 2026-11-24 late evening — Telegram signed profile ID numeric-string interop (ISOLATED REVIEW; NOT YET RELEASED)
+
+- The owner-approved protected Hostinger deployment #45415497490 succeeded after preflight #45414234679 and both environment approvals. Current live app SHA `13c9886bcc4bf646e5c353b76d5185ce527f6425`, DB main `3e2d3e9ee367a1fccf6002595ac7d6cbe9e1069e`, completed build `01a20dfd-ee37-726b-8531-a8c7da1ac995`, schema 45/45, CAS generation 20 with no active holder or pending external operation, Git auto-deploy OFF, live/ready both HTTP 200.
+- ONE legitimate, owner-authorized Telegram OIDC login was completed through the authenticated Telegram Desktop account at 2026-11-24 14:40Z. Ishikeit rejected the callback. First-party Hostinger emitted only `jwt_identity_id_type_invalid` followed by generic `signature_claim_stage`, with no raw token, owner ID, OAuth code or claim value. This establishes the signed profile `id` was not a JavaScript number, not its actual type or value. Zero native connections have been verified.
+- Narrow, isolated candidate: after mandatory RS256/JWKS, exact issuer/audience, nonce, exp/iat/time checks, accept either a safe signed numeric `id` or a signed canonical positive ASCII decimal-string `id`. Reject object/array/boolean, leading zero, whitespace, fractional/exponent/sign/hex and numbers beyond JS safe-integer precision. NEVER derive Bot API identity from OIDC `sub`, never omit provider Business readback, never log claims.
+- Focused Linux Node24 locked-dependency red-first signed-JWT regression failed on signed decimal-string identity before the patch, then passed all 12 focused tests after it. Full disposable PostgreSQL17/Node24 CI, protected source PR, CI checks, merge and separate owner-gated release remain necessary. Do not repeat provider consent until released; no native tenant send activation, bot revocation or Meta App Review submission is authorized.
+
 ## 2026-11-24 evening — Telegram signed OIDC claim diagnostics (ISOLATED REVIEW ONLY)
 
 - Owner-reviewed GitHub protected Hostinger reconcile-only workflow #45385539835 succeeded; no second build. Verified CAS release generation 18 unheld, pending external step NULL, Hostinger completed app SHA `53d130ae1c9445d76687e71471bbfc54537a3880`, Git auto-deploy OFF. The current deployed app is unchanged by this review.

@@ -204,9 +204,10 @@ export async function verifyTelegramOIDCIdToken(
   if(payload===undefined)
     throw new Error("Telegram OIDC signature/claims unverified");
   // Telegram's signed OIDC "sub" is an opaque user subject and is not
-  // documented as interchangeable with the numeric Bot API User.id. The
-  // official profile scope supplies a separately signed numeric "id".
-  // Demand that claim and compare it to getBusinessConnection.user.id.
+  // interchangeable with the numeric Bot API User.id. The profile scope
+  // supplies the separately signed "id"; interoperate with either a safe
+  // integer or a canonical decimal-string representation of that SAME ID.
+  // Never use an unsigned field or "sub" as a fallback identity.
   if(payload.nonce!==nonce){
     diagnosticSafe(onDiagnostic,"jwt_nonce_mismatch");
     throw new Error("Telegram OIDC identity/nonce mismatch");
@@ -225,13 +226,19 @@ export async function verifyTelegramOIDCIdToken(
     rejectClaim("jwt_identity_lifetime_invalid");
   if(payload.id===undefined)
     rejectClaim("jwt_identity_id_missing");
-  if(typeof payload.id!=="number")
+  if(typeof payload.id!=="number"&&typeof payload.id!=="string")
     rejectClaim("jwt_identity_id_type_invalid");
-  if(!Number.isSafeInteger(payload.id))
-    rejectClaim("jwt_identity_id_range_invalid");
-  if(!telegramUser.safeParse(String(payload.id)).success)
+  const signedId=String(payload.id);
+  // Enforce canonical positive ASCII decimal before any numeric conversion:
+  // no whitespace, leading zero, exponent, sign, fractional or hex forms.
+  if(!telegramUser.safeParse(signedId).success)
     rejectClaim("jwt_identity_id_format_invalid");
-  return String(payload.id);
+  // Telegram Bot API user IDs have at most 52 significant bits. Number can
+  // represent these exactly, and the independent Business API readback still
+  // must match this signed, canonical identity before connection activation.
+  if(!Number.isSafeInteger(Number(signedId)))
+    rejectClaim("jwt_identity_id_range_invalid");
+  return signedId;
 }
 
 export interface TelegramBusinessReadback {

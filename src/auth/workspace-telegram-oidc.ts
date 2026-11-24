@@ -1,5 +1,5 @@
 import {randomUUID} from "node:crypto";
-import {createRemoteJWKSet,jwtVerify} from "jose";
+import {createRemoteJWKSet,errors,jwtVerify} from "jose";
 import {z} from "zod";
 import type {AuthenticatedWorkspaceConnectionIntents} from "./authenticated-workspace-connection.js";
 import type {PostgresAccountCapabilityFacts} from "../persistence/account-capability-facts.js";
@@ -43,7 +43,12 @@ export type TelegramOIDCDiagnostic =
   "exchange_transport"|"exchange_http_rejected"|"exchange_response_invalid"|
   "exchange_error_envelope"|"exchange_token_type_invalid"|
   "exchange_id_token_invalid"|
-  "exchange_stage"|"signature_claim_stage"|"registry_claim_stage";
+  "exchange_stage"|"signature_claim_stage"|"registry_claim_stage"|
+  "jwt_signature_invalid"|"jwt_claim_issuer_invalid"|
+  "jwt_claim_audience_invalid"|"jwt_claim_nonce_missing"|
+  "jwt_claim_other_invalid"|"jwt_time_invalid"|"jwt_jwks_unavailable"|
+  "jwt_algorithm_invalid"|"jwt_nonce_mismatch"|
+  "jwt_identity_claim_invalid"|"jwt_verification_unknown";
 
 /** Emits only fixed event identifiers. A logging failure must never bypass
  * the actual provider verification or alter the connection state.
@@ -53,6 +58,31 @@ function diagnosticSafe(
   stage:TelegramOIDCDiagnostic
 ):void{
   try{callback?.(stage)}catch{/* Observability must remain fail-closed. */}
+}
+/** Diagnose ONLY jose's stable error classes and known claim NAMES.
+ * Never emit the raw Error.message, error.payload, actual claim values,
+ * JWT header, token, user identity, JWKS response or network URL.
+ */
+function jwtFailureStage(error:unknown):TelegramOIDCDiagnostic{
+  if(error instanceof errors.JWTExpired)return "jwt_time_invalid";
+  if(error instanceof errors.JWTClaimValidationFailed){
+    switch(error.claim){
+      case "iss":return "jwt_claim_issuer_invalid";
+      case "aud":return "jwt_claim_audience_invalid";
+      case "nonce":return "jwt_claim_nonce_missing";
+      case "iat":case "exp":return "jwt_time_invalid";
+      default:return "jwt_claim_other_invalid";
+    }
+  }
+  if(error instanceof errors.JWSSignatureVerificationFailed)
+    return "jwt_signature_invalid";
+  if(error instanceof errors.JWKSNoMatchingKey||
+     error instanceof errors.JWKSTimeout||
+     error instanceof errors.JWKSInvalid)
+    return "jwt_jwks_unavailable";
+  if(error instanceof errors.JOSEAlgNotAllowed)
+    return "jwt_algorithm_invalid";
+  return "jwt_verification_unknown";
 }
 export interface TelegramOIDCClientLike{
   exchange(code:string,verifier:string):Promise<string>;
@@ -136,7 +166,9 @@ export class TelegramOIDCClient implements TelegramOIDCClientLike{
   }
 
   async verify(idToken:string,nonce:string):Promise<string>{
-    return verifyTelegramOIDCIdToken(idToken,nonce,this.#clientId);
+    return verifyTelegramOIDCIdToken(
+      idToken,nonce,this.#clientId,jwks,this.#onDiagnostic
+    );
   }
 }
 
@@ -146,13 +178,14 @@ export class TelegramOIDCClient implements TelegramOIDCClientLike{
  */
 export async function verifyTelegramOIDCIdToken(
   idToken:string,nonce:string,clientId:string,
-  resolver:Parameters<typeof jwtVerify>[1]=jwks
+  resolver:Parameters<typeof jwtVerify>[1]=jwks,
+  onDiagnostic?:((stage:TelegramOIDCDiagnostic)=>void)
 ):Promise<string>{
   opaque.parse(nonce);
   telegramUser.parse(clientId);
   if(typeof idToken!=="string"||idToken.length<80||idToken.length>8192)
     throw new Error("Telegram OIDC ID token invalid");
-  let payload:Awaited<ReturnType<typeof jwtVerify>>["payload"];
+  let payload:Awaited<ReturnType<typeof jwtVerify>>["payload"]|undefined;
   try{
     const result=await jwtVerify(idToken,resolver,{
       issuer:expectedIssuer,audience:clientId,
@@ -160,21 +193,32 @@ export async function verifyTelegramOIDCIdToken(
       requiredClaims:["sub","iat","exp","nonce"]
     });
     payload=result.payload;
-  }catch{throw new Error("Telegram OIDC signature/claims unverified");}
+  }catch(error){
+    // Emit only a static category. Never chain the raw JOSE error into a
+    // server-visible cause: its payload can include owner identity claims.
+    diagnosticSafe(onDiagnostic,jwtFailureStage(error));
+  }
+  if(payload===undefined)
+    throw new Error("Telegram OIDC signature/claims unverified");
   // Telegram's signed OIDC "sub" is an opaque user subject and is not
   // documented as interchangeable with the numeric Bot API User.id. The
   // official profile scope supplies a separately signed numeric "id".
   // Demand that claim and compare it to getBusinessConnection.user.id.
-  if(payload.nonce!==nonce||
-    typeof payload.sub!=="string"||
+  if(payload.nonce!==nonce){
+    diagnosticSafe(onDiagnostic,"jwt_nonce_mismatch");
+    throw new Error("Telegram OIDC identity/nonce mismatch");
+  }
+  if(typeof payload.sub!=="string"||
     payload.sub.length<1||payload.sub.length>256||
     typeof payload.iat!=="number"||
     typeof payload.exp!=="number"||
     payload.exp-payload.iat>3600||
     typeof payload.id!=="number"||
     !Number.isSafeInteger(payload.id)||
-    !telegramUser.safeParse(String(payload.id)).success)
+    !telegramUser.safeParse(String(payload.id)).success){
+    diagnosticSafe(onDiagnostic,"jwt_identity_claim_invalid");
     throw new Error("Telegram OIDC identity/nonce mismatch");
+  }
   return String(payload.id);
 }
 

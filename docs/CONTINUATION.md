@@ -1,5 +1,13 @@
 # Ishikeit continuation handoff
 
+## 2026-11-24 — Telegram OIDC unused access-expiry metadata; STRICT ID-token verification (REVIEW ONLY)
+
+- Owner-authorized GitHub Actions #45264311009 deployed and accepted app main `63293298adb14899404c3dafb9419d2dc6abf8c4` (PR #318), DB main `3e2d3e9ee367a1fccf6002595ac7d6cbe9e1069e`. Hostinger completed build `01a20c03-f2d2-7026-beb8-4f9f36c978f8`, Git auto-deployment OFF; PostgreSQL release CAS generation 14 resolved with no holder or pending step; /health/live and /health/ready both HTTP 200.
+- A **single genuine Telegram Desktop owner-authorized OIDC login** at 2026-11-24T05:29Z was accepted by Telegram but Ishikeit rejected callback. Production emitted only safe fixed enums `exchange_expiry_invalid` then `exchange_stage`. Supabase: 11 native Telegram intents, 10 consumed, zero claimed, zero native links. No Telegram Business bot was revoked or modified.
+- RFC 6749 §5.1 describes `expires_in` as RECOMMENDED **access-token** lifetime metadata. Ishikeit consumes only `id_token` and never stores/uses an OAuth access token for native identity. Rejecting the owner's cryptographically verifiable ID token due solely to unused access-token metadata is not an identity-security control. This narrow reviewed change deliberately ignores `expires_in` shape without ever logging the value or provider payload. Strict Telegram RS256 JWT signature, exact issuer/audience/bot ID, nonce, exp/iat, 10-minute max token age, and exact provider account/business readbacks are unchanged.
+- Do NOT claim native connection or disconnect acceptance until a fresh, single genuine provider consent is successfully linked after four-job CI, protected merge and owner-reviewed fenced Hostinger release. All 7 unpublished canonical files, separate dirty review worktrees, live legacy messaging, three owner MFA factors, and Meta App Review NO_SUBMISSION remain protected.
+
+
 ## 2026-11-24 — Telegram OIDC access-token TTL interoperability (review source only)
 
 - First-party Hostinger application logs for the owner-approved native Telegram OIDC attempt at 2026-11-23T20:05:34.229Z report only the fixed safe enum `exchange_expiry_invalid`, then `exchange_stage`. The matching PostgreSQL connection intent was consumed but not claimed; native connection count remains zero. No token, authorization code, client secret, account identity or raw provider response was logged or used to make this finding.

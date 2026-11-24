@@ -347,19 +347,7 @@ describe("Telegram native owner OIDC and Business evidence",()=>{
       {data:{error:"very-private-provider-message"},
         stage:"exchange_error_envelope"},
       {data:{token_type:"Bearer",expires_in:3600},
-        stage:"exchange_id_token_invalid"},
-      {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:"0"},
-        stage:"exchange_expiry_invalid"},
-      {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:"03600"},
-        stage:"exchange_expiry_invalid"},
-      {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:"1e3"},
-        stage:"exchange_expiry_invalid"},
-      {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:null},
-        stage:"exchange_expiry_invalid"},
-      {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:86401},
-        stage:"exchange_expiry_invalid"},
-      {data:{token_type:"Bearer",id_token:"J".repeat(100),expires_in:0},
-        stage:"exchange_expiry_invalid"}
+        stage:"exchange_id_token_invalid"}
     ] as const;
     for(const item of shapeCases){
       const client=new TelegramOIDCClient({...clientOpts,
@@ -371,10 +359,10 @@ describe("Telegram native owner OIDC and Business evidence",()=>{
         .rejects.toThrow(/token response invalid/i);
       expect(diagnostics.splice(0)).toEqual([item.stage]);
     }
-    // RFC 6749 treats expires_in as recommended, not mandatory. An exact
-    // signed ID token is still verified separately for exp/iat/nonce.
-    // Telegram provider interop may serialize a bounded decimal as a string.
-    for(const expiry of [undefined,3600,"3600"]){
+    // The unused access-token expiry metadata is not an identity gate.
+    // Cryptographic validation of the signed ID token remains mandatory.
+    for(const expiry of [undefined,3600,"3600","0","03600","1e3",
+      null,86401,0,false,[],{untrusted:"discard"}]){
       const data={token_type:"Bearer",id_token:"J".repeat(100),
         ...(expiry===undefined?{}:{expires_in:expiry})};
       const client=new TelegramOIDCClient({...clientOpts,

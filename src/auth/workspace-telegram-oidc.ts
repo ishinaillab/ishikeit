@@ -42,7 +42,7 @@ async function smallJson(response:Response,maxBytes=32768):Promise<Record<string
 export type TelegramOIDCDiagnostic =
   "exchange_transport"|"exchange_http_rejected"|"exchange_response_invalid"|
   "exchange_error_envelope"|"exchange_token_type_invalid"|
-  "exchange_id_token_invalid"|"exchange_expiry_invalid"|
+  "exchange_id_token_invalid"|
   "exchange_stage"|"signature_claim_stage"|"registry_claim_stage";
 
 /** Emits only fixed event identifiers. A logging failure must never bypass
@@ -127,20 +127,11 @@ export class TelegramOIDCClient implements TelegramOIDCClientLike{
       diagnosticSafe(this.#onDiagnostic,"exchange_id_token_invalid");
       throw new Error("Telegram OIDC token response invalid");
     }
-    // OAuth 2.0 RFC 6749 §5.1 recommends expires_in but does not require it.
-    // The signed ID token's exp/iat are always verified independently below.
-    // Accept an optional, bounded numeric or ASCII-decimal seconds value;
-    // reject coercion, whitespace, negatives, scientific notation or overflow.
-    const expiry=data.expires_in;
-    const seconds=typeof expiry==="number"?expiry:
-      (typeof expiry==="string"&&/^[1-9][0-9]{1,4}$/u.test(expiry)
-        ?Number(expiry):undefined);
-    if(expiry!==undefined&&(
-      seconds===undefined||!Number.isSafeInteger(seconds)||
-      seconds<60||seconds>86400)){
-      diagnosticSafe(this.#onDiagnostic,"exchange_expiry_invalid");
-      throw new Error("Telegram OIDC token response invalid");
-    }
+    // expires_in describes OAuth ACCESS-token lifetime (RFC 6749 §5.1).
+    // This identity flow never uses or stores the provider access token.
+    // A malformed or omitted unused access-token expiry cannot invalidate
+    // an independently signed ID token. Signature, issuer, audience, nonce,
+    // exp, iat, and short maximum age remain mandatory in verify().
     return data.id_token;
   }
 

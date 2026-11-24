@@ -218,7 +218,8 @@ describe("Telegram native owner OIDC and Business evidence",()=>{
     const resolver=createLocalJWKSet({keys:[publicJwk]});
     const make=async(p:{
       audience?:string;issuer?:string;nonce?:string;expiresIn?:number;
-      claimId?:number|string;subject?:string;omitId?:boolean;omitNonce?:boolean
+      claimId?:number|string|boolean|string[]|Record<string,unknown>;
+      subject?:string;omitId?:boolean;omitNonce?:boolean
     }={})=>{
       const now=Math.floor(Date.now()/1000);
       return new SignJWT({
@@ -300,10 +301,27 @@ describe("Telegram native owner OIDC and Business evidence",()=>{
       await make({omitId:true}),state,clientId,resolver,observe
     )).rejects.toThrow(/identity/i);
     expect(stages.splice(0)).toEqual(["jwt_identity_id_missing"]);
-    await expect(verifyTelegramOIDCIdToken(
+    expect(await verifyTelegramOIDCIdToken(
       await make({claimId:"987654321"}),state,clientId,resolver,observe
+    )).toBe("987654321");
+    expect(stages.splice(0)).toEqual([]);
+    for(const claimId of [true,["987654321"],{id:"987654321"}]){
+      await expect(verifyTelegramOIDCIdToken(
+        await make({claimId}),state,clientId,resolver,observe
+      )).rejects.toThrow(/identity/i);
+      expect(stages.splice(0)).toEqual(["jwt_identity_id_type_invalid"]);
+    }
+    for(const claimId of ["0","000987654321"," 987654321","987654321 ",
+      "987654321.0","9.87654321e8","-1","0x3ade68b1","987654321\\n"]){
+      await expect(verifyTelegramOIDCIdToken(
+        await make({claimId}),state,clientId,resolver,observe
+      )).rejects.toThrow(/identity/i);
+      expect(stages.splice(0)).toEqual(["jwt_identity_id_format_invalid"]);
+    }
+    await expect(verifyTelegramOIDCIdToken(
+      await make({claimId:"9007199254740992"}),state,clientId,resolver,observe
     )).rejects.toThrow(/identity/i);
-    expect(stages.splice(0)).toEqual(["jwt_identity_id_type_invalid"]);
+    expect(stages.splice(0)).toEqual(["jwt_identity_id_range_invalid"]);
     await expect(verifyTelegramOIDCIdToken(
       await make({claimId:Number.MAX_SAFE_INTEGER+1}),state,clientId,resolver,observe
     )).rejects.toThrow(/identity/i);

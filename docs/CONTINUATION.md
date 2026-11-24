@@ -1,5 +1,11 @@
 # Ishikeit continuation handoff
 
+## 2026-11-25 — Telegram native Business strict registry confirmation (PROTECTED SOURCE REVIEW; NOT YET DEPLOYED)
+
+- Protected PR322 deployment run #45488015411 succeeded under both genuine owner approvals. Accepted runtime app `aaa88d793155029c1b49982761f68f8dd3d491b3`, DB `3e2d3e9ee367a1fccf6002595ac7d6cbe9e1069e`, Hostinger completed build `01a20f6a-8095-73a9-a8d9-d04441363511`, lease generation 22 unheld/no pending operation, health and readiness passed. Genuine Telegram owner consent successfully created one pending native claim. Fresh tester message was processed and legacy reply action published without retry/dead-letter.
+- Root cause of Business confirmation failure: the strict administrator registry lookup rejects the extra Business connection ID before provider readback. Project only workspaceId, connectionId and actor; keep the candidate for independent live provider verification. Fixed-enum redacted diagnostics distinguish readback/rights/registry failures, never emit credentials or raw claims.
+- Exact four-file implementation and real PG17 strict-registry activation regression passed 1,078/1,078 tests in 132 files, lint/typecheck/build. Protected source PR #323 is narrowly owner-authorized; required CI and separate genuine deployment approval remain mandatory. Preserve unrelated #284 holds, canonical seven unpublished files, three MFA devices and working legacy messaging. No native send activation, bot revocation, provider permission change or Meta App Review submission. Retry existing pending owner claim only after live accepted deployment.
+
 ## 2026-11-24 late evening — Telegram signed profile ID numeric-string interop (ISOLATED REVIEW; NOT YET RELEASED)
 
 - The owner-approved protected Hostinger deployment #45415497490 succeeded after preflight #45414234679 and both environment approvals. Current live app SHA `13c9886bcc4bf646e5c353b76d5185ce527f6425`, DB main `3e2d3e9ee367a1fccf6002595ac7d6cbe9e1069e`, completed build `01a20dfd-ee37-726b-8531-a8c7da1ac995`, schema 45/45, CAS generation 20 with no active holder or pending external operation, Git auto-deploy OFF, live/ready both HTTP 200.

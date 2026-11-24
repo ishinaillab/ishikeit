@@ -692,7 +692,10 @@ const messengerNativeConnector=(!messengerNativeConfigured||oauthStore===undefin
 // API token. Start only with explicit owner opt-in and BotFather URL allowlist.
 const telegramNativeBusinessReader=!env.BROWSER_TELEGRAM_OIDC_ENABLED
   ?undefined
-  :new TelegramNativeBusinessReader({botToken:env.TELEGRAM_BOT_TOKEN!});
+  :new TelegramNativeBusinessReader({botToken:env.TELEGRAM_BOT_TOKEN!,
+    onDiagnostic:stage=>logger.warn(
+      "Telegram native Business verification rejected fixed-stage="+stage
+    )});
 const telegramNativeConnector=telegramNativeBusinessReader===undefined?undefined
   :new WorkspaceTelegramOIDCConnections({
     clientId:env.TELEGRAM_OIDC_CLIENT_ID!,
@@ -717,7 +720,8 @@ const telegramNativeConnector=telegramNativeBusinessReader===undefined?undefined
     business:telegramNativeBusinessReader,
     capabilityFacts,
     onDiagnostic:stage=>logger.warn(
-      "Telegram native owner OIDC rejected fixed-stage="+stage
+      (stage.startsWith("business_")?"Telegram native Business verification rejected fixed-stage=":
+        "Telegram native owner OIDC rejected fixed-stage=")+stage
     ),
     registry:privateWorkspaceRegistry
   });

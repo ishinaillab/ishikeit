@@ -488,3 +488,79 @@ describe("Telegram native owner OIDC and Business evidence",()=>{
     await expect(reader.inspect("")).rejects.toThrow();
   });
 });
+
+describe("Telegram Business verification diagnostics remain private and fail closed",()=>{
+  const privateMarker="DO-NOT-LOG-PROVIDER-IDENTITY-OR-TOKEN";
+  const opts={botToken:"1122334455:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"};
+  const good={ok:true,result:{id:"business-conn-A",user:{id:Number(accountId)},is_enabled:true,rights:{can_reply:true}}};
+  it("classifies transport, authorization, rate limiting and provider outage without raw errors",async()=>{
+    for(const [status,stage] of [[401,"business_http_auth_rejected"],[403,"business_http_auth_rejected"],[429,"business_http_rate_limited"],[503,"business_http_unavailable"],[400,"business_http_rejected"]] as const){
+      const stages:string[]=[];
+      const reader=new TelegramNativeBusinessReader({...opts,onDiagnostic:s=>stages.push(s),
+        fetchImpl:vi.fn(()=>Promise.resolve(new Response(privateMarker,{status})))});
+      await expect(reader.inspect("business-conn-A")).rejects.toThrow("Telegram Business connection not verified");
+      expect(stages).toEqual([stage]);
+    }
+    const stages:string[]=[];
+    const reader=new TelegramNativeBusinessReader({...opts,onDiagnostic:s=>stages.push(s),
+      fetchImpl:vi.fn(()=>Promise.reject(new Error(privateMarker)))});
+    await expect(reader.inspect("business-conn-A")).rejects.toThrow("Telegram Business readback unavailable");
+    expect(stages).toEqual(["business_transport"]);
+  });
+  it("distinguishes malformed response, missing identity, mismatched connection and malformed state",async()=>{
+    const cases=[
+      {body:privateMarker,stage:"business_response_invalid"},
+      {body:JSON.stringify({ok:false,description:privateMarker}),stage:"business_envelope_invalid"},
+      {body:JSON.stringify({...good,result:{...good.result,id:privateMarker}}),stage:"business_connection_mismatch"},
+      {body:JSON.stringify({...good,result:{...good.result,is_enabled:"true"}}),stage:"business_enabled_invalid"},
+      {body:JSON.stringify({...good,result:{...good.result,user:{id:privateMarker}}}),stage:"business_owner_id_invalid"},
+      {body:JSON.stringify({...good,result:{...good.result,user:{id:String(accountId)}}}),stage:"business_owner_id_invalid"},
+      {body:JSON.stringify({...good,result:{...good.result,user:{id:Number.MAX_SAFE_INTEGER+1}}}),stage:"business_owner_id_invalid"}
+    ];
+    for(const item of cases){
+      const stages:string[]=[];
+      const reader=new TelegramNativeBusinessReader({...opts,onDiagnostic:s=>stages.push(s),
+        fetchImpl:vi.fn(()=>Promise.resolve(new Response(item.body)))});
+      await expect(reader.inspect("business-conn-A")).rejects.toThrow(/^Telegram Business (response invalid|owner unverified)$/);
+      expect(stages).toEqual([item.stage]);
+    }
+  });
+  it("reports missing reply permission and disabled connection as distinct denied coordinator outcomes",async()=>{
+    const {intents,oidc,business,registry,connection}=harness();
+    const stages:string[]=[];
+    const coordinator=new WorkspaceTelegramOIDCConnections({clientId,redirectUri:callback,intents,oidc,business,registry,onDiagnostic:s=>stages.push(s)});
+    const request={workspaceId,connectionId:connection.connectionId,actor,businessConnectionId:"business-conn-A"};
+    const valid={connectionId:request.businessConnectionId,ownerId:accountId,enabled:true,canReply:true};
+    for(const [response,stage] of [
+      [{...valid,ownerId:"11111"},"business_owner_mismatch"],
+      [{...valid,connectionId:privateMarker},"business_connection_mismatch"],
+      [{...valid,enabled:false},"business_connection_disabled"],
+      [{...valid,canReply:false},"business_reply_right_missing"]
+    ] as const){
+      business.inspect.mockResolvedValueOnce(response);
+      await expect(coordinator.confirm(request)).rejects.toThrow(/do not match/);
+      expect(stages.splice(0)).toEqual([stage]);
+    }
+    expect(registry.activateTelegramBusiness).not.toHaveBeenCalled();
+    await expect(coordinator.confirm(request)).resolves.toMatchObject({status:"connected",generation:2});
+    expect(stages).toEqual([]);
+  });
+  it("classifies registry admission failures and suppresses private errors; logging failures do not weaken denial",async()=>{
+    const {intents,oidc,business,registry,connection}=harness();
+    const stages:string[]=[];
+    const coordinator=new WorkspaceTelegramOIDCConnections({clientId,redirectUri:callback,intents,oidc,business,registry,onDiagnostic:s=>{stages.push(s);throw Error(privateMarker);}});
+    const request={workspaceId,connectionId:connection.connectionId,actor,businessConnectionId:"business-conn-A"};
+    registry.findForAdministrator.mockRejectedValueOnce(new Error(privateMarker));
+    await expect(coordinator.confirm(request)).rejects.toThrow("Telegram owner binding unavailable");
+    expect(stages.splice(0)).toEqual(["business_pending_read_failed"]);
+    registry.findForAdministrator.mockResolvedValueOnce(undefined as never);
+    await expect(coordinator.confirm(request)).rejects.toThrow("Telegram owner binding unavailable");
+    expect(stages.splice(0)).toEqual(["business_pending_unavailable"]);
+    business.inspect.mockRejectedValueOnce(new Error(privateMarker));
+    await expect(coordinator.confirm(request)).rejects.toThrow("Telegram Business readback unavailable");
+    expect(stages.splice(0)).toEqual(["business_inspection_failed"]);
+    registry.activateTelegramBusiness.mockRejectedValueOnce(new Error(privateMarker));
+    await expect(coordinator.confirm(request)).rejects.toThrow("Telegram Business registry activation unavailable");
+    expect(stages.splice(0)).toEqual(["business_registry_activation_failed"]);
+  });
+});

@@ -5,6 +5,7 @@ import { PostgresDatabase } from "../src/persistence/postgres.js";
 import { AuthenticatedWorkspacePortfolio } from "../src/auth/authenticated-workspace-portfolio.js";
 import { PostgresWorkspaceConnectionIntents } from "../src/persistence/workspace-connection-intents.js";
 import { PostgresWorkspaceShadowInspector } from "../src/persistence/workspace-routing-shadow.js";
+import { WorkspaceTelegramOIDCConnections } from "../src/auth/workspace-telegram-oidc.js";
 import {
   PostgresWorkspaceConnectionRegistry, type WorkspacePrincipal,
   type VerifiedAccountProof, type WorkspaceConnection
@@ -125,6 +126,44 @@ describe.skipIf(db === undefined)("private multi-workspace connection foundation
     ]);
     expect(connectionCount.rows[0]?.n).toBe(2);
     expect(inboundCount.rows[0]?.n).toBe(5);
+  });
+
+  it("confirms a signed Telegram owner through the actual strict registry lookup and live-readback seam",async()=>{
+    const clientId="1234567890",accountId="987654321",businessConnectionId="synthetic-business-A";
+    const app="telegram-oidc-"+clientId;
+    const pending=await registry!.linkVerified({
+      ...await authorizedIntent(workspaceA,ownerA,"telegram",app),
+      workspaceId:workspaceA,connectionId:randomUUID(),actor:ownerA,
+      providerApplicationKey:app,proof:proof("telegram",accountId)
+    });
+    const inspect=vi.fn(()=>Promise.resolve({
+      connectionId:businessConnectionId,ownerId:accountId,enabled:true,canReply:true
+    }));
+    const coordinator=new WorkspaceTelegramOIDCConnections({
+      clientId,redirectUri:"https://apps.example.test/verified/callback",
+      intents:{begin:vi.fn(),consume:vi.fn()},oidc:{exchange:vi.fn(),verify:vi.fn()},
+      business:{inspect},registry:registry!
+    });
+    const input={workspaceId:workspaceA,connectionId:pending.connectionId,
+      actor:ownerA,businessConnectionId};
+    await expect(coordinator.confirm({...input,actor:ownerB})).rejects.toThrow();
+    expect(inspect).not.toHaveBeenCalled();
+    await expect(coordinator.confirm({...input,workspaceId:workspaceB,actor:ownerB})).rejects.toThrow();
+    expect(inspect).not.toHaveBeenCalled();
+    // The registry's strict lookup intentionally rejects additional fields.
+    // The coordinator must project the identity parameters before lookup,
+    // while retaining the candidate separately for provider verification.
+    await expect(registry!.findForAdministrator(input)).rejects.toThrow();
+    await expect(coordinator.confirm(input)).resolves.toEqual({
+      connectionId:pending.connectionId,status:"connected",generation:2
+    });
+    expect(inspect).toHaveBeenCalledExactlyOnceWith(businessConnectionId);
+    expect(await registry!.findBindingForAdministrator({
+      workspaceId:workspaceA,connectionId:pending.connectionId,actor:ownerA
+    })).toMatchObject({provider:"telegram",accountId,status:"connected",
+      providerApplicationKey:app,providerConnectionId:businessConnectionId,credentialAccountId:null});
+    await expect(coordinator.confirm(input)).rejects.toThrow();
+    expect(inspect).toHaveBeenCalledTimes(1);
   });
 
   it("compares a Telegram Business connection against exact owner/connection/bot in PG17", async () => {

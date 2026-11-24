@@ -51,7 +51,13 @@ export type TelegramOIDCDiagnostic =
   "jwt_identity_claim_invalid"|"jwt_identity_subject_invalid"|
   "jwt_identity_lifetime_invalid"|"jwt_identity_id_missing"|
   "jwt_identity_id_type_invalid"|"jwt_identity_id_range_invalid"|
-  "jwt_identity_id_format_invalid"|"jwt_verification_unknown";
+  "jwt_identity_id_format_invalid"|"jwt_verification_unknown"|
+  "business_input_invalid"|"business_transport"|"business_http_auth_rejected"|
+  "business_http_rate_limited"|"business_http_unavailable"|"business_http_rejected"|
+  "business_response_invalid"|"business_envelope_invalid"|"business_connection_mismatch"|
+  "business_enabled_invalid"|"business_owner_id_invalid"|"business_pending_unavailable"|
+  "business_pending_read_failed"|"business_inspection_failed"|"business_owner_mismatch"|
+  "business_connection_disabled"|"business_reply_right_missing"|"business_registry_activation_failed";
 
 /** Emits only fixed event identifiers. A logging failure must never bypass
  * the actual provider verification or alter the connection state.
@@ -256,14 +262,21 @@ export interface TelegramNativeBusinessLike {
 export class TelegramNativeBusinessReader implements TelegramNativeBusinessLike{
   readonly #token:string;
   readonly #fetch:typeof fetch;
-  constructor(options:{botToken:string;fetchImpl?:typeof fetch}){
+  readonly #onDiagnostic:((stage:TelegramOIDCDiagnostic)=>void)|undefined;
+  constructor(options:{botToken:string;fetchImpl?:typeof fetch;
+    onDiagnostic?:(stage:TelegramOIDCDiagnostic)=>void}){
     this.#token=z.string().regex(/^[1-9][0-9]{4,15}:[A-Za-z0-9_-]{20,}$/u).parse(options.botToken);
     this.#fetch=options.fetchImpl??fetch;
+    this.#onDiagnostic=options.onDiagnostic;
+  }
+  #reject(stage:TelegramOIDCDiagnostic,message:string):never{
+    diagnosticSafe(this.#onDiagnostic,stage);
+    throw new Error(message);
   }
   async inspect(connectionId:string):Promise<TelegramBusinessReadback>{
     if(typeof connectionId!=="string"||connectionId.length<5||
       connectionId.length>256||hasControlCharacter(connectionId))
-      throw new Error("Telegram Business connection invalid");
+      this.#reject("business_input_invalid","Telegram Business connection invalid");
     let response:Response;
     try{
       response=await this.#fetch(
@@ -273,21 +286,29 @@ export class TelegramNativeBusinessReader implements TelegramNativeBusinessLike{
           body:JSON.stringify({business_connection_id:connectionId}),
           signal:AbortSignal.timeout(8000)
         });
-    }catch{throw new Error("Telegram Business readback unavailable");}
-    if(!response.ok)throw new Error("Telegram Business connection not verified");
+    }catch{this.#reject("business_transport","Telegram Business readback unavailable");}
+    if(!response.ok){
+      const stage=response.status===401||response.status===403?"business_http_auth_rejected":
+        response.status===429?"business_http_rate_limited":
+        response.status>=500?"business_http_unavailable":"business_http_rejected";
+      this.#reject(stage,"Telegram Business connection not verified");
+    }
     let record:Record<string,unknown>;
     try{record=await smallJson(response,16384);}catch{
-      throw new Error("Telegram Business response invalid");
+      this.#reject("business_response_invalid","Telegram Business response invalid");
     }
     const result=asRecord(record.result);
     const owner=asRecord(result?.user);
     const rights=asRecord(result?.rights);
-    if(record.ok!==true||result?.id!==connectionId||
-      typeof result?.is_enabled!=="boolean"||
-      typeof owner?.id!=="number"||
-      !Number.isSafeInteger(owner.id)||
+    if(record.ok!==true||result===undefined)
+      this.#reject("business_envelope_invalid","Telegram Business owner unverified");
+    if(result.id!==connectionId)
+      this.#reject("business_connection_mismatch","Telegram Business owner unverified");
+    if(typeof result.is_enabled!=="boolean")
+      this.#reject("business_enabled_invalid","Telegram Business owner unverified");
+    if(typeof owner?.id!=="number"||!Number.isSafeInteger(owner.id)||
       !telegramUser.safeParse(String(owner.id)).success)
-      throw new Error("Telegram Business owner unverified");
+      this.#reject("business_owner_id_invalid","Telegram Business owner unverified");
     return {connectionId,ownerId:String(owner.id),
       enabled:result.is_enabled,canReply:rights?.can_reply===true};
   }
@@ -402,22 +423,40 @@ export class WorkspaceTelegramOIDCConnections{
       actor:z.object({issuer:z.string().min(1),subject:z.string().min(1)}).strict(),
       businessConnectionId:z.string().min(5).max(256)
     }).strict().parse(input);
-    const pending=await this.deps.registry.findForAdministrator(p);
+    let pending;
+    try{pending=await this.deps.registry.findForAdministrator({
+      workspaceId:p.workspaceId,connectionId:p.connectionId,actor:p.actor
+    });}
+    catch{diagnosticSafe(this.deps.onDiagnostic,"business_pending_read_failed");
+      throw Error("Telegram owner binding unavailable");}
     if(pending===undefined||pending.status!=="verifying"||
-      pending.provider!=="telegram")
+      pending.provider!=="telegram"){
+      diagnosticSafe(this.deps.onDiagnostic,"business_pending_unavailable");
       throw new Error("Telegram owner binding unavailable");
-    const provider=await this.deps.business.inspect(p.businessConnectionId);
-    if(provider.ownerId!==pending.accountId||
-      provider.connectionId!==p.businessConnectionId||
-      provider.enabled!==true||provider.canReply!==true)
+    }
+    let provider:TelegramBusinessReadback;
+    try{provider=await this.deps.business.inspect(p.businessConnectionId);}
+    catch{diagnosticSafe(this.deps.onDiagnostic,"business_inspection_failed");
+      throw Error("Telegram Business readback unavailable");}
+    const rejected=provider.ownerId!==pending.accountId?"business_owner_mismatch":
+      provider.connectionId!==p.businessConnectionId?"business_connection_mismatch":
+      provider.enabled!==true?"business_connection_disabled":
+      provider.canReply!==true?"business_reply_right_missing":undefined;
+    if(rejected!==undefined){
+      diagnosticSafe(this.deps.onDiagnostic,rejected);
       throw new Error("Telegram Business user/rights do not match verified OIDC owner");
+    }
     const verifiedAt=new Date();
-    const activated=await this.deps.registry.activateTelegramBusiness({
+    let activated;
+    try{activated=await this.deps.registry.activateTelegramBusiness({
       workspaceId:p.workspaceId,connectionId:p.connectionId,actor:p.actor,
       providerApplicationKey:"telegram-oidc-"+this.#clientId,
       ownerId:provider.ownerId,businessConnectionId:provider.connectionId,
       verifiedAt:verifiedAt.toISOString()
-    });
+    });}catch{
+      diagnosticSafe(this.deps.onDiagnostic,"business_registry_activation_failed");
+      throw Error("Telegram Business registry activation unavailable");
+    }
     // A successfully authenticated native Bot API readback can provide a
     // short-lived, app-scoped evidence preview. Never infer live tenant send
     // enablement or treat failed evidence storage as failed activation.

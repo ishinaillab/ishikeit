@@ -48,7 +48,10 @@ export type TelegramOIDCDiagnostic =
   "jwt_claim_audience_invalid"|"jwt_claim_nonce_missing"|
   "jwt_claim_other_invalid"|"jwt_time_invalid"|"jwt_jwks_unavailable"|
   "jwt_algorithm_invalid"|"jwt_nonce_mismatch"|
-  "jwt_identity_claim_invalid"|"jwt_verification_unknown";
+  "jwt_identity_claim_invalid"|"jwt_identity_subject_invalid"|
+  "jwt_identity_lifetime_invalid"|"jwt_identity_id_missing"|
+  "jwt_identity_id_type_invalid"|"jwt_identity_id_range_invalid"|
+  "jwt_identity_id_format_invalid"|"jwt_verification_unknown";
 
 /** Emits only fixed event identifiers. A logging failure must never bypass
  * the actual provider verification or alter the connection state.
@@ -208,17 +211,26 @@ export async function verifyTelegramOIDCIdToken(
     diagnosticSafe(onDiagnostic,"jwt_nonce_mismatch");
     throw new Error("Telegram OIDC identity/nonce mismatch");
   }
-  if(typeof payload.sub!=="string"||
-    payload.sub.length<1||payload.sub.length>256||
-    typeof payload.iat!=="number"||
-    typeof payload.exp!=="number"||
-    payload.exp-payload.iat>3600||
-    typeof payload.id!=="number"||
-    !Number.isSafeInteger(payload.id)||
-    !telegramUser.safeParse(String(payload.id)).success){
-    diagnosticSafe(onDiagnostic,"jwt_identity_claim_invalid");
+  // Emit only a fixed reason category after JOSE authenticated the token.
+  // Never log the claim name/value, the JWT, its payload or provider identity.
+  const rejectClaim=(stage:TelegramOIDCDiagnostic):never=>{
+    diagnosticSafe(onDiagnostic,stage);
     throw new Error("Telegram OIDC identity/nonce mismatch");
-  }
+  };
+  if(typeof payload.sub!=="string"||
+     payload.sub.length<1||payload.sub.length>256)
+    rejectClaim("jwt_identity_subject_invalid");
+  if(typeof payload.iat!=="number"||typeof payload.exp!=="number"||
+     payload.exp<=payload.iat||payload.exp-payload.iat>3600)
+    rejectClaim("jwt_identity_lifetime_invalid");
+  if(payload.id===undefined)
+    rejectClaim("jwt_identity_id_missing");
+  if(typeof payload.id!=="number")
+    rejectClaim("jwt_identity_id_type_invalid");
+  if(!Number.isSafeInteger(payload.id))
+    rejectClaim("jwt_identity_id_range_invalid");
+  if(!telegramUser.safeParse(String(payload.id)).success)
+    rejectClaim("jwt_identity_id_format_invalid");
   return String(payload.id);
 }
 

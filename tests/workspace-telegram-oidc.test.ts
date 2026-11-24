@@ -218,11 +218,11 @@ describe("Telegram native owner OIDC and Business evidence",()=>{
     const resolver=createLocalJWKSet({keys:[publicJwk]});
     const make=async(p:{
       audience?:string;issuer?:string;nonce?:string;expiresIn?:number;
-      claimId?:number;subject?:string;omitId?:boolean
+      claimId?:number;subject?:string;omitId?:boolean;omitNonce?:boolean
     }={})=>{
       const now=Math.floor(Date.now()/1000);
       return new SignJWT({
-        nonce:p.nonce??state,
+        ...(p.omitNonce===true?{}:{nonce:p.nonce??state}),
         ...(p.omitId===true?{}:{id:p.claimId??Number(accountId)})
       })
         .setProtectedHeader({alg:"RS256",kid:"test-rsa"})
@@ -267,6 +267,43 @@ describe("Telegram native owner OIDC and Business evidence",()=>{
       .sign(other.privateKey);
     await expect(verifyTelegramOIDCIdToken(forged,state,clientId,resolver))
       .rejects.toThrow(/signature\/claims/i);
+
+    // Every diagnostic is a fixed safe enum produced by jose's public error
+    // class/claim name, never raw JWT, provider response or account identity.
+    const stages:string[]=[];
+    const observe=(stage:string)=>{stages.push(stage);};
+    await expect(verifyTelegramOIDCIdToken(
+      await make({audience:"foreign-client"}),state,clientId,resolver,observe
+    )).rejects.toThrow(/signature\/claims/i);
+    expect(stages.splice(0)).toEqual(["jwt_claim_audience_invalid"]);
+    await expect(verifyTelegramOIDCIdToken(
+      await make({issuer:"https://attacker.example"}),state,clientId,resolver,observe
+    )).rejects.toThrow(/signature\/claims/i);
+    expect(stages.splice(0)).toEqual(["jwt_claim_issuer_invalid"]);
+    await expect(verifyTelegramOIDCIdToken(
+      await make({omitNonce:true}),state,clientId,resolver,observe
+    )).rejects.toThrow(/signature\/claims/i);
+    expect(stages.splice(0)).toEqual(["jwt_claim_nonce_missing"]);
+    await expect(verifyTelegramOIDCIdToken(
+      await make({nonce}),state,clientId,resolver,observe
+    )).rejects.toThrow(/nonce/i);
+    expect(stages.splice(0)).toEqual(["jwt_nonce_mismatch"]);
+    await expect(verifyTelegramOIDCIdToken(
+      await make({expiresIn:-600}),state,clientId,resolver,observe
+    )).rejects.toThrow(/signature\/claims/i);
+    expect(stages.splice(0)).toEqual(["jwt_time_invalid"]);
+    await expect(verifyTelegramOIDCIdToken(
+      forged,state,clientId,resolver,observe
+    )).rejects.toThrow(/signature\/claims/i);
+    expect(stages.splice(0)).toEqual(["jwt_signature_invalid"]);
+    await expect(verifyTelegramOIDCIdToken(
+      await make({omitId:true}),state,clientId,resolver,observe
+    )).rejects.toThrow(/identity/i);
+    expect(stages.splice(0)).toEqual(["jwt_identity_claim_invalid"]);
+    await expect(verifyTelegramOIDCIdToken(
+      await make({audience:"foreign-client"}),state,clientId,resolver,
+      ()=>{throw Error("private diagnostic must not escape");}
+    )).rejects.toThrow(/signature\/claims/i);
   });
 
   it("exchanges only through fixed Telegram token endpoint using secret and server PKCE",async()=>{

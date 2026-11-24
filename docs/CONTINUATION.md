@@ -1,5 +1,12 @@
 # Ishikeit continuation handoff
 
+## 2026-11-24 — Telegram OIDC verified JWT failure taxonomy (ISOLATED REVIEW; NO LIVE ENABLEMENT)
+
+- Owner-authorized protected app main `207f00be26cc92f122f92b9ca059ccc62d3c9390` (PR #319) and live Hostinger build `01a20c19-da4f-72b3-b81b-6737ae433e63` match exactly, auto-deploy OFF. Supabase release generation 16 is unheld with no pending external step; 45 migrations and three owner MFA factors retained.
+- Genuine Telegram Desktop OIDC owner approval at 2026-11-24 05:51Z consumed the 12th native connection intent but did not claim an Ishikeit account. First-party Hostinger runtime emitted only `signature_claim_stage` (not the previously resolved `exchange_expiry_invalid`). Zero native account connections and active-disconnect cleanup rows remain; do not claim live acceptance.
+- This isolated review enhances error handling of the existing **strict, signed** Telegram ID-token JOSE verifier by reporting ONLY static provider-secret-free failure categories for issuer, audience, missing nonce, expiration, public JWKS, algorithm, signature and post-signature owner identity. No provider payload, JWT, claim values, signing key, account identity or raw error cause is ever logged or accepted. Cryptographic checks and 10-minute maximum token age are unchanged; tests use locally generated signed tokens.
+- This remains SOURCE ONLY pending full disposable Node24/PostgreSQL17 tests, four hosted CI jobs, protected review and two-environment owner-gated deployment. A subsequent single real Telegram owner consent may identify the exact failing claim; never bypass OIDC, AAL2, provider permission or legacy-worker guards. Global Hostinger hPanel manual configuration writes still lack a universal cross-system fence. Meta App Review remains STRICTLY NO SUBMISSION.
+
 ## 2026-11-24 — Telegram OIDC unused access-expiry metadata; STRICT ID-token verification (REVIEW ONLY)
 
 - Owner-authorized GitHub Actions #45264311009 deployed and accepted app main `63293298adb14899404c3dafb9419d2dc6abf8c4` (PR #318), DB main `3e2d3e9ee367a1fccf6002595ac7d6cbe9e1069e`. Hostinger completed build `01a20c03-f2d2-7026-beb8-4f9f36c978f8`, Git auto-deployment OFF; PostgreSQL release CAS generation 14 resolved with no holder or pending step; /health/live and /health/ready both HTTP 200.

@@ -218,7 +218,7 @@ describe("Telegram native owner OIDC and Business evidence",()=>{
     const resolver=createLocalJWKSet({keys:[publicJwk]});
     const make=async(p:{
       audience?:string;issuer?:string;nonce?:string;expiresIn?:number;
-      claimId?:number;subject?:string;omitId?:boolean;omitNonce?:boolean
+      claimId?:number|string;subject?:string;omitId?:boolean;omitNonce?:boolean
     }={})=>{
       const now=Math.floor(Date.now()/1000);
       return new SignJWT({
@@ -299,7 +299,27 @@ describe("Telegram native owner OIDC and Business evidence",()=>{
     await expect(verifyTelegramOIDCIdToken(
       await make({omitId:true}),state,clientId,resolver,observe
     )).rejects.toThrow(/identity/i);
-    expect(stages.splice(0)).toEqual(["jwt_identity_claim_invalid"]);
+    expect(stages.splice(0)).toEqual(["jwt_identity_id_missing"]);
+    await expect(verifyTelegramOIDCIdToken(
+      await make({claimId:"987654321"}),state,clientId,resolver,observe
+    )).rejects.toThrow(/identity/i);
+    expect(stages.splice(0)).toEqual(["jwt_identity_id_type_invalid"]);
+    await expect(verifyTelegramOIDCIdToken(
+      await make({claimId:Number.MAX_SAFE_INTEGER+1}),state,clientId,resolver,observe
+    )).rejects.toThrow(/identity/i);
+    expect(stages.splice(0)).toEqual(["jwt_identity_id_range_invalid"]);
+    await expect(verifyTelegramOIDCIdToken(
+      await make({claimId:0}),state,clientId,resolver,observe
+    )).rejects.toThrow(/identity/i);
+    expect(stages.splice(0)).toEqual(["jwt_identity_id_format_invalid"]);
+    await expect(verifyTelegramOIDCIdToken(
+      await make({expiresIn:3601}),state,clientId,resolver,observe
+    )).rejects.toThrow(/identity/i);
+    expect(stages.splice(0)).toEqual(["jwt_identity_lifetime_invalid"]);
+    await expect(verifyTelegramOIDCIdToken(
+      await make({subject:"s".repeat(257)}),state,clientId,resolver,observe
+    )).rejects.toThrow(/identity/i);
+    expect(stages.splice(0)).toEqual(["jwt_identity_subject_invalid"]);
     await expect(verifyTelegramOIDCIdToken(
       await make({audience:"foreign-client"}),state,clientId,resolver,
       ()=>{throw Error("private diagnostic must not escape");}

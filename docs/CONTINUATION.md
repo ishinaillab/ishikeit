@@ -1,5 +1,13 @@
 # Ishikeit continuation handoff
 
+## 2026-11-24 evening — Telegram signed OIDC claim diagnostics (ISOLATED REVIEW ONLY)
+
+- Owner-reviewed GitHub protected Hostinger reconcile-only workflow #45385539835 succeeded; no second build. Verified CAS release generation 18 unheld, pending external step NULL, Hostinger completed app SHA `53d130ae1c9445d76687e71471bbfc54537a3880`, Git auto-deploy OFF. The current deployed app is unchanged by this review.
+- Two legitimate owner Telegram OIDC consent callbacks at 2026-11-24 11:42:41Z and 11:44:35Z failed after cryptographic JWT verification stage with the fixed reason `jwt_identity_claim_invalid`; the following generic `signature_claim_stage` does not mean a failed signature. Production has zero native connections, 14 Telegram intents, 13 consumed, zero claimed. No user ID, token, provider response body, code or MFA factor was accessed.
+- Isolated branch `review/priority3-telegram-jwt-diagnostic-20261124` based on exact protected app main `53d130ae...` adds ONLY fixed enum post-signature subtypes for invalid subject, lifetime, absent/non-numeric/out-of-range/invalid-format identity ID and corresponding signed test vectors. Signature, issuer, audience, required nonce, OIDC exp/iat and strict numeric Telegram User ID requirements remain unchanged. It does NOT relax provider validation, connect, revoke or send.
+- Full disposable Node.js 24 + PostgreSQL 17 acceptance completed with actual tests container exit 0, 132/132 files and 1,073/1,073 tests passed, TypeScript production build successful. Named isolated Docker tests, network and PG volume cleaned after exit. Source is NOT merged, deployed or proof of genuine provider disconnect.
+- Remaining Priority 3 blockers: owner-verified native link and exact fresh Telegram Business rights; safe production routing, queue/worker and active disconnect/revocation readback; global Hostinger hPanel configuration-write bypass. Keep production active disconnect OFF, preserve legacy bot, three MFA devices and original seven unpublished canonical files, and strictly do NOT submit Meta App Review. A competing UI operator was seen interacting with owner security settings; obtain verifiable exclusive UI/source/release ownership before promotion.
+
 ## 2026-11-24 — Telegram OIDC verified JWT failure taxonomy (ISOLATED REVIEW; NO LIVE ENABLEMENT)
 
 - Owner-authorized protected app main `207f00be26cc92f122f92b9ca059ccc62d3c9390` (PR #319) and live Hostinger build `01a20c19-da4f-72b3-b81b-6737ae433e63` match exactly, auto-deploy OFF. Supabase release generation 16 is unheld with no pending external step; 45 migrations and three owner MFA factors retained.
